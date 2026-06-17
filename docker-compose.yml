@@ -1,0 +1,14 @@
+services:
+  meeting-analysis:
+    build:
+      context: .
+    container_name: meeting-analysis
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "127.0.0.1:3011:3000"
