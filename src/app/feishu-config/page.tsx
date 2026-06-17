@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,14 +24,10 @@ const REQUIRED_ENV_VARS = [
 ];
 
 export default function FeishuConfigPage() {
-  const [origin, setOrigin] = useState('');
+  const [origin] = useState(() =>
+    typeof window !== 'undefined' ? window.location.origin : ''
+  );
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setOrigin(window.location.origin);
-    }
-  }, []);
 
   const webhookUrl = `${origin || 'https://your-domain.com'}/api/feishu/webhook`;
 

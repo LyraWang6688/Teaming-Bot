@@ -37,7 +37,7 @@ import { formatResult } from '@/formatters';
 import { FEISHU_PROCESS_STATUS } from './status';
 
 // 项目域名（用于生成报告链接）
-const getProjectDomain = () => process.env.COZE_PROJECT_DOMAIN_DEFAULT || 'http://localhost:5000';
+const getProjectDomain = () => process.env.PROJECT_PUBLIC_URL || 'http://localhost:5000';
 
 /**
  * 事件类型常量

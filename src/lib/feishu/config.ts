@@ -4,8 +4,12 @@ export type FeishuBitableConfig = {
 };
 
 export function getFeishuBitableConfig(): FeishuBitableConfig {
-  const appToken = process.env.FEISHU_BASE_APP_TOKEN || 'ESQkbIG93a42oUs9loXcYxdcn3c';
-  const tableId = process.env.FEISHU_MEETING_TABLE_ID || 'tblKw6sEbnFniFaH';
+  const appToken = process.env.FEISHU_BASE_APP_TOKEN || '';
+  const tableId = process.env.FEISHU_MEETING_TABLE_ID || '';
+
+  if (!appToken || !tableId) {
+    throw new Error('缺少 FEISHU_BASE_APP_TOKEN 或 FEISHU_MEETING_TABLE_ID');
+  }
 
   return { appToken, tableId };
 }
@@ -13,7 +17,6 @@ export function getFeishuBitableConfig(): FeishuBitableConfig {
 export function getProjectPublicUrl(): string {
   return (
     process.env.PROJECT_PUBLIC_URL ||
-    process.env.COZE_PROJECT_DOMAIN_DEFAULT ||
     'http://localhost:5000'
   ).replace(/\/$/, '');
 }
