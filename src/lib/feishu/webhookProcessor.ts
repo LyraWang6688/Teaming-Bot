@@ -17,7 +17,7 @@ import {
   updateMeetingRecordFields,
   upsertMeetingWaitingRecord,
 } from './bitableOpenApi';
-import { callFeishuUserOpenApi, FeishuOpenApiError } from './openapi';
+import { callFeishuOpenApi, FeishuOpenApiError } from './openapi';
 import { logFeishuMonitor, toErrorContext } from './monitor';
 import { FEISHU_ACTIVE_PROCESS_STATUSES, FEISHU_PROCESS_STATUS } from './status';
 import { fetchTranscriptByMinuteToken } from './transcript';
@@ -57,27 +57,20 @@ type MeetingEndedSource = {
   recordId?: string;
 };
 
-type MinutesSearchItem = {
-  token?: string;
-  display_info?: string;
-  meta_data?: {
-    app_link?: string;
-    avatar?: string;
-    description?: string;
+type MeetingRecordingResult = {
+  recording?: {
+    url?: string;
+    duration?: string;
   };
 };
 
-type MinutesSearchResult = {
-  items?: MinutesSearchItem[];
-  has_more?: boolean;
-  page_token?: string;
-};
+type RetryStage = 'recording' | 'transcript';
 
 const processedEventIds = new Set<string>();
 const processingMeetingIds = new Map<string, number>();
 const scheduledMeetingRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-const MINUTE_SEARCH_WINDOWS_MINUTES = [2, 3, 4, 5] as const;
+const MEETING_RETRY_WINDOWS_MINUTES = [2, 3, 4, 5] as const;
 const PROCESSING_LOCK_TTL_MS = 20 * 60_000;
 const ANALYSIS_MAX_ATTEMPTS = 3;
 const ANALYSIS_RETRY_DELAY_MS = 3_000;
@@ -173,15 +166,27 @@ function getOrganizerInfo(meeting: Record<string, unknown>, event: Record<string
 }
 
 function getSearchWindowMinute(attempt: number): number {
-  return MINUTE_SEARCH_WINDOWS_MINUTES[attempt] ?? MINUTE_SEARCH_WINDOWS_MINUTES.at(-1)!;
+  return MEETING_RETRY_WINDOWS_MINUTES[attempt] ?? MEETING_RETRY_WINDOWS_MINUTES.at(-1)!;
 }
 
 function getSearchTargetTime(endTime: number, attempt: number): number {
   return endTime + getSearchWindowMinute(attempt) * 60_000;
 }
 
-function toIsoTime(timestamp: number): string {
-  return new Date(timestamp).toISOString();
+function parseMinuteTokenFromRecordingUrl(recordingUrl?: string): string | undefined {
+  if (!recordingUrl) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(recordingUrl);
+    const token = url.pathname.split('/').filter(Boolean).at(-1);
+    return asString(token);
+  } catch {
+    const normalized = recordingUrl.split('?')[0];
+    const token = normalized.split('/').filter(Boolean).at(-1);
+    return asString(token);
+  }
 }
 
 export function isValidFeishuWebhookToken(envelope: FeishuWebhookEnvelope): boolean {
@@ -308,23 +313,11 @@ async function processParticipantMeetingEndedAttempt(context: MeetingEndedSource
     organizerSource: context.organizerSource,
   });
 
-  if (!context.organizer) {
-    await setMeetingProcessStatus(config, record.recordId, FEISHU_PROCESS_STATUS.failed, {
-      '错误信息': '会议结束事件中缺少组织者 open_id，无法按 owner_ids 规则搜索妙记。',
-    });
-    logFeishuMonitor('error', 'meeting_pipeline_failed_missing_organizer', {
-      meetingId: context.meetingId,
-      recordId: record.recordId,
-      organizerSource: context.organizerSource,
-    });
-    return;
-  }
-
   if (Date.now() < getSearchTargetTime(context.endTime, context.attempt)) {
     await scheduleCurrentMeetingAttempt(
       context,
       record.recordId,
-      `会议已结束，等待会议结束后第 ${getSearchWindowMinute(context.attempt)} 分钟开始搜索妙记。`
+      `会议已结束，等待会议结束后第 ${getSearchWindowMinute(context.attempt)} 分钟开始获取录制文件。`
     );
     return;
   }
@@ -341,34 +334,43 @@ async function processParticipantMeetingEndedAttempt(context: MeetingEndedSource
 
   clearScheduledMeetingRetry(context.meetingId);
   processingMeetingIds.set(context.meetingId, Date.now());
+  let retryStage: RetryStage = 'recording';
 
   try {
-    logFeishuMonitor('info', 'minutes_search_started', {
+    await setMeetingProcessStatus(
+      config,
+      record.recordId,
+      FEISHU_PROCESS_STATUS.fetchingRecording,
+      {
+        '错误信息': '',
+      }
+    );
+
+    logFeishuMonitor('info', 'recording_fetch_started', {
       meetingId: context.meetingId,
       recordId: record.recordId,
       attempt: context.attempt,
-      organizer: context.organizer,
-      organizerSource: context.organizerSource,
-      title: context.title,
-      searchWindowMinute: getSearchWindowMinute(context.attempt),
+      windowMinute: getSearchWindowMinute(context.attempt),
     });
-    const searchResult = await searchMeetingMinutes(context);
-    const matchedCount = searchResult.items?.length || 0;
-    const minuteToken = asString(searchResult.items?.[0]?.token);
-    logFeishuMonitor('info', 'minutes_search_finished', {
+    const recordingResult = await getMeetingRecording(context.meetingId);
+    const recordingUrl = asString(recordingResult.recording?.url);
+    const minuteToken = parseMinuteTokenFromRecordingUrl(recordingUrl);
+    logFeishuMonitor('info', 'recording_fetch_finished', {
       meetingId: context.meetingId,
       recordId: record.recordId,
       attempt: context.attempt,
-      matchedCount,
+      recordingUrl,
       minuteToken,
+      duration: asString(recordingResult.recording?.duration),
     });
 
     if (!minuteToken) {
       await scheduleNextMeetingRetry(
         context,
         record.recordId,
-        `第 ${getSearchWindowMinute(context.attempt)} 分钟的搜索窗口内未找到匹配妙记。`,
-        '在会议结束后 5 分钟内仍未找到匹配妙记，请确认会议标题是否可检索，并请组织者共享妙记及导出权限。'
+        retryStage,
+        `第 ${getSearchWindowMinute(context.attempt)} 分钟的窗口内仍未获取到录制文件。`,
+        '在会议结束后 5 分钟内仍未获取到录制文件，请确认会议是否开启录制或录制是否仍在生成中。'
       );
       return;
     }
@@ -385,6 +387,7 @@ async function processParticipantMeetingEndedAttempt(context: MeetingEndedSource
       return;
     }
 
+    retryStage = 'transcript';
     await setMeetingProcessStatus(
       config,
       latestRecord.recordId,
@@ -408,7 +411,7 @@ async function processParticipantMeetingEndedAttempt(context: MeetingEndedSource
 
     await completeMeetingAnalysis(config, latestRecord, transcript, minuteToken, context);
   } catch (error) {
-    const handled = await handleRetryableMeetingError(context, error, record.recordId);
+    const handled = await handleRetryableMeetingError(context, error, record.recordId, retryStage);
     if (handled) {
       return;
     }
@@ -509,20 +512,10 @@ async function analyzeMeetingTranscriptWithRetries(
   throw lastError;
 }
 
-async function searchMeetingMinutes(context: MeetingEndedSource): Promise<MinutesSearchResult> {
-  return callFeishuUserOpenApi<MinutesSearchResult>(
-    'POST',
-    '/minutes/v1/minutes/search?user_id_type=open_id&page_size=10',
-    {
-      query: context.title,
-      filter: {
-        owner_ids: [context.organizer],
-        create_time: {
-          start_time: toIsoTime(context.endTime),
-          end_time: toIsoTime(Date.now()),
-        },
-      },
-    }
+async function getMeetingRecording(meetingId: string): Promise<MeetingRecordingResult> {
+  return callFeishuOpenApi<MeetingRecordingResult>(
+    'GET',
+    `/vc/v1/meetings/${meetingId}/recording`
   );
 }
 
@@ -676,7 +669,7 @@ async function scheduleCurrentMeetingAttempt(
     '错误信息': reason,
   });
 
-  logFeishuMonitor('info', 'minutes_search_scheduled', {
+  logFeishuMonitor('info', 'meeting_pipeline_scheduled', {
     meetingId: context.meetingId,
     recordId,
     attempt: context.attempt,
@@ -698,19 +691,21 @@ async function scheduleCurrentMeetingAttempt(
 async function scheduleNextMeetingRetry(
   context: MeetingEndedSource,
   recordId: string,
+  stage: RetryStage,
   reason: string,
   finalFailureMessage: string
 ): Promise<boolean> {
   const nextAttempt = context.attempt + 1;
-  if (nextAttempt >= MINUTE_SEARCH_WINDOWS_MINUTES.length) {
+  if (nextAttempt >= MEETING_RETRY_WINDOWS_MINUTES.length) {
     const config = getFeishuBitableConfig();
     await setMeetingProcessStatus(config, recordId, FEISHU_PROCESS_STATUS.failed, {
       '错误信息': finalFailureMessage,
     });
-    logFeishuMonitor('error', 'minutes_search_exhausted', {
+    logFeishuMonitor('error', 'meeting_pipeline_exhausted', {
       meetingId: context.meetingId,
       recordId,
       attempt: context.attempt,
+      stage,
       reason: finalFailureMessage,
     });
     return false;
@@ -721,8 +716,12 @@ async function scheduleNextMeetingRetry(
   }
 
   const config = getFeishuBitableConfig();
-  await setMeetingProcessStatus(config, recordId, FEISHU_PROCESS_STATUS.meetingEnded, {
-    '错误信息': `${reason}；将在会议结束后第 ${getSearchWindowMinute(nextAttempt)} 分钟再次搜索妙记。`,
+  const nextStatus =
+    stage === 'transcript'
+      ? FEISHU_PROCESS_STATUS.fetchingTranscript
+      : FEISHU_PROCESS_STATUS.fetchingRecording;
+  await setMeetingProcessStatus(config, recordId, nextStatus, {
+    '错误信息': `${reason}；将在会议结束后第 ${getSearchWindowMinute(nextAttempt)} 分钟再次尝试。`,
   });
 
   const nextContext = {
@@ -731,10 +730,11 @@ async function scheduleNextMeetingRetry(
   };
   const delayMs = Math.max(getSearchTargetTime(nextContext.endTime, nextContext.attempt) - Date.now(), 0);
 
-  logFeishuMonitor('warn', 'minutes_search_rescheduled', {
+  logFeishuMonitor('warn', 'meeting_pipeline_rescheduled', {
     meetingId: context.meetingId,
     recordId,
     nextAttempt,
+    stage,
     delayMs,
     reason,
   });
@@ -760,6 +760,7 @@ function isRetryableMeetingError(error: unknown): boolean {
   }
 
   return (
+    error.code === 124002 ||
     error.code === 2091003 ||
     error.code === 2095001 ||
     error.code === 2095002 ||
@@ -769,16 +770,24 @@ function isRetryableMeetingError(error: unknown): boolean {
 
 function toBusinessErrorMessage(error: unknown): string {
   if (error instanceof FeishuOpenApiError) {
+    if (error.code === 121005) {
+      return '应用无权获取该会议的录制文件，请检查 vc:record:readonly 权限和租户资源范围。';
+    }
+
+    if (error.code === 122002) {
+      return '未找到对应会议，请确认 meeting_id 是否有效。';
+    }
+
+    if (error.code === 124002) {
+      return '会议录制文件仍在生成中，请稍后重试。';
+    }
+
     if (error.code === 2091005) {
-      return '未获得该篇妙记的导出权限，请联系组织者共享妙记并授予导出文字稿权限。';
+      return '未获得该篇妙记的导出权限，请检查妙记权限设置是否允许导出文字稿。';
     }
 
     if (error.code === 2091002) {
       return '找到的妙记已不可用，请稍后重试或联系组织者确认妙记状态。';
-    }
-
-    if (error.code === 2094011 || error.code === 2094012) {
-      return '当前用户授权已失效，请重新完成飞书授权后再试。';
     }
   }
 
@@ -788,33 +797,45 @@ function toBusinessErrorMessage(error: unknown): string {
 async function handleRetryableMeetingError(
   context: MeetingEndedSource,
   error: unknown,
-  recordId: string
+  recordId: string,
+  stage: RetryStage
 ): Promise<boolean> {
   if (!isRetryableMeetingError(error)) {
     return false;
   }
 
   const interimReason =
-    error instanceof FeishuOpenApiError && error.code === 2091003
-      ? `已找到妙记，但第 ${getSearchWindowMinute(context.attempt)} 分钟的搜索窗口内文字稿仍未就绪。`
-      : `第 ${getSearchWindowMinute(context.attempt)} 分钟的搜索窗口内调用飞书接口失败。`;
+    stage === 'recording'
+      ? error instanceof FeishuOpenApiError && error.code === 124002
+        ? `录制文件仍在生成中，第 ${getSearchWindowMinute(context.attempt)} 分钟的窗口内暂不可用。`
+        : `第 ${getSearchWindowMinute(context.attempt)} 分钟的窗口内获取录制文件失败。`
+      : error instanceof FeishuOpenApiError && error.code === 2091003
+        ? `已获取妙记，但第 ${getSearchWindowMinute(context.attempt)} 分钟的窗口内文字稿仍未就绪。`
+        : `第 ${getSearchWindowMinute(context.attempt)} 分钟的窗口内导出文字稿失败。`;
   const finalFailureMessage =
-    error instanceof FeishuOpenApiError && error.code === 2091003
-      ? '已找到妙记，但在会议结束后 5 分钟内文字稿仍未就绪，请稍后重试或联系组织者确认妙记转写状态。'
-      : '飞书接口在搜索妙记或导出文字稿时持续返回临时错误，请稍后重试。';
+    stage === 'recording'
+      ? '在会议结束后 5 分钟内仍未获取到录制文件，请确认会议是否开启录制或录制是否仍在生成中。'
+      : error instanceof FeishuOpenApiError && error.code === 2091003
+        ? '已获取妙记，但在会议结束后 5 分钟内文字稿仍未就绪，请稍后重试或确认妙记转写状态。'
+        : '飞书接口在导出文字稿时持续返回临时错误，请稍后重试。';
 
   logFeishuMonitor('warn', 'meeting_pipeline_retryable_error', {
     meetingId: context.meetingId,
     recordId,
     attempt: context.attempt,
+    stage,
     retryType:
-      error instanceof FeishuOpenApiError && error.code === 2091003
-        ? 'minute_not_ready'
-        : 'temporary_feishu_error',
+      stage === 'recording'
+        ? error instanceof FeishuOpenApiError && error.code === 124002
+          ? 'record_processing'
+          : 'temporary_recording_error'
+        : error instanceof FeishuOpenApiError && error.code === 2091003
+          ? 'minute_not_ready'
+          : 'temporary_transcript_error',
     ...toErrorContext(error),
   });
 
-  return scheduleNextMeetingRetry(context, recordId, interimReason, finalFailureMessage);
+  return scheduleNextMeetingRetry(context, recordId, stage, interimReason, finalFailureMessage);
 }
 
 function buildRecoveryContext(record: FeishuMeetingRecord): MeetingEndedSource | null {

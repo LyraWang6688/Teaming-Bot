@@ -58,7 +58,7 @@ function renderHtml(title: string, description: string, body: string) {
 function renderErrorPage(message: string) {
   const html = renderHtml(
     '飞书用户授权失败',
-    '当前无法拿到 user_access_token，请检查应用配置、回调地址和权限范围。',
+    '当前无法拿到 user_access_token。tenant 主链路不依赖它，但若你正在做排障或补充 user 身份调用，请检查应用配置、回调地址和权限范围。',
     `<div class="panel"><p class="warn">${escapeHtml(message)}</p><div class="actions"><a href="${escapeHtml(
       `${getProjectPublicUrl()}/feishu-config`
     )}">返回飞书配置页</a></div></div>`
@@ -122,7 +122,7 @@ export async function GET(request: NextRequest) {
 
     const html = renderHtml(
       '飞书用户授权成功',
-      '下面这 3 行就是你需要填入服务器 .env.production 的环境变量。复制后保存，再重建容器即可继续妙记搜索链路。',
+      '下面这 3 行是可选的用户 Token 环境变量。tenant 主链路并不依赖它们；只有在排障或临时补充 user 身份调用时才需要写入服务器配置。',
       `<div class="panel">
         <p><strong>state:</strong> <code>${escapeHtml(state || '(none)')}</code></p>
         <p><strong>redirect_uri:</strong> <code>${escapeHtml(redirectUri)}</code></p>

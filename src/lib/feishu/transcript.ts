@@ -2,7 +2,6 @@ import {
   callFeishuOpenApi,
   callFeishuOpenApiText,
   callFeishuUserOpenApi,
-  callFeishuUserOpenApiText,
 } from './openapi';
 
 type DocRawContentResult = {
@@ -42,29 +41,10 @@ export async function fetchTranscriptByDocToken(docToken: string): Promise<strin
 }
 
 export async function fetchTranscriptByMinuteToken(minuteToken: string): Promise<string> {
-  let text = '';
-  let userError: unknown;
-
-  try {
-    text = await callFeishuUserOpenApiText(
-      'GET',
-      `/minutes/v1/minutes/${minuteToken}/transcript?need_speaker=true&need_timestamp=true&file_format=txt`
-    );
-  } catch (error) {
-    userError = error;
-  }
-
-  if (!text) {
-    try {
-      text = await callFeishuOpenApiText(
-        'GET',
-        `/minutes/v1/minutes/${minuteToken}/transcript?need_speaker=true&need_timestamp=true&file_format=txt`
-      );
-    } catch (error) {
-      throw userError || error;
-    }
-  }
-
+  const text = await callFeishuOpenApiText(
+    'GET',
+    `/minutes/v1/minutes/${minuteToken}/transcript?need_speaker=true&need_timestamp=true&file_format=txt`
+  );
   const transcript = text.trim();
   if (!transcript) {
     throw new Error('妙记文字稿内容为空');

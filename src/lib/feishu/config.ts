@@ -28,7 +28,7 @@ export function getFeishuUserOauthRedirectUri(): string {
 export function getFeishuUserOauthScope(): string {
   return (
     process.env.FEISHU_USER_OAUTH_SCOPE ||
-    'offline_access minutes:minutes.search:read minutes:minutes.transcript:export'
+    'minutes:minutes.transcript:export'
   );
 }
 

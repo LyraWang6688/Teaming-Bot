@@ -19,17 +19,20 @@ const REQUIRED_EVENTS = [
 const REQUIRED_ENV_VARS = [
   { key: 'FEISHU_APP_ID', desc: '飞书应用凭证，用于服务端换取 tenant_access_token' },
   { key: 'FEISHU_APP_SECRET', desc: '飞书应用密钥' },
-  { key: 'FEISHU_USER_ACCESS_TOKEN', desc: '用于搜索妙记的 user_access_token' },
-  { key: 'FEISHU_USER_REFRESH_TOKEN', desc: '可选但强烈建议配置，用于自动刷新 user_access_token' },
-  { key: 'FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT', desc: '可选，user_access_token 的过期时间戳（秒或毫秒）' },
-  {
-    key: 'FEISHU_USER_OAUTH_SCOPE',
-    desc: '可选，最小 OAuth 授权时请求的 scope；默认包含 offline_access、minutes:minutes.search:read、minutes:minutes.transcript:export',
-  },
   { key: 'FEISHU_WEBHOOK_VERIFICATION_TOKEN', desc: 'Webhook 验签 token，需与飞书开放平台保持一致' },
   { key: 'PROJECT_PUBLIC_URL', desc: '公网访问域名，用于生成报告链接' },
   { key: 'FEISHU_BASE_APP_TOKEN', desc: '当前运行时使用的多维表格 app_token' },
   { key: 'FEISHU_MEETING_TABLE_ID', desc: '当前运行时使用的会议信息表 table_id' },
+];
+
+const OPTIONAL_ENV_VARS = [
+  { key: 'FEISHU_USER_ACCESS_TOKEN', desc: '可选，仅在排障或临时补充 user 身份请求时使用' },
+  { key: 'FEISHU_USER_REFRESH_TOKEN', desc: '可选，用于自动刷新 user_access_token' },
+  { key: 'FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT', desc: '可选，user_access_token 的过期时间戳（秒或毫秒）' },
+  {
+    key: 'FEISHU_USER_OAUTH_SCOPE',
+    desc: '可选，最小 OAuth 授权时请求的 scope；默认仅申请 minutes:minutes.transcript:export',
+  },
 ];
 
 export default function FeishuConfigPage() {
@@ -53,7 +56,7 @@ export default function FeishuConfigPage() {
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-slate-900">飞书集成配置</h1>
-          <p className="text-slate-600 mt-2">当前正式链路为 Webhook + OpenAPI。本页用于指引会议结束事件驱动的接入与联调检查。</p>
+          <p className="text-slate-600 mt-2">当前正式链路为 Webhook + OpenAPI。本页用于指引会议结束事件驱动的 tenant 主链路接入与联调检查。</p>
         </div>
 
         <Card className="mb-6">
@@ -109,7 +112,7 @@ export default function FeishuConfigPage() {
                 <AlertCircle className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800">重要提示</AlertTitle>
                 <AlertDescription className="text-amber-700">
-                  当前主链路统一由 `vc.meeting.participant_meeting_ended_v1` 驱动。收到事件后，服务端会直接从事件体提取 `meeting.id`、`topic`、`start_time`、`end_time`、`owner.id.open_id` 写入多维表格，再按标题、组织者和时间窗搜索妙记。
+                  当前主链路统一由 <code>vc.meeting.participant_meeting_ended_v1</code> 驱动。收到事件后，服务端会直接从事件体提取 <code>meeting.id</code>、<code>topic</code>、<code>start_time</code>、<code>end_time</code>、<code>owner.id.open_id</code> 写入多维表格，再按 <code>meeting_id -&gt; 录制文件 -&gt; minute_token -&gt; 文字稿</code> 的顺序推进。
                 </AlertDescription>
               </Alert>
               <div className="space-y-2">
@@ -148,9 +151,18 @@ export default function FeishuConfigPage() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>当前状态说明</AlertTitle>
                 <AlertDescription>
-                  当前请先在飞书后台完成应用配置，再由运维或开发在部署环境中写入上述变量。若要让妙记搜索链路稳定长期运行，建议同时配置 `FEISHU_USER_REFRESH_TOKEN` 并在飞书授权时开通 `offline_access`。
+                  当前 tenant 主链路只依赖应用身份和 Base 配置即可运行。用户 OAuth 相关环境变量不再是主流程必填项，只在排障或临时补充 user 身份调用时再配置。
                 </AlertDescription>
               </Alert>
+
+              <div className="space-y-3">
+                {OPTIONAL_ENV_VARS.map((item) => (
+                  <div key={item.key} className="rounded-lg border border-dashed border-slate-200 p-3">
+                    <div className="text-sm font-mono font-semibold text-slate-900">{item.key}</div>
+                    <div className="mt-1 text-sm text-slate-600">{item.desc}</div>
+                  </div>
+                ))}
+              </div>
 
               <div className="flex gap-3">
                 <Button variant="outline" asChild>
@@ -172,8 +184,8 @@ export default function FeishuConfigPage() {
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle className="text-lg">第四步：一键获取用户 Token</CardTitle>
-            <CardDescription>如果你还没有 `FEISHU_USER_ACCESS_TOKEN`，可以直接用当前应用走一次最小 OAuth 授权。</CardDescription>
+            <CardTitle className="text-lg">第四步：可选获取用户 Token</CardTitle>
+            <CardDescription>tenant 主链路并不依赖用户 Token；只有在排障或补充 user 身份调用时，才需要执行这一步。</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -183,7 +195,7 @@ export default function FeishuConfigPage() {
                 <AlertDescription className="text-blue-800">
                   点击下方按钮后，浏览器会跳到飞书授权页。你同意授权后，回调页会直接显示要写进
                   <code className="mx-1 rounded bg-blue-100 px-1 py-0.5 text-xs">.env.production</code>
-                  的 3 行环境变量。
+                  的 3 行用户 Token 环境变量，供排障或临时调用 user 身份接口使用。
                 </AlertDescription>
               </Alert>
 
@@ -197,11 +209,12 @@ export default function FeishuConfigPage() {
                   </Button>
                 </div>
                 <p className="mt-2 text-sm text-slate-600">
-                  请先在飞书开放平台的 OAuth 回调地址配置中加入上面的地址，并确保应用权限里包含
-                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">offline_access</code>、
-                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.search:read</code>
-                  和
-                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.transcript:export</code>。
+                  请先在飞书开放平台的 OAuth 回调地址配置中加入上面的地址。若你确实要补充 user 身份调用，再为应用开启
+                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.transcript:export</code>
+                  等所需权限；默认不再要求
+                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">offline_access</code>
+                  或
+                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.search:read</code>。
                 </p>
               </div>
 

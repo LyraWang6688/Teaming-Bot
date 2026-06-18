@@ -41,10 +41,6 @@ DOUBAO_MODEL=doubao-seed-1-8-251228
 
 FEISHU_APP_ID=
 FEISHU_APP_SECRET=
-FEISHU_USER_ACCESS_TOKEN=
-FEISHU_USER_REFRESH_TOKEN=
-FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT=
-FEISHU_USER_OAUTH_SCOPE=offline_access minutes:minutes.search:read minutes:minutes.transcript:export
 FEISHU_WEBHOOK_VERIFICATION_TOKEN=
 FEISHU_BASE_APP_TOKEN=
 FEISHU_MEETING_TABLE_ID=
@@ -61,12 +57,11 @@ FEISHU_ENABLE_STARTUP_RECOVERY=true
 ## 飞书自动化说明
 
 - 当前正式自动化链路只依赖 `vc.meeting.participant_meeting_ended_v1`
-- 服务端收到 Webhook 后，会按“会议结束 -> 搜索妙记 -> 导出文字稿 -> 豆包分析 -> 回写 Base”执行
-- `minutes search` 依赖 `FEISHU_USER_ACCESS_TOKEN`；若同时配置 `FEISHU_USER_REFRESH_TOKEN` 与 `offline_access`，运行时会自动续期
-- 最小 OAuth 入口默认申请 `offline_access minutes:minutes.search:read minutes:minutes.transcript:export`，通常不再需要手工补 `FEISHU_USER_OAUTH_SCOPE`
-- 默认启用启动恢复：服务重启后会重新扫描 Base 中 `会议结束 / 获取文字稿中 / 分析中` 的记录，尽量补回中断链路
-- 结构化监控日志会输出到应用日志，建议重点关注 `minutes_search_finished`、`transcript_export_finished`、`analysis_failed`、`meeting_pipeline_failed`
-- 如果还没有 `FEISHU_USER_ACCESS_TOKEN`，可以先访问 `/feishu-config`，使用“一键获取用户 Token”按钮完成最小 OAuth 授权；回调页会直接展示需要写入 `.env.production` 的 3 行环境变量
+- 服务端收到 Webhook 后，会按“会议结束 -> 获取录制文件 -> 解析 minute_token -> 导出文字稿 -> 豆包分析 -> 回写 Base”执行
+- 正式主链路统一使用 `tenant_access_token`，不再依赖 `FEISHU_USER_ACCESS_TOKEN`
+- 默认启用启动恢复：服务重启后会重新扫描 Base 中 `会议结束 / 获取录制文件中 / 获取文字稿中 / 分析中` 的记录，尽量补回中断链路
+- 结构化监控日志会输出到应用日志，建议重点关注 `recording_fetch_finished`、`transcript_export_finished`、`analysis_failed`、`meeting_pipeline_failed`
+- `/feishu-config` 仍保留“获取用户 Token”入口，但仅作为排障或补充 user 身份调用的可选能力
 
 ## 相关文档
 
