@@ -22,6 +22,7 @@ const REQUIRED_ENV_VARS = [
   { key: 'FEISHU_USER_ACCESS_TOKEN', desc: '用于搜索妙记的 user_access_token' },
   { key: 'FEISHU_USER_REFRESH_TOKEN', desc: '可选但强烈建议配置，用于自动刷新 user_access_token' },
   { key: 'FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT', desc: '可选，user_access_token 的过期时间戳（秒或毫秒）' },
+  { key: 'FEISHU_USER_OAUTH_SCOPE', desc: '可选，最小 OAuth 授权时请求的 scope，默认 offline_access' },
   { key: 'FEISHU_WEBHOOK_VERIFICATION_TOKEN', desc: 'Webhook 验签 token，需与飞书开放平台保持一致' },
   { key: 'PROJECT_PUBLIC_URL', desc: '公网访问域名，用于生成报告链接' },
   { key: 'FEISHU_BASE_APP_TOKEN', desc: '当前运行时使用的多维表格 app_token' },
@@ -35,6 +36,8 @@ export default function FeishuConfigPage() {
   const [copied, setCopied] = useState(false);
 
   const webhookUrl = `${origin || 'https://your-domain.com'}/api/feishu/webhook`;
+  const oauthCallbackUrl = `${origin || 'https://your-domain.com'}/api/feishu/oauth/callback`;
+  const oauthStartUrl = '/api/feishu/oauth/start';
 
   const copyToClipboard = async (text: string) => {
     await navigator.clipboard.writeText(text);
@@ -157,6 +160,65 @@ export default function FeishuConfigPage() {
                   <a href="/api/feishu/webhook" target="_blank" rel="noopener noreferrer">
                     <ExternalLink className="w-4 h-4 mr-2" />
                     检查 Webhook 接口
+                  </a>
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-lg">第四步：一键获取用户 Token</CardTitle>
+            <CardDescription>如果你还没有 `FEISHU_USER_ACCESS_TOKEN`，可以直接用当前应用走一次最小 OAuth 授权。</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <Alert className="bg-blue-50 border-blue-200">
+                <AlertCircle className="h-4 w-4 text-blue-600" />
+                <AlertTitle className="text-blue-900">最省事的操作方式</AlertTitle>
+                <AlertDescription className="text-blue-800">
+                  点击下方按钮后，浏览器会跳到飞书授权页。你同意授权后，回调页会直接显示要写进
+                  <code className="mx-1 rounded bg-blue-100 px-1 py-0.5 text-xs">.env.production</code>
+                  的 3 行环境变量。
+                </AlertDescription>
+              </Alert>
+
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-sm font-medium text-slate-900">OAuth 回调地址</div>
+                <div className="mt-2 flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <code className="break-all text-xs text-slate-700">{oauthCallbackUrl}</code>
+                  <Button variant="outline" size="sm" onClick={() => copyToClipboard(oauthCallbackUrl)}>
+                    {copied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
+                    {copied ? '已复制' : '复制地址'}
+                  </Button>
+                </div>
+                <p className="mt-2 text-sm text-slate-600">
+                  请先在飞书开放平台的 OAuth 回调地址配置中加入上面的地址，并确保应用权限里包含
+                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">offline_access</code>。
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="text-sm font-medium text-slate-900">授权完成后会得到这 3 个值</div>
+                <div className="mt-2 space-y-1 text-sm text-slate-600">
+                  <div><code>FEISHU_USER_ACCESS_TOKEN</code></div>
+                  <div><code>FEISHU_USER_REFRESH_TOKEN</code></div>
+                  <div><code>FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT</code></div>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <Button asChild>
+                  <a href={oauthStartUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="w-4 h-4 mr-2" />
+                    打开飞书授权页
+                  </a>
+                </Button>
+                <Button variant="outline" asChild>
+                  <a href="https://open.feishu.cn/app" target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="w-4 h-4 mr-2" />
+                    检查应用权限
                   </a>
                 </Button>
               </div>

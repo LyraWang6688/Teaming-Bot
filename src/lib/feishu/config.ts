@@ -21,6 +21,14 @@ export function getProjectPublicUrl(): string {
   ).replace(/\/$/, '');
 }
 
+export function getFeishuUserOauthRedirectUri(): string {
+  return `${getProjectPublicUrl()}/api/feishu/oauth/callback`;
+}
+
+export function getFeishuUserOauthScope(): string {
+  return process.env.FEISHU_USER_OAUTH_SCOPE || 'offline_access';
+}
+
 export function getFeishuAppCredentials(): { appId: string; appSecret: string } {
   const appId = process.env.FEISHU_APP_ID || '';
   const appSecret = process.env.FEISHU_APP_SECRET || '';
