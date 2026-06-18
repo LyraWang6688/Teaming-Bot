@@ -22,7 +22,10 @@ const REQUIRED_ENV_VARS = [
   { key: 'FEISHU_USER_ACCESS_TOKEN', desc: '用于搜索妙记的 user_access_token' },
   { key: 'FEISHU_USER_REFRESH_TOKEN', desc: '可选但强烈建议配置，用于自动刷新 user_access_token' },
   { key: 'FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT', desc: '可选，user_access_token 的过期时间戳（秒或毫秒）' },
-  { key: 'FEISHU_USER_OAUTH_SCOPE', desc: '可选，最小 OAuth 授权时请求的 scope，默认 offline_access' },
+  {
+    key: 'FEISHU_USER_OAUTH_SCOPE',
+    desc: '可选，最小 OAuth 授权时请求的 scope；默认包含 offline_access、minutes:minutes.search:read、minutes:minutes.transcript:export',
+  },
   { key: 'FEISHU_WEBHOOK_VERIFICATION_TOKEN', desc: 'Webhook 验签 token，需与飞书开放平台保持一致' },
   { key: 'PROJECT_PUBLIC_URL', desc: '公网访问域名，用于生成报告链接' },
   { key: 'FEISHU_BASE_APP_TOKEN', desc: '当前运行时使用的多维表格 app_token' },
@@ -195,7 +198,10 @@ export default function FeishuConfigPage() {
                 </div>
                 <p className="mt-2 text-sm text-slate-600">
                   请先在飞书开放平台的 OAuth 回调地址配置中加入上面的地址，并确保应用权限里包含
-                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">offline_access</code>。
+                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">offline_access</code>、
+                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.search:read</code>
+                  和
+                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.transcript:export</code>。
                 </p>
               </div>
 
