@@ -451,11 +451,15 @@ async function completeMeetingAnalysis(
     minuteToken,
   });
   const reportUrl = `${getProjectPublicUrl()}/report?recordId=${record.recordId}`;
+  const reportLinkText = context.title.trim() || record.topic || '会议报告';
 
   await setMeetingProcessStatus(config, record.recordId, FEISHU_PROCESS_STATUS.completed, {
     '会议文字稿': transcript,
     '分析摘要': analysis.summary,
-    '报告链接': reportUrl,
+    '报告链接': {
+      text: reportLinkText,
+      link: reportUrl,
+    },
     'JSON数据': JSON.stringify(analysis),
     '错误信息': '',
   });

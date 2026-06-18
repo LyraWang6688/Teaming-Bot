@@ -31,6 +31,11 @@ type BitableTextSegment = {
   type?: unknown;
 };
 
+type BitableLinkValue = {
+  text?: unknown;
+  link?: unknown;
+};
+
 export type FeishuMeetingRecord = {
   recordId: string;
   meetingId?: string;
@@ -97,6 +102,23 @@ function extractSelectValue(value: unknown): string | undefined {
   return undefined;
 }
 
+function extractBitableLink(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized || undefined;
+  }
+
+  if (value && typeof value === 'object') {
+    const linkValue = value as BitableLinkValue;
+    if (typeof linkValue.link === 'string') {
+      const normalized = linkValue.link.trim();
+      return normalized || undefined;
+    }
+  }
+
+  return extractBitableText(value);
+}
+
 function parseAnalysisData(value: unknown): AnalysisResult | null {
   const normalized = extractBitableText(value);
   if (!normalized) return null;
@@ -122,7 +144,7 @@ function toRecord(record: BitableRecord): FeishuMeetingRecord {
     processStatus: extractSelectValue(fields['处理状态']) || fields['处理状态'],
     transcript: extractBitableText(fields['会议文字稿']),
     summary: extractBitableText(fields['分析摘要']),
-    reportUrl: extractBitableText(fields['报告链接']),
+    reportUrl: extractBitableLink(fields['报告链接']),
     errorMessage: extractBitableText(fields['错误信息']),
     analysisData: parseAnalysisData(fields['JSON数据']),
   };
