@@ -10,9 +10,11 @@ import { analyzeMeetingText } from '@/services/analysisService';
 import { getFeishuBitableConfig, getProjectPublicUrl } from './config';
 import {
   type FeishuMeetingRecord,
+  getBitableRecord,
   findMeetingRecordByMeetingId,
   listMeetingRecordsByStatuses,
   setMeetingProcessStatus,
+  updateMeetingRecordFields,
   upsertMeetingWaitingRecord,
 } from './bitableOpenApi';
 import { callFeishuUserOpenApi, FeishuOpenApiError } from './openapi';
@@ -282,7 +284,7 @@ async function processParticipantMeetingEndedEvent(envelope: FeishuWebhookEnvelo
 
 async function processParticipantMeetingEndedAttempt(context: MeetingEndedSource) {
   const config = getFeishuBitableConfig();
-  const existing = await findMeetingRecordByMeetingId(config, context.meetingId);
+  const existing = await getMeetingRecordForContext(config, context);
   const skipReason = existing ? getSkipReason(existing) : null;
 
   if (skipReason) {
@@ -295,13 +297,7 @@ async function processParticipantMeetingEndedAttempt(context: MeetingEndedSource
     return;
   }
 
-  const record = await upsertMeetingWaitingRecord(config, {
-    meetingId: context.meetingId,
-    topic: context.title,
-    startTime: context.startTime,
-    endTime: context.endTime,
-    organizer: context.organizer,
-  });
+  const record = await ensureMeetingWaitingRecord(config, context, existing);
   context.recordId = record.recordId;
 
   logFeishuMonitor('info', 'meeting_record_upserted', {
@@ -377,7 +373,7 @@ async function processParticipantMeetingEndedAttempt(context: MeetingEndedSource
       return;
     }
 
-    const latestRecord = (await findMeetingRecordByMeetingId(config, context.meetingId)) || record;
+    const latestRecord = (await getMeetingRecordForContext(config, context)) || record;
     const latestSkipReason = getSkipReason(latestRecord);
     if (latestSkipReason) {
       logFeishuMonitor('info', 'meeting_pipeline_skipped_after_refresh', {
@@ -537,6 +533,82 @@ function getSkipReason(record: FeishuMeetingRecord): string | null {
   }
 
   return null;
+}
+
+async function getMeetingRecordForContext(
+  config: ReturnType<typeof getFeishuBitableConfig>,
+  context: Pick<MeetingEndedSource, 'meetingId' | 'recordId'>
+): Promise<FeishuMeetingRecord | null> {
+  if (context.recordId) {
+    try {
+      const record = await getBitableRecord(config, context.recordId);
+      const recordMeetingId = asString(record.meetingId);
+
+      if (!recordMeetingId || recordMeetingId === context.meetingId) {
+        return record;
+      }
+
+      logFeishuMonitor('warn', 'meeting_record_id_mismatch', {
+        recordId: context.recordId,
+        expectedMeetingId: context.meetingId,
+        actualMeetingId: recordMeetingId,
+      });
+    } catch (error) {
+      logFeishuMonitor('warn', 'meeting_record_id_reload_failed', {
+        recordId: context.recordId,
+        meetingId: context.meetingId,
+        ...toErrorContext(error),
+      });
+    }
+  }
+
+  return findMeetingRecordByMeetingId(config, context.meetingId);
+}
+
+async function ensureMeetingWaitingRecord(
+  config: ReturnType<typeof getFeishuBitableConfig>,
+  context: Pick<
+    MeetingEndedSource,
+    'meetingId' | 'title' | 'startTime' | 'endTime' | 'organizer' | 'recordId'
+  >,
+  existing: FeishuMeetingRecord | null
+): Promise<FeishuMeetingRecord> {
+  if (!existing) {
+    return upsertMeetingWaitingRecord(config, {
+      meetingId: context.meetingId,
+      topic: context.title,
+      startTime: context.startTime,
+      endTime: context.endTime,
+      organizer: context.organizer,
+    });
+  }
+
+  const fields: Record<string, unknown> = {
+    '会议ID': context.meetingId,
+    '会议主题': context.title,
+    '结束时间': context.endTime,
+    '处理状态': FEISHU_PROCESS_STATUS.meetingEnded,
+  };
+
+  if (context.startTime) {
+    fields['开始时间'] = context.startTime;
+  }
+
+  if (context.organizer) {
+    fields['组织者'] = context.organizer;
+  }
+
+  await updateMeetingRecordFields(config, existing.recordId, fields);
+
+  return {
+    ...existing,
+    meetingId: context.meetingId,
+    topic: context.title,
+    startTime: context.startTime ?? existing.startTime,
+    endTime: context.endTime,
+    organizer: context.organizer ?? existing.organizer,
+    processStatus: FEISHU_PROCESS_STATUS.meetingEnded,
+  };
 }
 
 function isRetryableAnalysisError(error: unknown): boolean {

@@ -26,6 +26,11 @@ type RecordBatchGetResult = {
   forbidden_record_ids?: string[];
 };
 
+type BitableTextSegment = {
+  text?: unknown;
+  type?: unknown;
+};
+
 export type FeishuMeetingRecord = {
   recordId: string;
   meetingId?: string;
@@ -41,11 +46,63 @@ export type FeishuMeetingRecord = {
   analysisData: AnalysisResult | null;
 };
 
+function extractBitableText(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized || undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const normalized = value
+      .map((item) => {
+        if (typeof item === 'string') {
+          return item;
+        }
+
+        if (item && typeof item === 'object') {
+          const segment = item as BitableTextSegment;
+          return typeof segment.text === 'string' ? segment.text : '';
+        }
+
+        return '';
+      })
+      .join('')
+      .trim();
+
+    return normalized || undefined;
+  }
+
+  if (value && typeof value === 'object') {
+    const segment = value as BitableTextSegment;
+    if (typeof segment.text === 'string') {
+      const normalized = segment.text.trim();
+      return normalized || undefined;
+    }
+  }
+
+  return undefined;
+}
+
+function extractSelectValue(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized || undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const first = value.find((item) => typeof item === 'string' && item.trim());
+    return typeof first === 'string' ? first.trim() : undefined;
+  }
+
+  return undefined;
+}
+
 function parseAnalysisData(value: unknown): AnalysisResult | null {
-  if (!value || typeof value !== 'string') return null;
+  const normalized = extractBitableText(value);
+  if (!normalized) return null;
 
   try {
-    return JSON.parse(value) as AnalysisResult;
+    return JSON.parse(normalized) as AnalysisResult;
   } catch (error) {
     console.error('[Feishu Base] JSON数据解析失败:', error);
     return null;
@@ -57,16 +114,16 @@ function toRecord(record: BitableRecord): FeishuMeetingRecord {
 
   return {
     recordId: record.record_id,
-    meetingId: fields['会议ID'] as string | undefined,
-    topic: fields['会议主题'] as string | undefined,
+    meetingId: extractBitableText(fields['会议ID']),
+    topic: extractBitableText(fields['会议主题']),
     startTime: fields['开始时间'],
     endTime: fields['结束时间'],
-    organizer: fields['组织者'],
-    processStatus: fields['处理状态'],
-    transcript: fields['会议文字稿'],
-    summary: fields['分析摘要'],
-    reportUrl: fields['报告链接'],
-    errorMessage: fields['错误信息'],
+    organizer: extractBitableText(fields['组织者']),
+    processStatus: extractSelectValue(fields['处理状态']) || fields['处理状态'],
+    transcript: extractBitableText(fields['会议文字稿']),
+    summary: extractBitableText(fields['分析摘要']),
+    reportUrl: extractBitableText(fields['报告链接']),
+    errorMessage: extractBitableText(fields['错误信息']),
     analysisData: parseAnalysisData(fields['JSON数据']),
   };
 }
