@@ -172,7 +172,7 @@ function repairJSON(jsonStr: string): string {
   // 策略：找到所有字符串值（冒号后面的引号内容），转义其中的控制字符
   repaired = repaired.replace(
     /"([^"]*(?:\\.[^"]*)*)"/g,
-    (match, content) => {
+    (_match, content) => {
       // 转义字符串内部的控制字符
       const fixed = content
         .replace(/\n/g, '\\n')   // 换行符
@@ -243,7 +243,24 @@ function parseLLMResponse(content: string): LLMResponse {
  */
 function generateTimestamp(): string {
   const now = new Date();
-  return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate().toString().padStart(2, '0')} ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+  const formatter = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== 'literal')
+      .map((part) => [part.type, part.value])
+  ) as Record<string, string>;
+
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
 }
 
 /**
