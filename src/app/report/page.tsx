@@ -5,11 +5,14 @@
 
 'use client';
 
-import React, { useEffect, useState, Suspense } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AnalysisResult } from '@/types';
 import AnalysisDashboard from '@/components/AnalysisDashboard';
+import { FEISHU_ACTIVE_PROCESS_STATUSES, FEISHU_PROCESS_STATUS } from '@/lib/feishu/status';
 import { Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
+
+const ACTIVE_PROCESS_STATUSES = new Set<string>(FEISHU_ACTIVE_PROCESS_STATUSES);
 
 // 加载状态组件
 function LoadingState() {
@@ -99,13 +102,9 @@ function ReportContent() {
 
         if (reportData?.analysisData) {
           setAnalysisData(reportData.analysisData);
-        } else if (
-          reportData?.processStatus === '等待纪要' ||
-          reportData?.processStatus === '获取文字稿中' ||
-          reportData?.processStatus === '分析中'
-        ) {
+        } else if (reportData?.processStatus && ACTIVE_PROCESS_STATUSES.has(reportData.processStatus)) {
           // 正在处理中，不设置错误
-        } else if (reportData?.processStatus === '失败') {
+        } else if (reportData?.processStatus === FEISHU_PROCESS_STATUS.failed) {
           setError('分析处理失败，请重新提交');
         } else {
           setError('暂无分析数据');
@@ -128,11 +127,7 @@ function ReportContent() {
     return <ErrorState message={error} onBack={() => window.location.href = '/'} />;
   }
 
-  if (
-    processStatus === '等待纪要' ||
-    processStatus === '获取文字稿中' ||
-    processStatus === '分析中'
-  ) {
+  if (processStatus && ACTIVE_PROCESS_STATUSES.has(processStatus)) {
     return <ProcessingState status={processStatus} />;
   }
 

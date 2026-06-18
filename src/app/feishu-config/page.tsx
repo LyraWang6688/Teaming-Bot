@@ -9,14 +9,19 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { ExternalLink, AlertCircle, Copy, Check } from 'lucide-react';
 
 const REQUIRED_EVENTS = [
-  { id: 'vc.bot.meeting_ended_v1', name: '会议结束', desc: '会议整体结束时触发' },
-  { id: 'vc.meeting.participant_meeting_ended_v1', name: '参与的会议结束', desc: '用户参与的会议结束时触发' },
-  { id: 'vc.note.generated_v1', name: '纪要生成', desc: '智能纪要/转录稿生成完成时触发' },
+  {
+    id: 'vc.meeting.participant_meeting_ended_v1',
+    name: '参与会议结束',
+    desc: '用户参与的会议结束后触发，作为整条链路的唯一事件入口',
+  },
 ];
 
 const REQUIRED_ENV_VARS = [
   { key: 'FEISHU_APP_ID', desc: '飞书应用凭证，用于服务端换取 tenant_access_token' },
   { key: 'FEISHU_APP_SECRET', desc: '飞书应用密钥' },
+  { key: 'FEISHU_USER_ACCESS_TOKEN', desc: '用于搜索妙记的 user_access_token' },
+  { key: 'FEISHU_USER_REFRESH_TOKEN', desc: '可选但强烈建议配置，用于自动刷新 user_access_token' },
+  { key: 'FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT', desc: '可选，user_access_token 的过期时间戳（秒或毫秒）' },
   { key: 'FEISHU_WEBHOOK_VERIFICATION_TOKEN', desc: 'Webhook 验签 token，需与飞书开放平台保持一致' },
   { key: 'PROJECT_PUBLIC_URL', desc: '公网访问域名，用于生成报告链接' },
   { key: 'FEISHU_BASE_APP_TOKEN', desc: '当前运行时使用的多维表格 app_token' },
@@ -42,16 +47,8 @@ export default function FeishuConfigPage() {
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-slate-900">飞书集成配置</h1>
-          <p className="text-slate-600 mt-2">当前正式链路为 Webhook + OpenAPI。本页用于指引生产环境接入，不再触发旧版 CLI 授权初始化。</p>
+          <p className="text-slate-600 mt-2">当前正式链路为 Webhook + OpenAPI。本页用于指引会议结束事件驱动的接入与联调检查。</p>
         </div>
-
-        <Alert className="mb-6 border-amber-200 bg-amber-50">
-          <AlertCircle className="h-4 w-4 text-amber-600" />
-          <AlertTitle className="text-amber-800">迁移说明</AlertTitle>
-          <AlertDescription className="text-amber-700">
-            旧版 <strong>listener + CLI</strong> 链路已标记为废弃，仅保留作历史参考；当前请统一按 <strong>Webhook + OpenAPI</strong> 方案接入。
-          </AlertDescription>
-        </Alert>
 
         <Card className="mb-6">
           <CardHeader>
@@ -77,7 +74,7 @@ export default function FeishuConfigPage() {
         <Card className="mb-6">
           <CardHeader>
             <CardTitle className="text-lg">第二步：配置事件订阅</CardTitle>
-            <CardDescription>当前正式方案使用 Webhook 接收会议事件。</CardDescription>
+            <CardDescription>当前正式方案使用 Webhook 接收参与会议结束事件。</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -106,7 +103,7 @@ export default function FeishuConfigPage() {
                 <AlertCircle className="h-4 w-4 text-amber-600" />
                 <AlertTitle className="text-amber-800">重要提示</AlertTitle>
                 <AlertDescription className="text-amber-700">
-                  `vc.bot.meeting_ended_v1` 用于覆盖“用户被邀请但未实际参会”的场景，这是当前从 CLI 切到 Webhook 的核心原因。
+                  当前主链路统一由 `vc.meeting.participant_meeting_ended_v1` 驱动。收到事件后，服务端会直接从事件体提取 `meeting.id`、`topic`、`start_time`、`end_time`、`owner.id.open_id` 写入多维表格，再按标题、组织者和时间窗搜索妙记。
                 </AlertDescription>
               </Alert>
               <div className="space-y-2">
@@ -145,7 +142,7 @@ export default function FeishuConfigPage() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>当前状态说明</AlertTitle>
                 <AlertDescription>
-                  本页已不再调用旧版 CLI Device Flow 授权接口。当前请先在飞书后台完成应用配置，再由运维或开发在部署环境中写入上述变量。
+                  当前请先在飞书后台完成应用配置，再由运维或开发在部署环境中写入上述变量。若要让妙记搜索链路稳定长期运行，建议同时配置 `FEISHU_USER_REFRESH_TOKEN` 并在飞书授权时开通 `offline_access`。
                 </AlertDescription>
               </Alert>
 

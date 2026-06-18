@@ -83,6 +83,7 @@ Desktop.ini
 *.temp
 .tmp/
 .temp/
+.tmp_*.txt
 
 # Optional files
 *.tgz
@@ -100,3 +101,4 @@ Desktop.ini
 .coze-logs
 .cozeproj/reduction
 .pnpm-store/
+_public_release/

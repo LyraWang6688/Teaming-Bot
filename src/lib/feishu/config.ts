@@ -31,3 +31,32 @@ export function getFeishuAppCredentials(): { appId: string; appSecret: string } 
 
   return { appId, appSecret };
 }
+
+export function getFeishuUserAccessToken(): string {
+  const accessToken = process.env.FEISHU_USER_ACCESS_TOKEN || '';
+
+  if (!accessToken) {
+    throw new Error('缺少 FEISHU_USER_ACCESS_TOKEN');
+  }
+
+  return accessToken;
+}
+
+export function getFeishuUserRefreshToken(): string | null {
+  const refreshToken = process.env.FEISHU_USER_REFRESH_TOKEN || '';
+  return refreshToken || null;
+}
+
+export function getFeishuUserAccessTokenExpiresAt(): number | null {
+  const rawValue = process.env.FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT || '';
+  if (!rawValue) {
+    return null;
+  }
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return null;
+  }
+
+  return numeric > 10_000_000_000 ? numeric : numeric * 1000;
+}

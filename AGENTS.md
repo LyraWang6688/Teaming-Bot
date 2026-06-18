@@ -140,10 +140,10 @@ pnpm tsc --noEmit
 pnpm lint
 
 # 启动开发服务
-coze dev
+pnpm dev
 
 # 构建生产版本
-coze build
+pnpm build
 ```
 
 ---

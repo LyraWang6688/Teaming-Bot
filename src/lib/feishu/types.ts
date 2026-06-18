@@ -50,8 +50,6 @@ export interface MeetingRecord {
   organizer?: string;
   /** 处理状态 */
   status: FeishuProcessStatus;
-  /** 重试次数 */
-  retryCount?: number;
   /** 会议文字稿 */
   verbatimContent?: string;
   /** 分析摘要 */
@@ -103,42 +101,26 @@ export interface UserIdentity {
  * vc.meeting.participant_meeting_ended_v1
  */
 export interface MeetingEndedEventData {
-  /** 会议信息 */
   meeting: {
-    /** 会议 ID */
     id: string;
-    /** 会议主题 */
     topic: string;
-    /** 开始时间（ISO 8601 格式） */
     start_time: string;
-    /** 结束时间（ISO 8601 格式） */
     end_time: string;
-    /** 会议时长（秒） */
-    duration: number;
+    meeting_no?: string;
+    meeting_source?: number;
+    host_user?: MeetingEventUser;
+    owner?: MeetingEventUser;
+    calendar_event_id?: string;
+    meeting_sub_type?: number;
   };
+  operator?: MeetingEventUser;
+  subscriber_ids?: UserIdentity[];
 }
 
-/**
- * 纪要生成事件数据
- * vc.note.generated_v1
- */
-export interface NoteGeneratedEventData {
-  /** 纪要信息 */
-  note: {
-    /** 纪要文档 token */
-    note_token: string;
-    /** 转录稿文档 token */
-    verbatim_token: string;
-    /** 纪要标题 */
-    title: string;
-  };
-  /** 来源信息 */
-  note_source: {
-    /** 来源类型 */
-    source_type: string;
-    /** 来源实体 ID（会议 ID） */
-    source_entity_id: string;
-  };
+export interface MeetingEventUser {
+  id?: UserIdentity;
+  user_role?: number;
+  user_type?: number;
 }
 
 // ==================== 事件处理结果 ====================
