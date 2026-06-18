@@ -208,10 +208,43 @@ export async function getUserAccessToken(forceRefresh = false): Promise<string> 
   throw new Error('缺少可用的 FEISHU_USER_ACCESS_TOKEN / FEISHU_USER_REFRESH_TOKEN');
 }
 
+const RETRYABLE_USER_AUTH_ERROR_CODES = new Set([2094011, 2094012]);
+
+const RETRYABLE_USER_AUTH_MESSAGE_PATTERNS = [
+  'invalid access token',
+  'invalid user access token',
+  'access token expired',
+  'expired access token',
+  'token attached',
+];
+
+function containsRetryableUserAuthMessage(value?: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.toLowerCase();
+  return RETRYABLE_USER_AUTH_MESSAGE_PATTERNS.some((pattern) =>
+    normalized.includes(pattern)
+  );
+}
+
 function shouldRetryUserRequest(error: unknown): boolean {
+  if (!(error instanceof FeishuOpenApiError)) {
+    return false;
+  }
+
+  if (error.statusCode === 401 || error.statusCode === 403) {
+    return true;
+  }
+
+  if (error.code && RETRYABLE_USER_AUTH_ERROR_CODES.has(error.code)) {
+    return true;
+  }
+
   return (
-    error instanceof FeishuOpenApiError &&
-    (error.statusCode === 401 || error.statusCode === 403)
+    containsRetryableUserAuthMessage(error.message) ||
+    containsRetryableUserAuthMessage(error.body)
   );
 }
 
