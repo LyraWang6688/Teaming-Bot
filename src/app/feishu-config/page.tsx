@@ -31,7 +31,7 @@ const OPTIONAL_ENV_VARS = [
   { key: 'FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT', desc: '可选，user_access_token 的过期时间戳（秒或毫秒）' },
   {
     key: 'FEISHU_USER_OAUTH_SCOPE',
-    desc: '可选，最小 OAuth 授权时请求的 scope；默认申请 vc:record:readonly 和 minutes:minutes.transcript:export',
+    desc: '可选，最小 OAuth 授权时请求的 scope；默认申请 vc:record:readonly、minutes:minutes.transcript:export 和 offline_access',
   },
 ];
 
@@ -213,9 +213,11 @@ export default function FeishuConfigPage() {
                   <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">vc:record:readonly</code>
                   和
                   <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.transcript:export</code>
-                  两项权限；默认不再要求
+                  两项权限；默认会一并申请
                   <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">offline_access</code>
-                  或
+                  用于换取
+                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">FEISHU_USER_REFRESH_TOKEN</code>
+                  ，但仍不要求
                   <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.search:read</code>。
                 </p>
               </div>
