@@ -124,6 +124,11 @@ function ensureUserTokenState() {
   };
 }
 
+export function hasConfiguredFeishuUserToken(): boolean {
+  ensureUserTokenState();
+  return Boolean(cachedUserToken?.accessToken || cachedUserToken?.refreshToken);
+}
+
 async function refreshUserAccessToken(): Promise<string> {
   ensureUserTokenState();
   const refreshToken = cachedUserToken?.refreshToken;
@@ -351,6 +356,38 @@ export async function callFeishuUserOpenApi<T = unknown>(
   }
 }
 
+type PreferredAccessTokenOptions = {
+  fallbackToTenant?: boolean;
+};
+
+export async function callFeishuOpenApiPreferUser<T = unknown>(
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  data?: Record<string, unknown>,
+  options: PreferredAccessTokenOptions = {}
+): Promise<T> {
+  const { fallbackToTenant = true } = options;
+
+  if (!hasConfiguredFeishuUserToken()) {
+    return callFeishuOpenApi<T>(method, path, data);
+  }
+
+  try {
+    return await callFeishuUserOpenApi<T>(method, path, data);
+  } catch (error) {
+    if (!fallbackToTenant) {
+      throw error;
+    }
+
+    logFeishuMonitor('warn', 'preferred_user_request_fallback_to_tenant', {
+      method,
+      path,
+      ...toErrorContext(error),
+    });
+    return callFeishuOpenApi<T>(method, path, data);
+  }
+}
+
 export async function callFeishuOpenApiText(
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
@@ -381,5 +418,33 @@ export async function callFeishuUserOpenApiText(
     });
     const refreshedToken = await getUserAccessToken(true);
     return callFeishuOpenApiTextWithAccessToken(refreshedToken, method, path, data);
+  }
+}
+
+export async function callFeishuOpenApiTextPreferUser(
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  data?: Record<string, unknown>,
+  options: PreferredAccessTokenOptions = {}
+): Promise<string> {
+  const { fallbackToTenant = true } = options;
+
+  if (!hasConfiguredFeishuUserToken()) {
+    return callFeishuOpenApiText(method, path, data);
+  }
+
+  try {
+    return await callFeishuUserOpenApiText(method, path, data);
+  } catch (error) {
+    if (!fallbackToTenant) {
+      throw error;
+    }
+
+    logFeishuMonitor('warn', 'preferred_user_text_request_fallback_to_tenant', {
+      method,
+      path,
+      ...toErrorContext(error),
+    });
+    return callFeishuOpenApiText(method, path, data);
   }
 }

@@ -26,12 +26,12 @@ const REQUIRED_ENV_VARS = [
 ];
 
 const OPTIONAL_ENV_VARS = [
-  { key: 'FEISHU_USER_ACCESS_TOKEN', desc: '可选，仅在排障或临时补充 user 身份请求时使用' },
-  { key: 'FEISHU_USER_REFRESH_TOKEN', desc: '可选，用于自动刷新 user_access_token' },
+  { key: 'FEISHU_USER_ACCESS_TOKEN', desc: '单 owner 模式推荐配置，用于优先以会议 owner 身份读取录制文件和妙记文字稿' },
+  { key: 'FEISHU_USER_REFRESH_TOKEN', desc: '推荐配置，用于自动刷新 user_access_token' },
   { key: 'FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT', desc: '可选，user_access_token 的过期时间戳（秒或毫秒）' },
   {
     key: 'FEISHU_USER_OAUTH_SCOPE',
-    desc: '可选，最小 OAuth 授权时请求的 scope；默认仅申请 minutes:minutes.transcript:export',
+    desc: '可选，最小 OAuth 授权时请求的 scope；默认申请 vc:record:readonly 和 minutes:minutes.transcript:export',
   },
 ];
 
@@ -56,7 +56,7 @@ export default function FeishuConfigPage() {
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-slate-900">飞书集成配置</h1>
-          <p className="text-slate-600 mt-2">当前正式链路为 Webhook + OpenAPI。本页用于指引会议结束事件驱动的 tenant 主链路接入与联调检查。</p>
+          <p className="text-slate-600 mt-2">当前正式链路为 Webhook + OpenAPI。本页用于指引会议结束事件驱动的接入与联调检查；Webhook、Base 仍走 tenant 主链路，录制和妙记导出在 owner 模式下优先走 user 身份。</p>
         </div>
 
         <Card className="mb-6">
@@ -151,7 +151,7 @@ export default function FeishuConfigPage() {
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>当前状态说明</AlertTitle>
                 <AlertDescription>
-                  当前 tenant 主链路只依赖应用身份和 Base 配置即可运行。用户 OAuth 相关环境变量不再是主流程必填项，只在排障或临时补充 user 身份调用时再配置。
+                  当前 Webhook、Base 读写与恢复任务仍依赖应用身份；若你要跑通单 owner 会议的录制与妙记链路，建议补充用户 OAuth 环境变量，让系统优先以 owner 的 user_access_token 读取录制文件和导出文字稿。
                 </AlertDescription>
               </Alert>
 
@@ -184,8 +184,8 @@ export default function FeishuConfigPage() {
 
         <Card className="mb-6">
           <CardHeader>
-            <CardTitle className="text-lg">第四步：可选获取用户 Token</CardTitle>
-            <CardDescription>tenant 主链路并不依赖用户 Token；只有在排障或补充 user 身份调用时，才需要执行这一步。</CardDescription>
+            <CardTitle className="text-lg">第四步：获取用户 Token</CardTitle>
+            <CardDescription>单 owner 模式下，录制文件和妙记文字稿会优先使用用户 Token；建议完成这一步以打通 owner 权限链路。</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -195,7 +195,7 @@ export default function FeishuConfigPage() {
                 <AlertDescription className="text-blue-800">
                   点击下方按钮后，浏览器会跳到飞书授权页。你同意授权后，回调页会直接显示要写进
                   <code className="mx-1 rounded bg-blue-100 px-1 py-0.5 text-xs">.env.production</code>
-                  的 3 行用户 Token 环境变量，供排障或临时调用 user 身份接口使用。
+                  的 3 行用户 Token 环境变量，供系统优先以 owner 身份获取会议录制文件和导出妙记文字稿。
                 </AlertDescription>
               </Alert>
 
@@ -209,9 +209,11 @@ export default function FeishuConfigPage() {
                   </Button>
                 </div>
                 <p className="mt-2 text-sm text-slate-600">
-                  请先在飞书开放平台的 OAuth 回调地址配置中加入上面的地址。若你确实要补充 user 身份调用，再为应用开启
+                  请先在飞书开放平台的 OAuth 回调地址配置中加入上面的地址，并为应用开启
+                  <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">vc:record:readonly</code>
+                  和
                   <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.transcript:export</code>
-                  等所需权限；默认不再要求
+                  两项权限；默认不再要求
                   <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">offline_access</code>
                   或
                   <code className="mx-1 rounded bg-slate-100 px-1 py-0.5 text-xs">minutes:minutes.search:read</code>。

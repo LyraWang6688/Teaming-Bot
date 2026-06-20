@@ -17,7 +17,7 @@ import {
   updateMeetingRecordFields,
   upsertMeetingWaitingRecord,
 } from './bitableOpenApi';
-import { callFeishuOpenApi, FeishuOpenApiError } from './openapi';
+import { callFeishuOpenApiPreferUser, FeishuOpenApiError } from './openapi';
 import { logFeishuMonitor, toErrorContext } from './monitor';
 import { FEISHU_ACTIVE_PROCESS_STATUSES, FEISHU_PROCESS_STATUS } from './status';
 import { fetchTranscriptByMinuteToken } from './transcript';
@@ -517,7 +517,7 @@ async function analyzeMeetingTranscriptWithRetries(
 }
 
 async function getMeetingRecording(meetingId: string): Promise<MeetingRecordingResult> {
-  return callFeishuOpenApi<MeetingRecordingResult>(
+  return callFeishuOpenApiPreferUser<MeetingRecordingResult>(
     'GET',
     `/vc/v1/meetings/${meetingId}/recording`
   );

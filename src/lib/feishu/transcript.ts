@@ -1,6 +1,6 @@
 import {
   callFeishuOpenApi,
-  callFeishuOpenApiText,
+  callFeishuOpenApiTextPreferUser,
   callFeishuUserOpenApi,
 } from './openapi';
 
@@ -41,7 +41,7 @@ export async function fetchTranscriptByDocToken(docToken: string): Promise<strin
 }
 
 export async function fetchTranscriptByMinuteToken(minuteToken: string): Promise<string> {
-  const text = await callFeishuOpenApiText(
+  const text = await callFeishuOpenApiTextPreferUser(
     'GET',
     `/minutes/v1/minutes/${minuteToken}/transcript?need_speaker=true&need_timestamp=true&file_format=txt`
   );
