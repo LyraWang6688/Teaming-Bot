@@ -3,6 +3,8 @@
  * 包含Zone类型定义、计算逻辑、验证逻辑
  */
 
+import type { TeamBehaviors, BehaviorMetric } from '@/types';
+
 /**
  * Zone类型定义
  */
@@ -44,11 +46,9 @@ type Dimension = 'H' | 'M' | 'L';
  * 将行为色标映射为维度等级
  *
  * @param level 行为色标（Green/Blue/Red/Grey）
- * @param isStartup 是否为启动期
- * @param isExOrRef 是否为实验或反思维度（启动期时 Grey 视为中性）
  * @returns 维度等级 H/M/L
  */
-function toDimension(level: string, isStartup: boolean, isExOrRef: boolean): Dimension {
+function toDimension(level: string): Dimension {
   if (level === 'Green') return 'H';
   if (level === 'Blue') return 'M';
   if (level === 'Red') return 'L';
@@ -87,7 +87,10 @@ function toDimension(level: string, isStartup: boolean, isExOrRef: boolean): Dim
  * 被推导为 PS高+WS中=学习区，但 E=H/R=L 意味着学习闭环断裂）。
  * 决策树直接从行为色标到 Zone，不经过中间抽象层。
  */
-export function determineZoneFromBehaviors(behaviors: any, isStartup: boolean = false, qualityFlag?: string): TeamZone {
+export function determineZoneFromBehaviors(
+  behaviors: TeamBehaviors | null | undefined,
+  qualityFlag?: string
+): TeamZone {
   if (!behaviors) return 'Difficult to Judge';
 
   const {
@@ -97,7 +100,7 @@ export function determineZoneFromBehaviors(behaviors: any, isStartup: boolean = 
     reflection
   } = behaviors;
 
-  const getLevel = (behavior: any): string => behavior?.level || 'Grey';
+  const getLevel = (behavior?: BehaviorMetric): string => behavior?.level || 'Grey';
 
   const sLevel = getLevel(speakingUp);
   const cLevel = getLevel(collaboration);
@@ -113,9 +116,9 @@ export function determineZoneFromBehaviors(behaviors: any, isStartup: boolean = 
   if (sLevel === 'Grey' && cLevel === 'Grey') return 'Difficult to Judge';
 
   // 将行为色标映射为维度等级
-  const s = toDimension(sLevel, isStartup, false);
-  const e = toDimension(eLevel, isStartup, true);
-  const r = toDimension(rLevel, isStartup, true);
+  const s = toDimension(sLevel);
+  const e = toDimension(eLevel);
+  const r = toDimension(rLevel);
 
   // 决策树判定 Zone
   let zone: TeamZone;
@@ -210,13 +213,6 @@ export const ZONE_BEHAVIOR_EXPECTATIONS: Record<
 /**
  * 行为级别到自然语言描述的映射
  */
-const LEVEL_PHRASES: Record<string, string> = {
-  Red: '明显偏低',
-  Blue: '基本到位',
-  Green: '表现积极',
-  Grey: '暂难判断',
-};
-
 /**
  * 当后端修正 Zone 后，根据最终 Zone 和行为数据重新生成 analysis
  * 确保文字总结与最终 Zone 一致，不增加 LLM 调用
@@ -235,13 +231,13 @@ const LEVEL_PHRASES: Record<string, string> = {
  */
 export function regenerateAnalysis(
   finalZone: TeamZone,
-  originalZone: string,
-  behaviors: any,
+  _originalZone: string,
+  behaviors: TeamBehaviors | null | undefined,
   psScore: number,
   wsScore: number
 ): string {
-  const getLevel = (b: any): string => b?.level || 'Grey';
-  const getSummary = (b: any): string => b?.summary || '';
+  const getLevel = (b?: BehaviorMetric): string => b?.level || 'Grey';
+  const getSummary = (b?: BehaviorMetric): string => b?.summary || '';
   const suLevel = getLevel(behaviors?.speakingUp);
   const coLevel = getLevel(behaviors?.collaboration);
   const exLevel = getLevel(behaviors?.experimentation);

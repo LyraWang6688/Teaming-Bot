@@ -48,7 +48,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ result, onReset, 
   };
 
   // 从所有文本中收集所有名字
-  const extractAllNames = (): Set<string> => {
+  const allExtractedNames = useMemo(() => {
     const allNames = new Set<string>();
     
     // 收集发言者姓名（从沟通参与度中提取）
@@ -84,12 +84,12 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ result, onReset, 
     namesInAnalysis.forEach(name => allNames.add(name));
     
     return allNames;
-  };
+  }, [result]);
 
   // 创建姓名到字母的映射
   const speakerNameMapping = useMemo(() => {
-    const allSpeakers = extractAllNames();
-    
+    const allSpeakers = allExtractedNames;
+
     // 将姓名映射为字母 A, B, C, D, E...
     const nameToLetter = new Map<string, string>();
     const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
@@ -109,7 +109,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ result, onReset, 
     });
     
     return nameToLetter;
-  }, [result]);
+  }, [allExtractedNames]);
 
   // 替换文本中的所有名字
   const replaceNamesInText = (text: string): string => {

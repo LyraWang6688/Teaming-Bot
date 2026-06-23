@@ -11,8 +11,26 @@ interface CommunicationBubbleChartProps {
   speakerNameMapping?: Map<string, string>;
 }
 
+type ChartDataPoint = {
+  x: number;
+  y: number;
+  z: number;
+  name: string;
+  originalName: string;
+  label: string;
+  index: number;
+  color: string;
+};
+
+type CustomTooltipProps = {
+  active?: boolean;
+  payload?: Array<{
+    payload: ChartDataPoint;
+  }>;
+};
+
 // CustomTooltip 移到组件外部，避免在渲染期间创建组件
-const CustomTooltip = ({ active, payload }: any) => {
+const CustomTooltip = ({ active, payload }: CustomTooltipProps) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
     return (

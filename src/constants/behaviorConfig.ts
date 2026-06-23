@@ -1,9 +1,20 @@
-import { AlertCircle, Activity, CheckCircle, Users, Target, Zap, TrendingDown } from 'lucide-react';
+import {
+  AlertCircle,
+  Activity,
+  CheckCircle,
+  Users,
+  Target,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
 
 /**
  * 颜色分级配置 (健康/良好/警惕)
  */
-export const LEVEL_CONFIG: Record<string, { label: string; style: string; iconColor: string; Icon: any }> = {
+export const LEVEL_CONFIG: Record<
+  string,
+  { label: string; style: string; iconColor: string; Icon: LucideIcon }
+> = {
   Red: {
     label: '警惕',
     style: 'bg-red-100 text-red-800 border-red-200',

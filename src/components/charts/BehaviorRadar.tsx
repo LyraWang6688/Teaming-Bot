@@ -12,7 +12,7 @@ interface BehaviorRadarProps {
 // 保证每个维度至少有最小值，避免面积为0或退化成线段
 
 const MIN_VISIBLE = 0.3;
-
+const AXIS_TICK = { fill: '#475569', fontSize: 11, fontWeight: 800 } as const;
 const BehaviorRadar: React.FC<BehaviorRadarProps> = ({ data }) => {
 
   const chartData = [
@@ -53,11 +53,10 @@ const BehaviorRadar: React.FC<BehaviorRadarProps> = ({ data }) => {
           <PolarGrid stroke="#e2e8f0" />
           <PolarAngleAxis
             dataKey="subject"
-            tick={{ fill: '#475569', fontSize: 11, fontWeight: 800 } as any}
+            tick={AXIS_TICK}
           />
           <PolarRadiusAxis
             domain={[0, 10]}
-            ticks={[5, 7, 10] as any}
             tick={false}
             axisLine={false}
           />

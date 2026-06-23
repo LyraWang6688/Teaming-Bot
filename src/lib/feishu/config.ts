@@ -1,3 +1,8 @@
+import {
+  getDefaultFeishuOauthScope,
+  getProjectPublicUrl as getPlatformProjectPublicUrl,
+} from '@/lib/platform/env';
+
 export type FeishuBitableConfig = {
   appToken: string;
   tableId: string;
@@ -15,10 +20,7 @@ export function getFeishuBitableConfig(): FeishuBitableConfig {
 }
 
 export function getProjectPublicUrl(): string {
-  return (
-    process.env.PROJECT_PUBLIC_URL ||
-    'http://localhost:5000'
-  ).replace(/\/$/, '');
+  return getPlatformProjectPublicUrl();
 }
 
 export function getFeishuUserOauthRedirectUri(): string {
@@ -26,10 +28,7 @@ export function getFeishuUserOauthRedirectUri(): string {
 }
 
 export function getFeishuUserOauthScope(): string {
-  return (
-    process.env.FEISHU_USER_OAUTH_SCOPE ||
-    'vc:record:readonly minutes:minutes.transcript:export offline_access'
-  );
+  return getDefaultFeishuOauthScope();
 }
 
 export function getFeishuAppCredentials(): { appId: string; appSecret: string } {

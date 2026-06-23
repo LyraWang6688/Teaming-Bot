@@ -4,6 +4,14 @@ import {
   getFeishuUserOauthRedirectUri,
   getProjectPublicUrl,
 } from '@/lib/feishu/config';
+import {
+  consumeOauthState,
+  getUserFeishuIntegrationContext,
+  upsertFeishuAuthorization,
+  upsertFeishuIntegrationCheckStatus,
+  updateUserFeishuIntegration,
+  writeAuditLog,
+} from '@/lib/feishu/integrationStore';
 
 type OauthTokenResponse = {
   code?: number;
@@ -13,6 +21,7 @@ type OauthTokenResponse = {
   access_token?: string;
   refresh_token?: string;
   expires_in?: number;
+  refresh_token_expires_in?: number;
 };
 
 function escapeHtml(value: string): string {
@@ -70,6 +79,66 @@ function renderErrorPage(message: string) {
   });
 }
 
+function renderManagedSuccessPage(options: {
+  integrationName: string;
+  redirectUri: string;
+  state: string;
+}) {
+  const html = renderHtml(
+    '飞书用户授权成功',
+    '当前授权结果已直接写入数据库，后续会由服务端自动刷新和使用，无需手工复制环境变量。',
+    `<div class="panel">
+      <p><strong>集成名称:</strong> <code>${escapeHtml(options.integrationName)}</code></p>
+      <p><strong>state:</strong> <code>${escapeHtml(options.state)}</code></p>
+      <p><strong>redirect_uri:</strong> <code>${escapeHtml(options.redirectUri)}</code></p>
+    </div>
+    <div class="panel">
+      <p>这次授权已经自动保存到当前账号的飞书集成配置中。</p>
+      <p>下一步建议返回配置页，继续完成权限检查、多维表格初始化和联通性验证。</p>
+    </div>
+    <div class="actions">
+      <a href="${escapeHtml(`${getProjectPublicUrl()}/feishu-config`)}">返回飞书配置页</a>
+    </div>`
+  );
+
+  return new NextResponse(html, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+  });
+}
+
+async function exchangeOauthCode(options: {
+  code: string;
+  appId: string;
+  appSecret: string;
+  redirectUri: string;
+}): Promise<OauthTokenResponse> {
+  const response = await fetch('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+    },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      code: options.code,
+      client_id: options.appId,
+      client_secret: options.appSecret,
+      redirect_uri: options.redirectUri,
+    }),
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as OauthTokenResponse;
+  if (!response.ok || payload.code !== 0 || !payload.access_token) {
+    throw new Error(
+      payload.error_description ||
+        payload.msg ||
+        payload.error ||
+        `换取 token 失败：HTTP ${response.status}`
+    );
+  }
+
+  return payload;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const code = request.nextUrl.searchParams.get('code');
@@ -86,32 +155,92 @@ export async function GET(request: NextRequest) {
       return renderErrorPage('回调地址中缺少 code，未能完成授权换 token。');
     }
 
-    const { appId, appSecret } = getFeishuAppCredentials();
     const redirectUri = getFeishuUserOauthRedirectUri();
+    if (state) {
+      const oauthState = await consumeOauthState(state);
+      if (oauthState) {
+        const integration = await getUserFeishuIntegrationContext(
+          oauthState.userId,
+          oauthState.integrationId
+        );
 
-    const response = await fetch('https://open.feishu.cn/open-apis/authen/v2/oauth/token', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-      body: JSON.stringify({
-        grant_type: 'authorization_code',
-        code,
-        client_id: appId,
-        client_secret: appSecret,
-        redirect_uri: redirectUri,
-      }),
-    });
+        if (!integration) {
+          return renderErrorPage('已找到 OAuth 状态，但对应的飞书集成配置不存在。');
+        }
 
-    const payload = (await response.json().catch(() => ({}))) as OauthTokenResponse;
-    if (!response.ok || payload.code !== 0 || !payload.access_token) {
-      return renderErrorPage(
-        payload.error_description ||
-          payload.msg ||
-          payload.error ||
-          `换取 token 失败：HTTP ${response.status}`
-      );
+        const payload = await exchangeOauthCode({
+          code,
+          appId: integration.appId,
+          appSecret: integration.secrets.appSecret,
+          redirectUri,
+        });
+        const accessToken = payload.access_token;
+        if (!accessToken) {
+          return renderErrorPage('飞书 OAuth 返回成功，但缺少 access_token。');
+        }
+
+        const accessTokenExpiresAt = new Date(
+          Date.now() + Math.max(payload.expires_in || 7200, 60) * 1000
+        );
+        const refreshTokenExpiresAt = payload.refresh_token_expires_in
+          ? new Date(Date.now() + Math.max(payload.refresh_token_expires_in, 60) * 1000)
+          : null;
+
+        await upsertFeishuAuthorization({
+          integrationId: integration.id,
+          accessToken,
+          refreshToken: payload.refresh_token || null,
+          accessTokenExpiresAt,
+          refreshTokenExpiresAt,
+          scope: integration.oauthScope,
+          status: 'authorized',
+        });
+
+        await upsertFeishuIntegrationCheckStatus({
+          integrationId: integration.id,
+          oauthStatus: 'authorized',
+          lastCheckedAt: new Date(),
+          lastErrorType: null,
+          lastErrorMessage: null,
+          details: {
+            authorizedAt: new Date().toISOString(),
+            accessTokenExpiresAt: accessTokenExpiresAt.toISOString(),
+          },
+        });
+
+        await updateUserFeishuIntegration(oauthState.userId, integration.id, {
+          status: 'oauth_authorized',
+          setupStep: 'oauth',
+        });
+
+        await writeAuditLog({
+          userId: oauthState.userId,
+          integrationId: integration.id,
+          action: 'oauth.authorized',
+          result: 'success',
+          summary: '飞书 OAuth 授权成功并写入数据库',
+          metadata: {
+            redirectUri,
+            hasRefreshToken: Boolean(payload.refresh_token),
+          },
+        });
+
+        return renderManagedSuccessPage({
+          integrationName: integration.name,
+          redirectUri,
+          state,
+        });
+      }
     }
+
+    const { appId, appSecret } = getFeishuAppCredentials();
+
+    const payload = await exchangeOauthCode({
+      code,
+      appId,
+      appSecret,
+      redirectUri,
+    });
 
     const expiresAt = Math.floor(Date.now() / 1000) + Math.max(payload.expires_in || 7200, 60);
     const envSnippet = [

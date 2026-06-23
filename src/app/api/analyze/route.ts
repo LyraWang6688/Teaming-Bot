@@ -69,10 +69,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(formatted);
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Analyze Error:', error);
     return NextResponse.json(
-      { error: error.message || '分析失败' },
+      { error: error instanceof Error ? error.message : '分析失败' },
       { status: 500 }
     );
   }

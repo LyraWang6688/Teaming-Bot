@@ -2,15 +2,60 @@ import { NextResponse } from 'next/server';
 import {
   getFeishuAppCredentials,
   getFeishuUserOauthRedirectUri,
-  getFeishuUserOauthScope,
 } from '@/lib/feishu/config';
+import {
+  createOauthState,
+  getUserFeishuIntegrationDetail,
+} from '@/lib/feishu/integrationStore';
+import { getDefaultFeishuOauthScope } from '@/lib/platform/env';
+import { getAuthenticatedUser } from '@/lib/supabase/server';
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const { appId } = getFeishuAppCredentials();
+    const url = new URL(request.url);
+    const integrationId = url.searchParams.get('integrationId');
+    const redirectTo = url.searchParams.get('redirectTo');
     const redirectUri = getFeishuUserOauthRedirectUri();
-    const scope = getFeishuUserOauthScope();
-    const state = `feishu-oauth-${Date.now()}`;
+
+    let appId: string;
+    let scope: string;
+    let state: string;
+
+    if (integrationId) {
+      const user = await getAuthenticatedUser();
+      if (!user) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: '请先登录后再发起飞书 OAuth 授权。',
+          },
+          { status: 401 }
+        );
+      }
+
+      const integration = await getUserFeishuIntegrationDetail(user.id, integrationId);
+      if (!integration) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: '未找到对应的飞书集成配置。',
+          },
+          { status: 404 }
+        );
+      }
+
+      appId = integration.appId;
+      scope = integration.oauthScope || getDefaultFeishuOauthScope();
+      state = await createOauthState({
+        userId: user.id,
+        integrationId,
+        redirectTo,
+      });
+    } else {
+      ({ appId } = getFeishuAppCredentials());
+      scope = getDefaultFeishuOauthScope();
+      state = `feishu-oauth-${Date.now()}`;
+    }
 
     const authorizeUrl = new URL('https://open.feishu.cn/open-apis/authen/v1/authorize');
     authorizeUrl.searchParams.set('app_id', appId);

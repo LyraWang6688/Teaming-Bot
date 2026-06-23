@@ -4,7 +4,6 @@
  */
 
 import type { AnalysisResult } from '@/types';
-import type { OutputConfig } from '@/constants/outputConfig';
 
 /**
  * Zone 中文映射
@@ -41,7 +40,7 @@ const BEHAVIOR_LABELS: Record<string, string> = {
  * 将分析结果格式化为 Markdown 文本
  * 用于飞书多维表格存储
  */
-export function markdownFormatter(result: AnalysisResult, _config: OutputConfig): string {
+export function markdownFormatter(result: AnalysisResult): string {
   const { teamState, behaviors, leaderAdvice } = result;
 
   const sections: string[] = [];

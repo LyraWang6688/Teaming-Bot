@@ -325,7 +325,6 @@ export async function analyzeMeetingText(meetingText: string): Promise<AnalysisR
   }
 
   // 步骤2：以决策树从行为色标判定最终 Zone
-  const isStartup = parsed.metadata?.projectPhase === 'Start-up';
   const qualityFlag = parsed.metadata?.qualityFlag;
 
   // 修复4：有效发言过少时强制返回 Difficult to Judge
@@ -343,7 +342,7 @@ export async function analyzeMeetingText(meetingText: string): Promise<AnalysisR
       parsed.teamState.workStandardScore
     );
   } else {
-    const zoneFromBehavior = determineZoneFromBehaviors(parsed.behaviors, isStartup, qualityFlag);
+    const zoneFromBehavior = determineZoneFromBehaviors(parsed.behaviors, qualityFlag);
     if (zoneFromBehavior && zoneFromBehavior !== 'Difficult to Judge') {
       const originalZone = parsed.teamState?.zone;
       if (zoneFromBehavior !== originalZone) {
