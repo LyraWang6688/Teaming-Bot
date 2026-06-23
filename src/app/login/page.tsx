@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, Suspense, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label';
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import { AlertCircle, CheckCircle2, Mail } from 'lucide-react';
 
-export default function LoginPage() {
+function LoginPageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -139,5 +139,13 @@ export default function LoginPage() {
         </div>
       </div>
     </Layout>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginPageContent />
+    </Suspense>
   );
 }
