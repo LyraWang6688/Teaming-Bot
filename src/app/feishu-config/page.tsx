@@ -146,6 +146,8 @@ function getStatusLabel(status: string | null | undefined) {
       return '已授权';
     case 'oauth_authorized':
       return 'OAuth 已完成';
+    case 'passed':
+      return '已通过';
     case 'success':
       return '正常';
     case 'pending':
@@ -163,6 +165,7 @@ function getStatusBadgeClass(status: string | null | undefined) {
   switch (status) {
     case 'authorized':
     case 'oauth_authorized':
+    case 'passed':
     case 'success':
       return 'border-emerald-200 bg-emerald-50 text-emerald-700';
     case 'failed':
@@ -217,6 +220,8 @@ export default function FeishuConfigPage() {
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isRunningChecks, setIsRunningChecks] = useState(false);
+  const [isInitializingBase, setIsInitializingBase] = useState(false);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
 
@@ -463,6 +468,70 @@ export default function FeishuConfigPage() {
       setPageError(error instanceof Error ? error.message : '保存飞书集成配置失败。');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleRunChecks = async () => {
+    if (!selectedIntegrationId) {
+      return;
+    }
+
+    setIsRunningChecks(true);
+    setPageMessage(null);
+    setPageError(null);
+
+    try {
+      const result = await parseJsonResponse<{
+        allPassed: boolean;
+      }>(
+        await fetch(`/api/feishu/integrations/${selectedIntegrationId}/checks`, {
+          method: 'POST',
+        })
+      );
+
+      await loadIntegrations(selectedIntegrationId);
+      setPageMessage(
+        result.allPassed
+          ? '真实检查已完成，当前集成已通过全部校验。'
+          : '真实检查已完成，状态面板已刷新，请根据结果继续处理。'
+      );
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '执行真实检查失败。');
+    } finally {
+      setIsRunningChecks(false);
+    }
+  };
+
+  const handleInitializeBase = async () => {
+    if (!selectedIntegrationId) {
+      return;
+    }
+
+    setIsInitializingBase(true);
+    setPageMessage(null);
+    setPageError(null);
+
+    try {
+      const result = await parseJsonResponse<{
+        appToken: string;
+        tableId: string;
+        createdApp: boolean;
+        createdTable: boolean;
+        createdFields: string[];
+      }>(
+        await fetch(`/api/feishu/integrations/${selectedIntegrationId}/base/initialize`, {
+          method: 'POST',
+        })
+      );
+
+      await loadIntegrations(selectedIntegrationId);
+      setPageMessage(
+        `Base 初始化完成，已绑定 ${result.appToken} / ${result.tableId}，新增字段 ${result.createdFields.length} 个。`
+      );
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '初始化 Base 失败。');
+    } finally {
+      setIsInitializingBase(false);
     }
   };
 
@@ -941,11 +1010,16 @@ export default function FeishuConfigPage() {
                         授权当前集成
                       </Button>
                     )}
-                    <Button variant="outline" disabled>
-                      一键初始化 Base
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void handleInitializeBase()}
+                      disabled={!selectedIntegrationId || isInitializingBase || isLoadingDetail}
+                    >
+                      {isInitializingBase ? '初始化中...' : '一键初始化 Base'}
                     </Button>
                     <div className="flex items-center text-xs text-slate-500">
-                      一键初始化 Base 和真实检查按钮会继续接入下一批后端能力。
+                      已保存基础配置后，可直接初始化 Base；成功后会自动刷新状态面板。
                     </div>
                   </div>
                 </CardContent>
@@ -955,7 +1029,7 @@ export default function FeishuConfigPage() {
                 <CardHeader>
                   <CardTitle>第 5 步：检查结果</CardTitle>
                   <CardDescription>
-                    页面只展示内部状态模型，不直接暴露飞书原始错误对象。后续会继续补全真实检查与一键初始化。
+                    点击“执行真实检查”后，系统会在线校验应用凭证、OAuth、Webhook/Base 联通情况，并把结果写回内部状态模型。
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -963,6 +1037,20 @@ export default function FeishuConfigPage() {
                     <Skeleton className="h-40 w-full" />
                   ) : selectedIntegrationId ? (
                     <>
+                      <div className="flex flex-wrap gap-3">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void handleRunChecks()}
+                          disabled={!selectedIntegrationId || isRunningChecks || isLoadingDetail}
+                        >
+                          {isRunningChecks ? '检查中...' : '执行真实检查'}
+                        </Button>
+                        <div className="flex items-center text-xs text-slate-500">
+                          事件订阅当前通过是否收到 Webhook 回调间接判断；会议录制与妙记资源权限会在真实链路中继续验证。
+                        </div>
+                      </div>
+
                       <div className="grid gap-3 md:grid-cols-3">
                         {[
                           ['应用凭证', detail?.checks?.appCredentialStatus],

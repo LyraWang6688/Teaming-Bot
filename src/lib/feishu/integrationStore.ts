@@ -69,6 +69,19 @@ export type FeishuAuthorizationView = {
   };
 };
 
+export type FeishuAuthorizationContext = {
+  integrationId: string;
+  status: string;
+  authorizedOpenId: string | null;
+  authorizedUserName: string | null;
+  scope: string | null;
+  accessToken: string;
+  refreshToken: string | null;
+  accessTokenExpiresAt: Date;
+  refreshTokenExpiresAt: Date | null;
+  updatedAt: string;
+};
+
 export type FeishuCheckStatusView = {
   appCredentialStatus: string;
   permissionStatus: string;
@@ -211,6 +224,21 @@ function mapAuthorizationView(row: FeishuAuthorizationRow): FeishuAuthorizationV
       accessToken: maskSecret(accessToken),
       refreshToken: maskSecret(refreshToken),
     },
+  };
+}
+
+function mapAuthorizationContext(row: FeishuAuthorizationRow): FeishuAuthorizationContext {
+  return {
+    integrationId: row.integrationId,
+    status: row.status,
+    authorizedOpenId: row.authorizedOpenId,
+    authorizedUserName: row.authorizedUserName,
+    scope: row.scope,
+    accessToken: decrypt(row.accessTokenEncrypted),
+    refreshToken: row.refreshTokenEncrypted ? decrypt(row.refreshTokenEncrypted) : null,
+    accessTokenExpiresAt: row.accessTokenExpiresAt,
+    refreshTokenExpiresAt: row.refreshTokenExpiresAt,
+    updatedAt: row.updatedAt.toISOString(),
   };
 }
 
@@ -424,6 +452,19 @@ export async function getLatestFeishuAuthorization(
   return row ? mapAuthorizationView(row) : null;
 }
 
+export async function getLatestFeishuAuthorizationContext(
+  integrationId: string
+): Promise<FeishuAuthorizationContext | null> {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(feishuAuthorizations)
+    .where(eq(feishuAuthorizations.integrationId, integrationId))
+    .limit(1);
+
+  return row ? mapAuthorizationContext(row) : null;
+}
+
 export async function upsertFeishuAuthorization(
   input: UpsertAuthorizationInput
 ): Promise<FeishuAuthorizationView> {
@@ -544,7 +585,8 @@ export async function markFeishuIntegrationWebhookReceived(
 
   await upsertFeishuIntegrationCheckStatus({
     integrationId,
-    webhookStatus: 'passed',
+    eventSubscriptionStatus: 'success',
+    webhookStatus: 'success',
     lastCheckedAt: receivedAt,
     lastErrorType: null,
     lastErrorMessage: null,
