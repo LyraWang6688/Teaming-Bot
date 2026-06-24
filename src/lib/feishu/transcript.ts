@@ -2,6 +2,7 @@ import {
   callFeishuIntegrationOpenApiTextPreferUser,
   callFeishuIntegrationTenantOpenApi,
   callFeishuIntegrationUserOpenApi,
+  callFeishuIntegrationUserOpenApiText,
 } from './integrationOpenApi';
 import type { FeishuIntegrationContext } from './integrationStore';
 
