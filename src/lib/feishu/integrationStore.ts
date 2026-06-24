@@ -524,6 +524,34 @@ export async function getFeishuIntegrationCheckStatus(
   return row ? mapCheckStatus(row) : null;
 }
 
+export async function markFeishuIntegrationWebhookReceived(
+  integrationId: string,
+  input?: {
+    receivedAt?: Date;
+    details?: Record<string, unknown>;
+  }
+): Promise<void> {
+  const db = getDb();
+  const receivedAt = input?.receivedAt || new Date();
+
+  await db
+    .update(feishuIntegrations)
+    .set({
+      lastWebhookReceivedAt: receivedAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(feishuIntegrations.id, integrationId));
+
+  await upsertFeishuIntegrationCheckStatus({
+    integrationId,
+    webhookStatus: 'passed',
+    lastCheckedAt: receivedAt,
+    lastErrorType: null,
+    lastErrorMessage: null,
+    details: input?.details,
+  });
+}
+
 export async function createOauthState(input: {
   userId: string;
   integrationId: string;

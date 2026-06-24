@@ -11,7 +11,34 @@ import {
   isValidFeishuWebhookToken,
   type FeishuWebhookEnvelope,
 } from '@/lib/feishu/webhookProcessor';
+import {
+  getFeishuIntegrationByWebhookToken,
+  markFeishuIntegrationWebhookReceived,
+} from '@/lib/feishu/integrationStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
+
+async function resolveWebhookIntegration(envelope: FeishuWebhookEnvelope) {
+  const actualToken = envelope.token || envelope.header?.token;
+
+  if (actualToken) {
+    const integration = await getFeishuIntegrationByWebhookToken(actualToken);
+    if (integration) {
+      return {
+        mode: 'integration' as const,
+        integration,
+      };
+    }
+  }
+
+  if (isValidFeishuWebhookToken(envelope)) {
+    return {
+      mode: 'legacy' as const,
+      integration: null,
+    };
+  }
+
+  return null;
+}
 
 export async function GET() {
   logRuntimeMonitor('info', 'webhook_entry', 'webhook_health_checked');
@@ -26,17 +53,20 @@ export async function POST(request: NextRequest) {
     const envelope = (await request.json()) as FeishuWebhookEnvelope;
     const eventType = envelope.header?.event_type || envelope.type || null;
     const eventId = envelope.header?.event_id || (envelope.event?.event_id as string | undefined);
+    const resolvedWebhook = await resolveWebhookIntegration(envelope);
 
     logRuntimeMonitor('info', 'webhook_entry', 'webhook_request_received', {
       eventType,
       eventId: eventId || null,
       hasChallenge: Boolean(envelope.challenge),
       isUrlVerification: envelope.type === 'url_verification',
+      matchedMode: resolvedWebhook?.mode || 'none',
+      integrationId: resolvedWebhook?.integration?.id || null,
     });
 
     // 飞书 URL 验证事件：原样返回 challenge。
     if (envelope.type === 'url_verification' && envelope.challenge) {
-      if (!isValidFeishuWebhookToken(envelope)) {
+      if (!resolvedWebhook) {
         logRuntimeMonitor('warn', 'webhook_entry', 'webhook_url_verification_rejected', {
           eventType,
           reason: 'invalid_token',
@@ -44,13 +74,24 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'invalid token' }, { status: 401 });
       }
 
+      if (resolvedWebhook.integration) {
+        await markFeishuIntegrationWebhookReceived(resolvedWebhook.integration.id, {
+          details: {
+            source: 'url_verification',
+            eventType,
+          },
+        });
+      }
+
       logRuntimeMonitor('info', 'webhook_entry', 'webhook_url_verification_succeeded', {
         eventType,
+        matchedMode: resolvedWebhook.mode,
+        integrationId: resolvedWebhook.integration?.id || null,
       });
       return NextResponse.json({ challenge: envelope.challenge });
     }
 
-    if (!isValidFeishuWebhookToken(envelope)) {
+    if (!resolvedWebhook) {
       logRuntimeMonitor('warn', 'webhook_entry', 'webhook_request_rejected', {
         eventType,
         eventId: eventId || null,
@@ -69,10 +110,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'missing event_id' }, { status: 400 });
     }
 
+    if (resolvedWebhook.integration) {
+      await markFeishuIntegrationWebhookReceived(resolvedWebhook.integration.id, {
+        details: {
+          source: 'event',
+          eventType: result.eventType || eventType,
+          eventId: result.eventId || eventId || null,
+          duplicate: result.duplicate,
+        },
+      });
+    }
+
     logRuntimeMonitor('info', 'webhook_entry', 'webhook_request_accepted', {
       eventType: result.eventType || eventType,
       eventId: result.eventId || eventId || null,
       duplicate: result.duplicate,
+      matchedMode: resolvedWebhook.mode,
+      integrationId: resolvedWebhook.integration?.id || null,
     });
 
     return NextResponse.json({
