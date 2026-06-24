@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'invalid token' }, { status: 401 });
     }
 
-    const result = enqueueFeishuWebhookEvent(envelope);
+    const result = await enqueueFeishuWebhookEvent(envelope, resolvedWebhook.integration);
     if (!result.accepted) {
       logRuntimeMonitor('warn', 'webhook_entry', 'webhook_request_rejected', {
         eventType,

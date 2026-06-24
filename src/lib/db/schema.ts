@@ -1,4 +1,5 @@
 import {
+  integer,
   index,
   jsonb,
   pgTable,
@@ -166,9 +167,45 @@ export const meetingRecords = pgTable(
   ]
 );
 
+export const meetingPipelineTasks = pgTable(
+  'meeting_pipeline_tasks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull(),
+    integrationId: uuid('integration_id').notNull(),
+    feishuMeetingId: text('feishu_meeting_id').notNull(),
+    eventId: text('event_id'),
+    eventType: text('event_type'),
+    currentStage: text('current_stage').notNull().default('meeting_ended'),
+    status: text('status').notNull().default('pending'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    baseRecordId: text('base_record_id'),
+    minuteToken: text('minute_token'),
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    lastErrorType: text('last_error_type'),
+    lastErrorMessage: text('last_error_message'),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('meeting_pipeline_tasks_integration_meeting_uidx').on(
+      table.integrationId,
+      table.feishuMeetingId
+    ),
+    index('meeting_pipeline_tasks_status_next_run_idx').on(table.status, table.nextRunAt),
+    index('meeting_pipeline_tasks_integration_id_idx').on(table.integrationId),
+    index('meeting_pipeline_tasks_event_id_idx').on(table.eventId),
+  ]
+);
+
 export type FeishuIntegrationRow = typeof feishuIntegrations.$inferSelect;
 export type FeishuAuthorizationRow = typeof feishuAuthorizations.$inferSelect;
 export type FeishuIntegrationCheckRow = typeof feishuIntegrationChecks.$inferSelect;
 export type FeishuOauthStateRow = typeof feishuOauthStates.$inferSelect;
 export type FeishuAuditLogRow = typeof feishuAuditLogs.$inferSelect;
 export type MeetingRecordRow = typeof meetingRecords.$inferSelect;
+export type MeetingPipelineTaskRow = typeof meetingPipelineTasks.$inferSelect;

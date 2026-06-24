@@ -73,6 +73,7 @@ function ProcessingState({ status }: { status?: string | null }) {
 function ReportContent() {
   const searchParams = useSearchParams();
   const recordId = searchParams.get('recordId');
+  const integrationId = searchParams.get('integrationId');
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +90,13 @@ function ReportContent() {
 
     const fetchData = async () => {
       try {
-        const response = await fetch(`/api/feishu/record?recordId=${recordId}`);
+        const requestUrl = new URL('/api/feishu/record', window.location.origin);
+        requestUrl.searchParams.set('recordId', recordId);
+        if (integrationId) {
+          requestUrl.searchParams.set('integrationId', integrationId);
+        }
+
+        const response = await fetch(requestUrl.toString());
         const data = await response.json();
 
         if (!response.ok) {
@@ -117,7 +124,7 @@ function ReportContent() {
     };
 
     fetchData();
-  }, [recordId]);
+  }, [integrationId, recordId]);
 
   if (loading) {
     return <LoadingState />;

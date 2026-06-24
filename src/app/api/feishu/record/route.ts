@@ -5,18 +5,32 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getFeishuBitableConfig } from '@/lib/feishu/config';
-import { getBitableRecord } from '@/lib/feishu/bitableOpenApi';
+import {
+  createIntegrationBitableAccess,
+  getBitableRecord,
+} from '@/lib/feishu/bitableOpenApi';
+import { getFeishuIntegrationContextById } from '@/lib/feishu/integrationStore';
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const recordId = searchParams.get('recordId');
+    const integrationId = searchParams.get('integrationId');
     
     if (!recordId) {
       return NextResponse.json({ error: '缺少 recordId 参数' }, { status: 400 });
     }
     
-    const config = getFeishuBitableConfig();
+    const config = integrationId
+      ? await (async () => {
+          const integration = await getFeishuIntegrationContextById(integrationId);
+          if (!integration) {
+            throw new Error('未找到对应的飞书集成配置');
+          }
+
+          return createIntegrationBitableAccess(integration);
+        })()
+      : getFeishuBitableConfig();
     const record = await getBitableRecord(config, recordId);
     
     return NextResponse.json({

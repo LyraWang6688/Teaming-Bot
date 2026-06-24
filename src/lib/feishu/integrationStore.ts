@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db/client';
 import {
   feishuAuditLogs,
@@ -451,6 +451,36 @@ export async function getUserFeishuIntegrationContext(
     .limit(1);
 
   return row ? mapIntegrationContext(row) : null;
+}
+
+export async function getFeishuIntegrationContextById(
+  integrationId: string
+): Promise<FeishuIntegrationContext | null> {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(feishuIntegrations)
+    .where(and(eq(feishuIntegrations.id, integrationId), isNull(feishuIntegrations.deletedAt)))
+    .limit(1);
+
+  return row ? mapIntegrationContext(row) : null;
+}
+
+export async function listFeishuIntegrationContextsWithBase(): Promise<FeishuIntegrationContext[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(feishuIntegrations)
+    .where(
+      and(
+        isNull(feishuIntegrations.deletedAt),
+        isNotNull(feishuIntegrations.baseAppTokenEncrypted),
+        isNotNull(feishuIntegrations.meetingTableId)
+      )
+    )
+    .orderBy(desc(feishuIntegrations.updatedAt));
+
+  return rows.map(mapIntegrationContext);
 }
 
 export async function getLatestFeishuAuthorization(

@@ -1,6 +1,8 @@
 import type { AnalysisResult } from '@/types';
 import { callFeishuOpenApi } from './openapi';
 import type { FeishuBitableConfig } from './config';
+import { callFeishuIntegrationTenantOpenApi } from './integrationOpenApi';
+import type { FeishuIntegrationContext } from './integrationStore';
 import { FEISHU_PROCESS_STATUS, type FeishuProcessStatus } from './status';
 
 type RecordFields = Record<string, unknown>;
@@ -50,6 +52,37 @@ export type FeishuMeetingRecord = {
   errorMessage?: unknown;
   analysisData: AnalysisResult | null;
 };
+
+export type FeishuBitableAccess = FeishuBitableConfig & {
+  integration?: FeishuIntegrationContext | null;
+};
+
+export function createIntegrationBitableAccess(
+  integration: FeishuIntegrationContext
+): FeishuBitableAccess {
+  if (!integration.secrets.baseAppToken || !integration.meetingTableId) {
+    throw new Error('当前集成尚未完成 Base 初始化。');
+  }
+
+  return {
+    appToken: integration.secrets.baseAppToken,
+    tableId: integration.meetingTableId,
+    integration,
+  };
+}
+
+async function callBitableOpenApi<T = unknown>(
+  config: FeishuBitableAccess,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  path: string,
+  data?: Record<string, unknown>
+): Promise<T> {
+  if (config.integration) {
+    return callFeishuIntegrationTenantOpenApi<T>(config.integration, method, path, data);
+  }
+
+  return callFeishuOpenApi<T>(method, path, data);
+}
 
 function extractBitableText(value: unknown): string | undefined {
   if (typeof value === 'string') {
@@ -151,10 +184,11 @@ function toRecord(record: BitableRecord): FeishuMeetingRecord {
 }
 
 export async function getBitableRecord(
-  config: FeishuBitableConfig,
+  config: FeishuBitableAccess,
   recordId: string
 ): Promise<FeishuMeetingRecord> {
-  const result = await callFeishuOpenApi<RecordBatchGetResult>(
+  const result = await callBitableOpenApi<RecordBatchGetResult>(
+    config,
     'POST',
     `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/batch_get`,
     {
@@ -177,10 +211,11 @@ export async function getBitableRecord(
 }
 
 export async function findMeetingRecordByMeetingId(
-  config: FeishuBitableConfig,
+  config: FeishuBitableAccess,
   meetingId: string
 ): Promise<FeishuMeetingRecord | null> {
-  const result = await callFeishuOpenApi<RecordSearchResult>(
+  const result = await callBitableOpenApi<RecordSearchResult>(
+    config,
     'POST',
     `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/search`,
     {
@@ -203,7 +238,7 @@ export async function findMeetingRecordByMeetingId(
 }
 
 export async function listMeetingRecordsByStatuses(
-  config: FeishuBitableConfig,
+  config: FeishuBitableAccess,
   statuses: FeishuProcessStatus[],
   pageSize = 20
 ): Promise<FeishuMeetingRecord[]> {
@@ -213,7 +248,8 @@ export async function listMeetingRecordsByStatuses(
     let pageToken: string | undefined;
 
     do {
-      const result = await callFeishuOpenApi<RecordSearchResult>(
+      const result = await callBitableOpenApi<RecordSearchResult>(
+        config,
         'POST',
         `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/search`,
         {
@@ -241,10 +277,11 @@ export async function listMeetingRecordsByStatuses(
 }
 
 export async function createMeetingRecord(
-  config: FeishuBitableConfig,
+  config: FeishuBitableAccess,
   fields: RecordFields
 ): Promise<FeishuMeetingRecord> {
-  const result = await callFeishuOpenApi<RecordCreateOrGetResult>(
+  const result = await callBitableOpenApi<RecordCreateOrGetResult>(
+    config,
     'POST',
     `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records`,
     { fields }
@@ -254,11 +291,12 @@ export async function createMeetingRecord(
 }
 
 export async function updateMeetingRecordFields(
-  config: FeishuBitableConfig,
+  config: FeishuBitableAccess,
   recordId: string,
   fields: RecordFields
 ): Promise<void> {
-  await callFeishuOpenApi<RecordCreateOrGetResult>(
+  await callBitableOpenApi<RecordCreateOrGetResult>(
+    config,
     'PUT',
     `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/${recordId}`,
     { fields }
@@ -266,7 +304,7 @@ export async function updateMeetingRecordFields(
 }
 
 export async function upsertMeetingWaitingRecord(
-  config: FeishuBitableConfig,
+  config: FeishuBitableAccess,
   meeting: {
     meetingId: string;
     topic?: string;
@@ -295,7 +333,7 @@ export async function upsertMeetingWaitingRecord(
 }
 
 export async function setMeetingProcessStatus(
-  config: FeishuBitableConfig,
+  config: FeishuBitableAccess,
   recordId: string,
   status: FeishuProcessStatus,
   extraFields: RecordFields = {}
