@@ -38,6 +38,9 @@ export type FeishuIntegrationView = {
   lastWebhookReceivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  links: {
+    baseUrl: string | null;
+  };
   masked: {
     appSecret: string | null;
     webhookVerificationToken: string | null;
@@ -162,6 +165,14 @@ function toIsoString(value: Date | null): string | null {
   return value ? value.toISOString() : null;
 }
 
+function buildFeishuBaseUrl(baseAppToken: string | null, meetingTableId: string | null): string | null {
+  if (!baseAppToken || !meetingTableId) {
+    return null;
+  }
+
+  return `https://feishu.cn/base/${baseAppToken}?table=${meetingTableId}`;
+}
+
 function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
   const appSecret = decrypt(row.appSecretEncrypted);
   const webhookVerificationToken = decrypt(row.webhookVerificationTokenEncrypted);
@@ -180,6 +191,9 @@ function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
     lastWebhookReceivedAt: toIsoString(row.lastWebhookReceivedAt),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    links: {
+      baseUrl: buildFeishuBaseUrl(baseAppToken, row.meetingTableId),
+    },
     masked: {
       appSecret: maskSecret(appSecret),
       webhookVerificationToken: maskSecret(webhookVerificationToken),

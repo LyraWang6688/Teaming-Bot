@@ -58,6 +58,9 @@ type IntegrationView = {
   lastWebhookReceivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  links: {
+    baseUrl: string | null;
+  };
   masked: {
     appSecret: string | null;
     webhookVerificationToken: string | null;
@@ -955,6 +958,21 @@ export default function FeishuConfigPage() {
                         <div>Base App Token：{selectedIntegration?.masked.baseAppToken || '未保存'}</div>
                         <div>Meeting Table ID：{selectedIntegration?.meetingTableId || '未保存'}</div>
                         <div>初始化时间：{formatDateTime(selectedIntegration?.initializedAt || null)}</div>
+                        <div>
+                          多维表格链接：
+                          {selectedIntegration?.links.baseUrl ? (
+                            <a
+                              href={selectedIntegration.links.baseUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="ml-2 text-indigo-600 hover:text-indigo-700 hover:underline"
+                            >
+                              打开多维表格
+                            </a>
+                          ) : (
+                            ' 暂未生成'
+                          )}
+                        </div>
                       </div>
                     </div>
 
