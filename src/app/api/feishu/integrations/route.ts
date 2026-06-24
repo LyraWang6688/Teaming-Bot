@@ -4,6 +4,7 @@ import {
   createUserFeishuIntegration,
   listUserFeishuIntegrations,
 } from '@/lib/feishu/integrationStore';
+import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { getAuthenticatedUser } from '@/lib/supabase/server';
 
 const createIntegrationSchema = z.object({
@@ -19,22 +20,36 @@ const createIntegrationSchema = z.object({
 export async function GET() {
   const user = await getAuthenticatedUser();
   if (!user) {
+    logRuntimeMonitor('warn', 'integration_api', 'integration_list_rejected_unauthenticated');
     return NextResponse.json(
       { success: false, error: '请先登录后再查看飞书集成配置。' },
       { status: 401 }
     );
   }
 
-  const integrations = await listUserFeishuIntegrations(user.id);
-  return NextResponse.json({
-    success: true,
-    data: integrations,
-  });
+  try {
+    const integrations = await listUserFeishuIntegrations(user.id);
+    logRuntimeMonitor('info', 'integration_api', 'integration_list_succeeded', {
+      userId: user.id,
+      count: integrations.length,
+    });
+    return NextResponse.json({
+      success: true,
+      data: integrations,
+    });
+  } catch (error) {
+    logRuntimeMonitor('error', 'integration_api', 'integration_list_failed', {
+      userId: user.id,
+      ...toRuntimeErrorContext(error),
+    });
+    throw error;
+  }
 }
 
 export async function POST(request: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user) {
+    logRuntimeMonitor('warn', 'integration_api', 'integration_create_rejected_unauthenticated');
     return NextResponse.json(
       { success: false, error: '请先登录后再创建飞书集成配置。' },
       { status: 401 }
@@ -43,19 +58,38 @@ export async function POST(request: NextRequest) {
 
   const parsed = createIntegrationSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
+    logRuntimeMonitor('warn', 'integration_api', 'integration_create_validation_failed', {
+      issueCount: parsed.error.issues.length,
+      firstIssue: parsed.error.issues[0]?.message,
+      userId: user.id,
+    });
     return NextResponse.json(
       { success: false, error: parsed.error.issues[0]?.message || '参数不完整' },
       { status: 400 }
     );
   }
 
-  const integration = await createUserFeishuIntegration({
-    userId: user.id,
-    ...parsed.data,
-  });
+  try {
+    const integration = await createUserFeishuIntegration({
+      userId: user.id,
+      ...parsed.data,
+    });
 
-  return NextResponse.json({
-    success: true,
-    data: integration,
-  });
+    logRuntimeMonitor('info', 'integration_api', 'integration_create_succeeded', {
+      userId: user.id,
+      integrationId: integration.id,
+      appId: integration.appId,
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: integration,
+    });
+  } catch (error) {
+    logRuntimeMonitor('error', 'integration_api', 'integration_create_failed', {
+      userId: user.id,
+      ...toRuntimeErrorContext(error),
+    });
+    throw error;
+  }
 }

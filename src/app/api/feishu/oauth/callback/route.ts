@@ -12,6 +12,7 @@ import {
   updateUserFeishuIntegration,
   writeAuditLog,
 } from '@/lib/feishu/integrationStore';
+import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 
 type OauthTokenResponse = {
   code?: number;
@@ -147,27 +148,56 @@ export async function GET(request: NextRequest) {
       request.nextUrl.searchParams.get('error') ||
       request.nextUrl.searchParams.get('error_description');
 
+    logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_received', {
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+      hasCallbackError: Boolean(callbackError),
+    });
+
     if (callbackError) {
+      logRuntimeMonitor('warn', 'oauth_callback', 'oauth_callback_rejected_by_provider', {
+        hasState: Boolean(state),
+        callbackError,
+      });
       return renderErrorPage(`飞书授权页返回错误：${callbackError}`);
     }
 
     if (!code) {
+      logRuntimeMonitor('warn', 'oauth_callback', 'oauth_callback_missing_code', {
+        hasState: Boolean(state),
+      });
       return renderErrorPage('回调地址中缺少 code，未能完成授权换 token。');
     }
 
     const redirectUri = getFeishuUserOauthRedirectUri();
     if (state) {
+      logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_state_received', {
+        redirectUri,
+      });
       const oauthState = await consumeOauthState(state);
       if (oauthState) {
+        logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_state_consumed', {
+          userId: oauthState.userId,
+          integrationId: oauthState.integrationId,
+          redirectTo: oauthState.redirectTo,
+        });
         const integration = await getUserFeishuIntegrationContext(
           oauthState.userId,
           oauthState.integrationId
         );
 
         if (!integration) {
+          logRuntimeMonitor('warn', 'oauth_callback', 'oauth_callback_integration_missing', {
+            userId: oauthState.userId,
+            integrationId: oauthState.integrationId,
+          });
           return renderErrorPage('已找到 OAuth 状态，但对应的飞书集成配置不存在。');
         }
 
+        logRuntimeMonitor('info', 'oauth_callback', 'oauth_token_exchange_started', {
+          integrationId: integration.id,
+          redirectUri,
+        });
         const payload = await exchangeOauthCode({
           code,
           appId: integration.appId,
@@ -176,6 +206,9 @@ export async function GET(request: NextRequest) {
         });
         const accessToken = payload.access_token;
         if (!accessToken) {
+          logRuntimeMonitor('warn', 'oauth_callback', 'oauth_token_exchange_missing_access_token', {
+            integrationId: integration.id,
+          });
           return renderErrorPage('飞书 OAuth 返回成功，但缺少 access_token。');
         }
 
@@ -194,6 +227,12 @@ export async function GET(request: NextRequest) {
           refreshTokenExpiresAt,
           scope: integration.oauthScope,
           status: 'authorized',
+        });
+
+        logRuntimeMonitor('info', 'oauth_callback', 'oauth_token_exchange_succeeded', {
+          integrationId: integration.id,
+          hasRefreshToken: Boolean(payload.refresh_token),
+          accessTokenExpiresAt: accessTokenExpiresAt.toISOString(),
         });
 
         await upsertFeishuIntegrationCheckStatus({
@@ -225,21 +264,40 @@ export async function GET(request: NextRequest) {
           },
         });
 
+        logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_managed_completed', {
+          userId: oauthState.userId,
+          integrationId: integration.id,
+          redirectUri,
+        });
+
         return renderManagedSuccessPage({
           integrationName: integration.name,
           redirectUri,
           state,
         });
       }
+
+      logRuntimeMonitor('warn', 'oauth_callback', 'oauth_callback_state_not_found', {
+        redirectUri,
+      });
     }
 
     const { appId, appSecret } = getFeishuAppCredentials();
+
+    logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_legacy_mode', {
+      redirectUri,
+    });
 
     const payload = await exchangeOauthCode({
       code,
       appId,
       appSecret,
       redirectUri,
+    });
+
+    logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_legacy_exchange_succeeded', {
+      redirectUri,
+      hasRefreshToken: Boolean(payload.refresh_token),
     });
 
     const expiresAt = Math.floor(Date.now() / 1000) + Math.max(payload.expires_in || 7200, 60);
@@ -274,6 +332,9 @@ sudo docker compose up -d --force-recreate</pre>
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
   } catch (error) {
+    logRuntimeMonitor('error', 'oauth_callback', 'oauth_callback_failed', {
+      ...toRuntimeErrorContext(error),
+    });
     return renderErrorPage(error instanceof Error ? error.message : '处理飞书 OAuth 回调失败');
   }
 }

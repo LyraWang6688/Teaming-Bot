@@ -6,6 +6,7 @@ import {
   getUserFeishuIntegrationDetail,
   updateUserFeishuIntegration,
 } from '@/lib/feishu/integrationStore';
+import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { getAuthenticatedUser } from '@/lib/supabase/server';
 
 const updateIntegrationSchema = z.object({
@@ -30,6 +31,7 @@ type RouteContext = {
 export async function GET(_request: NextRequest, context: RouteContext) {
   const user = await getAuthenticatedUser();
   if (!user) {
+    logRuntimeMonitor('warn', 'integration_api', 'integration_detail_rejected_unauthenticated');
     return NextResponse.json(
       { success: false, error: '请先登录后再查看飞书集成配置。' },
       { status: 401 }
@@ -37,32 +39,53 @@ export async function GET(_request: NextRequest, context: RouteContext) {
   }
 
   const { integrationId } = await context.params;
-  const integration = await getUserFeishuIntegrationDetail(user.id, integrationId);
-  if (!integration) {
-    return NextResponse.json(
-      { success: false, error: '未找到对应的飞书集成配置。' },
-      { status: 404 }
-    );
+  try {
+    const integration = await getUserFeishuIntegrationDetail(user.id, integrationId);
+    if (!integration) {
+      logRuntimeMonitor('warn', 'integration_api', 'integration_detail_missing', {
+        userId: user.id,
+        integrationId,
+      });
+      return NextResponse.json(
+        { success: false, error: '未找到对应的飞书集成配置。' },
+        { status: 404 }
+      );
+    }
+
+    const [authorization, checks] = await Promise.all([
+      getLatestFeishuAuthorization(integrationId),
+      getFeishuIntegrationCheckStatus(integrationId),
+    ]);
+
+    logRuntimeMonitor('info', 'integration_api', 'integration_detail_loaded', {
+      userId: user.id,
+      integrationId,
+      hasAuthorization: Boolean(authorization),
+      hasChecks: Boolean(checks),
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        integration,
+        authorization,
+        checks,
+      },
+    });
+  } catch (error) {
+    logRuntimeMonitor('error', 'integration_api', 'integration_detail_failed', {
+      userId: user.id,
+      integrationId,
+      ...toRuntimeErrorContext(error),
+    });
+    throw error;
   }
-
-  const [authorization, checks] = await Promise.all([
-    getLatestFeishuAuthorization(integrationId),
-    getFeishuIntegrationCheckStatus(integrationId),
-  ]);
-
-  return NextResponse.json({
-    success: true,
-    data: {
-      integration,
-      authorization,
-      checks,
-    },
-  });
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
   const user = await getAuthenticatedUser();
   if (!user) {
+    logRuntimeMonitor('warn', 'integration_api', 'integration_update_rejected_unauthenticated');
     return NextResponse.json(
       { success: false, error: '请先登录后再更新飞书集成配置。' },
       { status: 401 }
@@ -71,6 +94,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const parsed = updateIntegrationSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
+    logRuntimeMonitor('warn', 'integration_api', 'integration_update_validation_failed', {
+      userId: user.id,
+      issueCount: parsed.error.issues.length,
+      firstIssue: parsed.error.issues[0]?.message,
+    });
     return NextResponse.json(
       { success: false, error: parsed.error.issues[0]?.message || '参数不完整' },
       { status: 400 }
@@ -78,25 +106,44 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   const { integrationId } = await context.params;
-  const integration = await updateUserFeishuIntegration(user.id, integrationId, {
-    ...parsed.data,
-    initializedAt:
-      parsed.data.initializedAt === undefined
-        ? undefined
-        : parsed.data.initializedAt
-          ? new Date(parsed.data.initializedAt)
-          : null,
-  });
+  try {
+    const integration = await updateUserFeishuIntegration(user.id, integrationId, {
+      ...parsed.data,
+      initializedAt:
+        parsed.data.initializedAt === undefined
+          ? undefined
+          : parsed.data.initializedAt
+            ? new Date(parsed.data.initializedAt)
+            : null,
+    });
 
-  if (!integration) {
-    return NextResponse.json(
-      { success: false, error: '未找到对应的飞书集成配置。' },
-      { status: 404 }
-    );
+    if (!integration) {
+      logRuntimeMonitor('warn', 'integration_api', 'integration_update_missing', {
+        userId: user.id,
+        integrationId,
+      });
+      return NextResponse.json(
+        { success: false, error: '未找到对应的飞书集成配置。' },
+        { status: 404 }
+      );
+    }
+
+    logRuntimeMonitor('info', 'integration_api', 'integration_update_succeeded', {
+      userId: user.id,
+      integrationId,
+      updatedFieldCount: Object.keys(parsed.data).length,
+    });
+
+    return NextResponse.json({
+      success: true,
+      data: integration,
+    });
+  } catch (error) {
+    logRuntimeMonitor('error', 'integration_api', 'integration_update_failed', {
+      userId: user.id,
+      integrationId,
+      ...toRuntimeErrorContext(error),
+    });
+    throw error;
   }
-
-  return NextResponse.json({
-    success: true,
-    data: integration,
-  });
 }
