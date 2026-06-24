@@ -8,7 +8,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   enqueueFeishuWebhookEvent,
-  isValidFeishuWebhookToken,
   type FeishuWebhookEnvelope,
 } from '@/lib/feishu/webhookProcessor';
 import {
@@ -20,20 +19,15 @@ import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtime
 async function resolveWebhookIntegration(envelope: FeishuWebhookEnvelope) {
   const actualToken = envelope.token || envelope.header?.token;
 
-  if (actualToken) {
-    const integration = await getFeishuIntegrationByWebhookToken(actualToken);
-    if (integration) {
-      return {
-        mode: 'integration' as const,
-        integration,
-      };
-    }
+  if (!actualToken) {
+    return null;
   }
 
-  if (isValidFeishuWebhookToken(envelope)) {
+  const integration = await getFeishuIntegrationByWebhookToken(actualToken);
+  if (integration) {
     return {
-      mode: 'legacy' as const,
-      integration: null,
+      mode: 'integration' as const,
+      integration,
     };
   }
 

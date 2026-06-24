@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  getFeishuAppCredentials,
   getFeishuUserOauthRedirectUri,
   getProjectPublicUrl,
 } from '@/lib/feishu/config';
@@ -170,166 +169,122 @@ export async function GET(request: NextRequest) {
     }
 
     const redirectUri = getFeishuUserOauthRedirectUri();
-    if (state) {
-      logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_state_received', {
+    if (!state) {
+      logRuntimeMonitor('warn', 'oauth_callback', 'oauth_callback_missing_state', {
         redirectUri,
       });
-      const oauthState = await consumeOauthState(state);
-      if (oauthState) {
-        logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_state_consumed', {
-          userId: oauthState.userId,
-          integrationId: oauthState.integrationId,
-          redirectTo: oauthState.redirectTo,
-        });
-        const integration = await getUserFeishuIntegrationContext(
-          oauthState.userId,
-          oauthState.integrationId
-        );
+      return renderErrorPage('回调地址中缺少 state，无法绑定到当前用户的飞书集成。');
+    }
 
-        if (!integration) {
-          logRuntimeMonitor('warn', 'oauth_callback', 'oauth_callback_integration_missing', {
-            userId: oauthState.userId,
-            integrationId: oauthState.integrationId,
-          });
-          return renderErrorPage('已找到 OAuth 状态，但对应的飞书集成配置不存在。');
-        }
-
-        logRuntimeMonitor('info', 'oauth_callback', 'oauth_token_exchange_started', {
-          integrationId: integration.id,
-          redirectUri,
-        });
-        const payload = await exchangeOauthCode({
-          code,
-          appId: integration.appId,
-          appSecret: integration.secrets.appSecret,
-          redirectUri,
-        });
-        const accessToken = payload.access_token;
-        if (!accessToken) {
-          logRuntimeMonitor('warn', 'oauth_callback', 'oauth_token_exchange_missing_access_token', {
-            integrationId: integration.id,
-          });
-          return renderErrorPage('飞书 OAuth 返回成功，但缺少 access_token。');
-        }
-
-        const accessTokenExpiresAt = new Date(
-          Date.now() + Math.max(payload.expires_in || 7200, 60) * 1000
-        );
-        const refreshTokenExpiresAt = payload.refresh_token_expires_in
-          ? new Date(Date.now() + Math.max(payload.refresh_token_expires_in, 60) * 1000)
-          : null;
-
-        await upsertFeishuAuthorization({
-          integrationId: integration.id,
-          accessToken,
-          refreshToken: payload.refresh_token || null,
-          accessTokenExpiresAt,
-          refreshTokenExpiresAt,
-          scope: integration.oauthScope,
-          status: 'authorized',
-        });
-
-        logRuntimeMonitor('info', 'oauth_callback', 'oauth_token_exchange_succeeded', {
-          integrationId: integration.id,
-          hasRefreshToken: Boolean(payload.refresh_token),
-          accessTokenExpiresAt: accessTokenExpiresAt.toISOString(),
-        });
-
-        await upsertFeishuIntegrationCheckStatus({
-          integrationId: integration.id,
-          oauthStatus: 'authorized',
-          lastCheckedAt: new Date(),
-          lastErrorType: null,
-          lastErrorMessage: null,
-          details: {
-            authorizedAt: new Date().toISOString(),
-            accessTokenExpiresAt: accessTokenExpiresAt.toISOString(),
-          },
-        });
-
-        await updateUserFeishuIntegration(oauthState.userId, integration.id, {
-          status: 'oauth_authorized',
-          setupStep: 'oauth',
-        });
-
-        await writeAuditLog({
-          userId: oauthState.userId,
-          integrationId: integration.id,
-          action: 'oauth.authorized',
-          result: 'success',
-          summary: '飞书 OAuth 授权成功并写入数据库',
-          metadata: {
-            redirectUri,
-            hasRefreshToken: Boolean(payload.refresh_token),
-          },
-        });
-
-        logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_managed_completed', {
-          userId: oauthState.userId,
-          integrationId: integration.id,
-          redirectUri,
-        });
-
-        return renderManagedSuccessPage({
-          integrationName: integration.name,
-          redirectUri,
-          state,
-        });
-      }
-
+    logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_state_received', {
+      redirectUri,
+    });
+    const oauthState = await consumeOauthState(state);
+    if (!oauthState) {
       logRuntimeMonitor('warn', 'oauth_callback', 'oauth_callback_state_not_found', {
         redirectUri,
       });
+      return renderErrorPage('OAuth state 无效、已过期或已被消费，请返回飞书配置页重新发起授权。');
     }
 
-    const { appId, appSecret } = getFeishuAppCredentials();
-
-    logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_legacy_mode', {
-      redirectUri,
+    logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_state_consumed', {
+      userId: oauthState.userId,
+      integrationId: oauthState.integrationId,
+      redirectTo: oauthState.redirectTo,
     });
-
-    const payload = await exchangeOauthCode({
-      code,
-      appId,
-      appSecret,
-      redirectUri,
-    });
-
-    logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_legacy_exchange_succeeded', {
-      redirectUri,
-      hasRefreshToken: Boolean(payload.refresh_token),
-    });
-
-    const expiresAt = Math.floor(Date.now() / 1000) + Math.max(payload.expires_in || 7200, 60);
-    const envSnippet = [
-      `FEISHU_USER_ACCESS_TOKEN=${payload.access_token}`,
-      `FEISHU_USER_REFRESH_TOKEN=${payload.refresh_token || ''}`,
-      `FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT=${expiresAt}`,
-    ].join('\n');
-
-    const html = renderHtml(
-      '飞书用户授权成功',
-      '下面这 3 行是可选的用户 Token 环境变量。tenant 主链路并不依赖它们；只有在排障或临时补充 user 身份调用时才需要写入服务器配置。',
-      `<div class="panel">
-        <p><strong>state:</strong> <code>${escapeHtml(state || '(none)')}</code></p>
-        <p><strong>redirect_uri:</strong> <code>${escapeHtml(redirectUri)}</code></p>
-      </div>
-      <div class="panel">
-        <p>请把以下内容完整复制到服务器 <code>.env.production</code>：</p>
-        <pre>${escapeHtml(envSnippet)}</pre>
-      </div>
-      <div class="panel">
-        <p>完成后在服务器执行：</p>
-        <pre>cd /home/ubuntu/meeting-analysis
-sudo docker compose up -d --force-recreate</pre>
-      </div>
-      <div class="actions">
-        <a href="${escapeHtml(`${getProjectPublicUrl()}/feishu-config`)}">返回飞书配置页</a>
-      </div>`
+    const integration = await getUserFeishuIntegrationContext(
+      oauthState.userId,
+      oauthState.integrationId
     );
 
-    return new NextResponse(html, {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    if (!integration) {
+      logRuntimeMonitor('warn', 'oauth_callback', 'oauth_callback_integration_missing', {
+        userId: oauthState.userId,
+        integrationId: oauthState.integrationId,
+      });
+      return renderErrorPage('已找到 OAuth 状态，但对应的飞书集成配置不存在。');
+    }
+
+    logRuntimeMonitor('info', 'oauth_callback', 'oauth_token_exchange_started', {
+      integrationId: integration.id,
+      redirectUri,
+    });
+    const payload = await exchangeOauthCode({
+      code,
+      appId: integration.appId,
+      appSecret: integration.secrets.appSecret,
+      redirectUri,
+    });
+    const accessToken = payload.access_token;
+    if (!accessToken) {
+      logRuntimeMonitor('warn', 'oauth_callback', 'oauth_token_exchange_missing_access_token', {
+        integrationId: integration.id,
+      });
+      return renderErrorPage('飞书 OAuth 返回成功，但缺少 access_token。');
+    }
+
+    const accessTokenExpiresAt = new Date(
+      Date.now() + Math.max(payload.expires_in || 7200, 60) * 1000
+    );
+    const refreshTokenExpiresAt = payload.refresh_token_expires_in
+      ? new Date(Date.now() + Math.max(payload.refresh_token_expires_in, 60) * 1000)
+      : null;
+
+    await upsertFeishuAuthorization({
+      integrationId: integration.id,
+      accessToken,
+      refreshToken: payload.refresh_token || null,
+      accessTokenExpiresAt,
+      refreshTokenExpiresAt,
+      scope: integration.oauthScope,
+      status: 'authorized',
+    });
+
+    logRuntimeMonitor('info', 'oauth_callback', 'oauth_token_exchange_succeeded', {
+      integrationId: integration.id,
+      hasRefreshToken: Boolean(payload.refresh_token),
+      accessTokenExpiresAt: accessTokenExpiresAt.toISOString(),
+    });
+
+    await upsertFeishuIntegrationCheckStatus({
+      integrationId: integration.id,
+      oauthStatus: 'authorized',
+      lastCheckedAt: new Date(),
+      lastErrorType: null,
+      lastErrorMessage: null,
+      details: {
+        authorizedAt: new Date().toISOString(),
+        accessTokenExpiresAt: accessTokenExpiresAt.toISOString(),
+      },
+    });
+
+    await updateUserFeishuIntegration(oauthState.userId, integration.id, {
+      status: 'oauth_authorized',
+      setupStep: 'oauth',
+    });
+
+    await writeAuditLog({
+      userId: oauthState.userId,
+      integrationId: integration.id,
+      action: 'oauth.authorized',
+      result: 'success',
+      summary: '飞书 OAuth 授权成功并写入数据库',
+      metadata: {
+        redirectUri,
+        hasRefreshToken: Boolean(payload.refresh_token),
+      },
+    });
+
+    logRuntimeMonitor('info', 'oauth_callback', 'oauth_callback_managed_completed', {
+      userId: oauthState.userId,
+      integrationId: integration.id,
+      redirectUri,
+    });
+
+    return renderManagedSuccessPage({
+      integrationName: integration.name,
+      redirectUri,
+      state,
     });
   } catch (error) {
     logRuntimeMonitor('error', 'oauth_callback', 'oauth_callback_failed', {

@@ -1,9 +1,4 @@
 import {
-  callFeishuOpenApi,
-  callFeishuOpenApiTextPreferUser,
-  callFeishuUserOpenApi,
-} from './openapi';
-import {
   callFeishuIntegrationOpenApiTextPreferUser,
   callFeishuIntegrationTenantOpenApi,
   callFeishuIntegrationUserOpenApi,
@@ -16,38 +11,28 @@ type DocRawContentResult = {
 
 export async function fetchTranscriptByDocToken(
   docToken: string,
-  integration?: FeishuIntegrationContext | null
+  integration: FeishuIntegrationContext
 ): Promise<string> {
   let result: DocRawContentResult | null = null;
   let tenantError: unknown;
 
   try {
-    result = integration
-      ? await callFeishuIntegrationUserOpenApi<DocRawContentResult>(
-          integration,
-          'GET',
-          `/docx/v1/documents/${docToken}/raw_content?lang=0`
-        )
-      : await callFeishuUserOpenApi<DocRawContentResult>(
-          'GET',
-          `/docx/v1/documents/${docToken}/raw_content?lang=0`
-        );
+    result = await callFeishuIntegrationUserOpenApi<DocRawContentResult>(
+      integration,
+      'GET',
+      `/docx/v1/documents/${docToken}/raw_content?lang=0`
+    );
   } catch (error) {
     tenantError = error;
   }
 
   if (!result) {
     try {
-      result = integration
-        ? await callFeishuIntegrationTenantOpenApi<DocRawContentResult>(
-            integration,
-            'GET',
-            `/docx/v1/documents/${docToken}/raw_content?lang=0`
-          )
-        : await callFeishuOpenApi<DocRawContentResult>(
-            'GET',
-            `/docx/v1/documents/${docToken}/raw_content?lang=0`
-          );
+      result = await callFeishuIntegrationTenantOpenApi<DocRawContentResult>(
+        integration,
+        'GET',
+        `/docx/v1/documents/${docToken}/raw_content?lang=0`
+      );
     } catch (error) {
       throw tenantError || error;
     }
@@ -63,18 +48,13 @@ export async function fetchTranscriptByDocToken(
 
 export async function fetchTranscriptByMinuteToken(
   minuteToken: string,
-  integration?: FeishuIntegrationContext | null
+  integration: FeishuIntegrationContext
 ): Promise<string> {
-  const text = integration
-    ? await callFeishuIntegrationOpenApiTextPreferUser(
-        integration,
-        'GET',
-        `/minutes/v1/minutes/${minuteToken}/transcript?need_speaker=true&need_timestamp=true&file_format=txt`
-      )
-    : await callFeishuOpenApiTextPreferUser(
-        'GET',
-        `/minutes/v1/minutes/${minuteToken}/transcript?need_speaker=true&need_timestamp=true&file_format=txt`
-      );
+  const text = await callFeishuIntegrationOpenApiTextPreferUser(
+    integration,
+    'GET',
+    `/minutes/v1/minutes/${minuteToken}/transcript?need_speaker=true&need_timestamp=true&file_format=txt`
+  );
   const transcript = text.trim();
   if (!transcript) {
     throw new Error('妙记文字稿内容为空');

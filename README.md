@@ -33,17 +33,18 @@ sudo docker compose up -d --build
 ```env
 NODE_ENV=production
 PROJECT_PUBLIC_URL=https://meeting.bamamei.online
+DATABASE_URL=
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+APP_ENCRYPTION_KEY=
 
 ANALYSIS_PROVIDER=doubao
 DOUBAO_API_KEY=
 DOUBAO_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 DOUBAO_MODEL=doubao-seed-1-8-251228
 
-FEISHU_APP_ID=
-FEISHU_APP_SECRET=
-FEISHU_WEBHOOK_VERIFICATION_TOKEN=
-FEISHU_BASE_APP_TOKEN=
-FEISHU_MEETING_TABLE_ID=
+FEISHU_USER_OAUTH_SCOPE=offline_access minutes:minutes.search:read minutes:minutes.transcript:export
 FEISHU_ENABLE_STARTUP_RECOVERY=true
 ```
 
@@ -58,10 +59,10 @@ FEISHU_ENABLE_STARTUP_RECOVERY=true
 
 - 当前正式自动化链路只依赖 `vc.meeting.participant_meeting_ended_v1`
 - 服务端收到 Webhook 后，会按“会议结束 -> 获取录制文件 -> 解析 minute_token -> 导出文字稿 -> 豆包分析 -> 回写 Base”执行
-- 正式主链路统一使用 `tenant_access_token`，不再依赖 `FEISHU_USER_ACCESS_TOKEN`
-- 默认启用启动恢复：服务重启后会重新扫描 Base 中 `会议结束 / 获取录制文件中 / 获取文字稿中 / 分析中` 的记录，尽量补回中断链路
+- 正式主链路统一使用数据库中保存的集成级 `tenant_access_token / user_access_token`，不再依赖任何全局飞书密钥 env
+- 默认启用启动恢复：服务重启后会基于 `meeting_pipeline_tasks` 继续恢复到期任务
 - 结构化监控日志会输出到应用日志，建议重点关注 `recording_fetch_finished`、`transcript_export_finished`、`analysis_failed`、`meeting_pipeline_failed`
-- `/feishu-config` 仍保留“获取用户 Token”入口，但仅作为排障或补充 user 身份调用的可选能力
+- `/feishu-config` 是唯一的飞书接入入口，应用配置、Webhook Token、Base 配置和 OAuth 授权都保存在数据库
 
 ## 相关文档
 

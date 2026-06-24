@@ -4,7 +4,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getFeishuBitableConfig } from '@/lib/feishu/config';
 import {
   createIntegrationBitableAccess,
   getBitableRecord,
@@ -20,17 +19,20 @@ export async function GET(request: NextRequest) {
     if (!recordId) {
       return NextResponse.json({ error: '缺少 recordId 参数' }, { status: 400 });
     }
-    
-    const config = integrationId
-      ? await (async () => {
-          const integration = await getFeishuIntegrationContextById(integrationId);
-          if (!integration) {
-            throw new Error('未找到对应的飞书集成配置');
-          }
 
-          return createIntegrationBitableAccess(integration);
-        })()
-      : getFeishuBitableConfig();
+    if (!integrationId) {
+      return NextResponse.json(
+        { error: '缺少 integrationId 参数，无法定位对应租户的飞书集成。' },
+        { status: 400 }
+      );
+    }
+
+    const integration = await getFeishuIntegrationContextById(integrationId);
+    if (!integration) {
+      return NextResponse.json({ error: '未找到对应的飞书集成配置' }, { status: 404 });
+    }
+
+    const config = createIntegrationBitableAccess(integration);
     const record = await getBitableRecord(config, recordId);
     
     return NextResponse.json({

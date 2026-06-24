@@ -7,14 +7,13 @@
  */
 
 import { analyzeMeetingText } from '@/services/analysisService';
-import { getFeishuBitableConfig, getProjectPublicUrl } from './config';
+import { getProjectPublicUrl } from './config';
 import {
   createIntegrationBitableAccess,
   type FeishuBitableAccess,
   type FeishuMeetingRecord,
   getBitableRecord,
   findMeetingRecordByMeetingId,
-  listMeetingRecordsByStatuses,
   setMeetingProcessStatus,
   updateMeetingRecordFields,
   upsertMeetingWaitingRecord,
@@ -36,8 +35,8 @@ import {
   upsertMeetingPipelineTaskForMeetingEnded,
 } from './meetingPipelineTaskStore';
 import { logFeishuMonitor, toErrorContext } from './monitor';
-import { callFeishuOpenApiPreferUser, FeishuOpenApiError } from './openapi';
-import { FEISHU_ACTIVE_PROCESS_STATUSES, FEISHU_PROCESS_STATUS } from './status';
+import { FeishuOpenApiError } from './openapi';
+import { FEISHU_PROCESS_STATUS } from './status';
 import { fetchTranscriptByMinuteToken } from './transcript';
 
 type FeishuWebhookHeader = {
@@ -62,11 +61,11 @@ type EnqueueResult = {
   eventId?: string;
   eventType?: string;
   taskId?: string;
-  executionMode?: 'worker' | 'legacy-inline';
+  executionMode?: 'worker';
 };
 
 type MeetingEndedSource = {
-  integration: FeishuIntegrationContext | null;
+  integration: FeishuIntegrationContext;
   taskId?: string;
   eventType?: string;
   meetingId: string;
@@ -88,7 +87,6 @@ type MeetingRecordingResult = {
 
 type RetryStage = 'recording' | 'transcript';
 
-const processedEventIds = new Set<string>();
 const processingMeetingIds = new Map<string, number>();
 const scheduledMeetingRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -102,26 +100,12 @@ const STARTUP_RECOVERY_LIMIT = 50;
 
 let hasStartedRecoveryScan = false;
 
-function getIntegrationId(integration: FeishuIntegrationContext | null): string | null {
-  return integration?.id || null;
-}
-
 function getMeetingPipelineKey(context: Pick<MeetingEndedSource, 'meetingId' | 'integration'>): string {
-  return `${getIntegrationId(context.integration) || 'legacy'}:${context.meetingId}`;
+  return `${context.integration.id}:${context.meetingId}`;
 }
 
-function getWebhookEventKey(eventId: string, integration: FeishuIntegrationContext | null): string {
-  return `${getIntegrationId(integration) || 'legacy'}:${eventId}`;
-}
-
-function getMeetingBitableAccess(
-  integration: FeishuIntegrationContext | null
-): FeishuBitableAccess {
-  if (integration) {
-    return createIntegrationBitableAccess(integration);
-  }
-
-  return getFeishuBitableConfig();
+function getMeetingBitableAccess(integration: FeishuIntegrationContext): FeishuBitableAccess {
+  return createIntegrationBitableAccess(integration);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -233,17 +217,9 @@ function parseMinuteTokenFromRecordingUrl(recordingUrl?: string): string | undef
   }
 }
 
-export function isValidFeishuWebhookToken(envelope: FeishuWebhookEnvelope): boolean {
-  const expectedToken = process.env.FEISHU_WEBHOOK_VERIFICATION_TOKEN;
-  if (!expectedToken) return true;
-
-  const actualToken = envelope.token || envelope.header?.token;
-  return actualToken === expectedToken;
-}
-
 export async function enqueueFeishuWebhookEvent(
   envelope: FeishuWebhookEnvelope,
-  integration: FeishuIntegrationContext | null = null
+  integration: FeishuIntegrationContext
 ): Promise<EnqueueResult> {
   const eventId = getEventId(envelope);
   const eventType = getEventType(envelope);
@@ -252,138 +228,25 @@ export async function enqueueFeishuWebhookEvent(
     return { accepted: false, duplicate: false, eventType };
   }
 
-  if (integration && eventType === 'vc.meeting.participant_meeting_ended_v1') {
-    const event = envelope.event || {};
-    const meeting = asRecord(event.meeting);
-    const meetingId = asString(meeting.id);
-    const title = asString(meeting.topic);
-    const startTime = toTimestamp(meeting.start_time);
-    const endTime = toTimestamp(meeting.end_time);
-    const { organizer, organizerSource } = getOrganizerInfo(meeting, asRecord(event));
-
-    logFeishuMonitor('info', 'meeting_ended_event_received', {
+  if (eventType !== 'vc.meeting.participant_meeting_ended_v1') {
+    logFeishuMonitor('info', 'webhook_event_ignored', {
       integrationId: integration.id,
       eventId,
       eventType,
-      meetingId,
-      title,
-      organizer,
-      organizerSource,
     });
-
-    if (!meetingId) {
-      throw new Error('会议结束事件缺少 meeting.id');
-    }
-
-    if (!title) {
-      throw new Error('会议结束事件缺少 meeting.topic');
-    }
-
-    if (!endTime) {
-      throw new Error('会议结束事件缺少 meeting.end_time');
-    }
-
-    const taskResult = await upsertMeetingPipelineTaskForMeetingEnded({
-      integration,
-      eventId,
-      eventType,
-      meetingId,
-      title,
-      startTime,
-      endTime,
-      organizer,
-      organizerSource,
-    });
-
-    if (taskResult.duplicate) {
-      logFeishuMonitor('info', 'meeting_pipeline_task_duplicate_ignored', {
-        integrationId: integration.id,
-        taskId: taskResult.task.id,
-        meetingId,
-        eventId,
-        eventType,
-      });
-    } else {
-      logFeishuMonitor('info', 'meeting_pipeline_task_enqueued', {
-        integrationId: integration.id,
-        taskId: taskResult.task.id,
-        meetingId,
-        eventId,
-        eventType,
-        created: taskResult.created,
-      });
-    }
-
-    return {
-      accepted: true,
-      duplicate: taskResult.duplicate,
-      eventId,
-      eventType,
-      taskId: taskResult.task.id,
-      executionMode: 'worker',
-    };
+    return { accepted: true, duplicate: false, eventId, eventType };
   }
 
-  const eventKey = getWebhookEventKey(eventId, integration);
-
-  if (processedEventIds.has(eventKey)) {
-    logFeishuMonitor('info', 'webhook_duplicate_ignored', {
-      integrationId: getIntegrationId(integration),
-      eventId,
-      eventType,
-    });
-    return { accepted: true, duplicate: true, eventId, eventType };
-  }
-
-  processedEventIds.add(eventKey);
-  logFeishuMonitor('info', 'webhook_event_enqueued', {
-    integrationId: getIntegrationId(integration),
-    eventId,
-    eventType,
-  });
-
-  scheduleBackgroundTask(async () => {
-    await processFeishuWebhookEvent(envelope, integration);
-  });
-
-  return { accepted: true, duplicate: false, eventId, eventType };
-}
-
-async function processFeishuWebhookEvent(
-  envelope: FeishuWebhookEnvelope,
-  integration: FeishuIntegrationContext | null
-) {
-  const eventType = getEventType(envelope);
-  const eventId = getEventId(envelope);
-
-  switch (eventType) {
-    case 'vc.meeting.participant_meeting_ended_v1':
-      await processParticipantMeetingEndedEvent(envelope, integration);
-      return;
-
-    default:
-      logFeishuMonitor('info', 'webhook_event_ignored', {
-        eventId,
-        eventType,
-      });
-  }
-}
-
-async function processParticipantMeetingEndedEvent(
-  envelope: FeishuWebhookEnvelope,
-  integration: FeishuIntegrationContext | null
-) {
   const event = envelope.event || {};
   const meeting = asRecord(event.meeting);
   const meetingId = asString(meeting.id);
   const title = asString(meeting.topic);
   const startTime = toTimestamp(meeting.start_time);
   const endTime = toTimestamp(meeting.end_time);
-  const eventType = getEventType(envelope);
-  const eventId = getEventId(envelope);
   const { organizer, organizerSource } = getOrganizerInfo(meeting, asRecord(event));
 
   logFeishuMonitor('info', 'meeting_ended_event_received', {
+    integrationId: integration.id,
     eventId,
     eventType,
     meetingId,
@@ -404,43 +267,45 @@ async function processParticipantMeetingEndedEvent(
     throw new Error('会议结束事件缺少 meeting.end_time');
   }
 
-  const taskResult = integration
-    ? await upsertMeetingPipelineTaskForMeetingEnded({
-        integration,
-        eventId,
-        eventType,
-        meetingId,
-        title,
-        startTime,
-        endTime,
-        organizer,
-        organizerSource,
-      })
-    : null;
-
-  if (taskResult?.duplicate) {
-    logFeishuMonitor('info', 'meeting_pipeline_task_duplicate_ignored', {
-      integrationId: integration?.id || null,
-      taskId: taskResult.task.id,
-      meetingId,
-      eventId,
-      eventType,
-    });
-    return;
-  }
-
-  await processParticipantMeetingEndedAttempt({
+  const taskResult = await upsertMeetingPipelineTaskForMeetingEnded({
     integration,
-    taskId: taskResult?.task.id,
+    eventId,
     eventType,
     meetingId,
-    attempt: taskResult?.task.attemptCount ?? 0,
     title,
     startTime,
     endTime,
     organizer,
     organizerSource,
   });
+
+  if (taskResult.duplicate) {
+    logFeishuMonitor('info', 'meeting_pipeline_task_duplicate_ignored', {
+      integrationId: integration.id,
+      taskId: taskResult.task.id,
+      meetingId,
+      eventId,
+      eventType,
+    });
+  } else {
+    logFeishuMonitor('info', 'meeting_pipeline_task_enqueued', {
+      integrationId: integration.id,
+      taskId: taskResult.task.id,
+      meetingId,
+      eventId,
+      eventType,
+      created: taskResult.created,
+    });
+  }
+
+  return {
+    accepted: true,
+    duplicate: taskResult.duplicate,
+    eventId,
+    eventType,
+    taskId: taskResult.task.id,
+    executionMode: 'worker',
+  };
 }
 
 async function processParticipantMeetingEndedAttempt(context: MeetingEndedSource) {
@@ -654,9 +519,7 @@ async function completeMeetingAnalysis(
   });
   const reportUrl = new URL('/report', getProjectPublicUrl());
   reportUrl.searchParams.set('recordId', record.recordId);
-  if (context.integration) {
-    reportUrl.searchParams.set('integrationId', context.integration.id);
-  }
+  reportUrl.searchParams.set('integrationId', context.integration.id);
   const reportLinkText = context.title.trim() || record.topic || '会议报告';
 
   await setMeetingProcessStatus(config, record.recordId, FEISHU_PROCESS_STATUS.completed, {
@@ -732,15 +595,8 @@ async function analyzeMeetingTranscriptWithRetries(
 }
 
 async function getMeetingRecording(context: Pick<MeetingEndedSource, 'integration' | 'meetingId'>) {
-  if (context.integration) {
-    return callFeishuIntegrationOpenApiPreferUser<MeetingRecordingResult>(
-      context.integration,
-      'GET',
-      `/vc/v1/meetings/${context.meetingId}/recording`
-    );
-  }
-
-  return callFeishuOpenApiPreferUser<MeetingRecordingResult>(
+  return callFeishuIntegrationOpenApiPreferUser<MeetingRecordingResult>(
+    context.integration,
     'GET',
     `/vc/v1/meetings/${context.meetingId}/recording`
   );
@@ -1097,7 +953,7 @@ async function handleRetryableMeetingError(
 
 function buildRecoveryContext(
   record: FeishuMeetingRecord,
-  integration: FeishuIntegrationContext | null,
+  integration: FeishuIntegrationContext,
   taskId?: string
 ): MeetingEndedSource | null {
   const meetingId = asString(record.meetingId);
@@ -1126,7 +982,7 @@ function buildRecoveryContext(
 
 async function resumeMeetingRecord(
   record: FeishuMeetingRecord,
-  integration: FeishuIntegrationContext | null,
+  integration: FeishuIntegrationContext,
   taskId?: string
 ) {
   const context = buildRecoveryContext(record, integration, taskId);
@@ -1164,7 +1020,7 @@ function buildTaskPayload(task: Awaited<ReturnType<typeof getMeetingPipelineTask
 
 function buildRecoveryContextFromTask(
   task: NonNullable<Awaited<ReturnType<typeof getMeetingPipelineTaskById>>>,
-  integration: FeishuIntegrationContext | null
+  integration: FeishuIntegrationContext
 ): MeetingEndedSource | null {
   const payload = buildTaskPayload(task);
   if (!payload.title || typeof payload.endTime !== 'number') {
@@ -1267,33 +1123,6 @@ export async function recoverFeishuMeetingPipelinesOnStartup() {
       activeCount: tasks.length,
     });
 
-    try {
-      const legacyConfig = getMeetingBitableAccess(null);
-      const legacyRecords = await listMeetingRecordsByStatuses(
-        legacyConfig,
-        FEISHU_ACTIVE_PROCESS_STATUSES,
-        STARTUP_RECOVERY_LIMIT
-      );
-      logFeishuMonitor('info', 'startup_recovery_scan_finished', {
-        mode: 'legacy_fallback',
-        activeCount: legacyRecords.length,
-        statuses: FEISHU_ACTIVE_PROCESS_STATUSES,
-      });
-
-      for (const record of legacyRecords) {
-        scheduleBackgroundTask(async () => {
-          logFeishuMonitor('info', 'startup_recovery_record_scheduled', {
-            integrationId: null,
-            meetingId: record.meetingId,
-            recordId: record.recordId,
-            processStatus: record.processStatus,
-          });
-          await resumeMeetingRecord(record, null);
-        });
-      }
-    } catch {
-      // 未配置 legacy Base 时直接跳过。
-    }
   } catch (error) {
     logFeishuMonitor('error', 'startup_recovery_scan_failed', toErrorContext(error));
   }

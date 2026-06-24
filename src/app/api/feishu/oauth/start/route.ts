@@ -1,8 +1,5 @@
 import { NextResponse } from 'next/server';
-import {
-  getFeishuAppCredentials,
-  getFeishuUserOauthRedirectUri,
-} from '@/lib/feishu/config';
+import { getFeishuUserOauthRedirectUri } from '@/lib/feishu/config';
 import {
   createOauthState,
   getUserFeishuIntegrationDetail,
@@ -24,67 +21,65 @@ export async function GET(request: Request) {
       redirectUri,
     });
 
-    let appId: string;
-    let scope: string;
-    let state: string;
-
-    if (integrationId) {
-      const user = await getAuthenticatedUser();
-      if (!user) {
-        logRuntimeMonitor('warn', 'oauth_start', 'oauth_start_rejected_unauthenticated', {
-          integrationId,
-          redirectTo: redirectTo || null,
-        });
-        return NextResponse.json(
-          {
-            success: false,
-            error: '请先登录后再发起飞书 OAuth 授权。',
-          },
-          { status: 401 }
-        );
-      }
-
-      const integration = await getUserFeishuIntegrationDetail(user.id, integrationId);
-      if (!integration) {
-        logRuntimeMonitor('warn', 'oauth_start', 'oauth_start_rejected_integration_missing', {
-          userId: user.id,
-          integrationId,
-        });
-        return NextResponse.json(
-          {
-            success: false,
-            error: '未找到对应的飞书集成配置。',
-          },
-          { status: 404 }
-        );
-      }
-
-      appId = integration.appId;
-      scope = integration.oauthScope || getDefaultFeishuOauthScope();
-      state = await createOauthState({
-        userId: user.id,
-        integrationId,
-        redirectTo,
-      });
-
-      logRuntimeMonitor('info', 'oauth_start', 'oauth_start_state_created', {
-        userId: user.id,
-        integrationId,
+    if (!integrationId) {
+      logRuntimeMonitor('warn', 'oauth_start', 'oauth_start_rejected_missing_integration', {
         redirectTo: redirectTo || null,
         redirectUri,
-        scopeCount: scope.split(/\s+/).filter(Boolean).length,
       });
-    } else {
-      ({ appId } = getFeishuAppCredentials());
-      scope = getDefaultFeishuOauthScope();
-      state = `feishu-oauth-${Date.now()}`;
-
-      logRuntimeMonitor('info', 'oauth_start', 'oauth_start_legacy_mode', {
-        redirectTo: redirectTo || null,
-        redirectUri,
-        scopeCount: scope.split(/\s+/).filter(Boolean).length,
-      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: '缺少 integrationId，请从飞书配置页为指定集成发起 OAuth 授权。',
+        },
+        { status: 400 }
+      );
     }
+
+    const user = await getAuthenticatedUser();
+    if (!user) {
+      logRuntimeMonitor('warn', 'oauth_start', 'oauth_start_rejected_unauthenticated', {
+        integrationId,
+        redirectTo: redirectTo || null,
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: '请先登录后再发起飞书 OAuth 授权。',
+        },
+        { status: 401 }
+      );
+    }
+
+    const integration = await getUserFeishuIntegrationDetail(user.id, integrationId);
+    if (!integration) {
+      logRuntimeMonitor('warn', 'oauth_start', 'oauth_start_rejected_integration_missing', {
+        userId: user.id,
+        integrationId,
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: '未找到对应的飞书集成配置。',
+        },
+        { status: 404 }
+      );
+    }
+
+    const appId = integration.appId;
+    const scope = integration.oauthScope || getDefaultFeishuOauthScope();
+    const state = await createOauthState({
+      userId: user.id,
+      integrationId,
+      redirectTo,
+    });
+
+    logRuntimeMonitor('info', 'oauth_start', 'oauth_start_state_created', {
+      userId: user.id,
+      integrationId,
+      redirectTo: redirectTo || null,
+      redirectUri,
+      scopeCount: scope.split(/\s+/).filter(Boolean).length,
+    });
 
     const authorizeUrl = new URL('https://open.feishu.cn/open-apis/authen/v1/authorize');
     authorizeUrl.searchParams.set('app_id', appId);

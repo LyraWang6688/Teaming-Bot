@@ -1,5 +1,4 @@
 import type { AnalysisResult } from '@/types';
-import { callFeishuOpenApi } from './openapi';
 import type { FeishuBitableConfig } from './config';
 import { callFeishuIntegrationTenantOpenApi } from './integrationOpenApi';
 import type { FeishuIntegrationContext } from './integrationStore';
@@ -54,7 +53,7 @@ export type FeishuMeetingRecord = {
 };
 
 export type FeishuBitableAccess = FeishuBitableConfig & {
-  integration?: FeishuIntegrationContext | null;
+  integration: FeishuIntegrationContext;
 };
 
 export function createIntegrationBitableAccess(
@@ -77,11 +76,7 @@ async function callBitableOpenApi<T = unknown>(
   path: string,
   data?: Record<string, unknown>
 ): Promise<T> {
-  if (config.integration) {
-    return callFeishuIntegrationTenantOpenApi<T>(config.integration, method, path, data);
-  }
-
-  return callFeishuOpenApi<T>(method, path, data);
+  return callFeishuIntegrationTenantOpenApi<T>(config.integration, method, path, data);
 }
 
 function extractBitableText(value: unknown): string | undefined {
