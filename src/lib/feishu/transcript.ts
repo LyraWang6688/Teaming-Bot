@@ -1,6 +1,4 @@
 import {
-  callFeishuIntegrationOpenApiTextPreferUser,
-  callFeishuIntegrationTenantOpenApi,
   callFeishuIntegrationUserOpenApi,
   callFeishuIntegrationUserOpenApiText,
 } from './integrationOpenApi';

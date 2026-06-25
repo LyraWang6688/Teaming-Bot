@@ -2,7 +2,7 @@
 
 import { FormEvent, Suspense, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,6 @@ import { AlertCircle, CheckCircle2, Mail } from 'lucide-react';
 
 function LoginPageContent() {
 	const searchParams = useSearchParams();
-	const router = useRouter();
 	const supabase = useMemo(() => createSupabaseBrowserClient(), []);
 	const [email, setEmail] = useState('');
 	const [isSubmitting, setIsSubmitting] = useState(false);

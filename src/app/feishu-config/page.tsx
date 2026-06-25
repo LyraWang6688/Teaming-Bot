@@ -2,10 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import Layout from '@/components/Layout';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
@@ -15,30 +15,29 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
   AlertCircle,
   Check,
-  Copy,
   ExternalLink,
   LogOut,
   RefreshCw,
   User,
-  ChevronDown,
-  ChevronRight,
-  Mail,
-  Key,
-  Settings,
-  Shield,
-  Database,
 } from 'lucide-react';
 
 // ============ 常量定义 ============
-const REQUIRED_PERMISSIONS = [
-  'vc:meeting.meetingevent:read',
-  'vc:record:readonly',
-  'minutes:minutes.transcript:export',
-  'bitable:app:read',
-  'bitable:table:read',
-  'bitable:record:read',
-  'bitable:record:write',
+const APP_PERMISSION_ITEMS = [
+  {
+    id: 'bitable:app',
+    description: '多维表格（查看、评论、编辑）',
+  },
 ] as const;
+
+const DEFAULT_USER_OAUTH_SCOPE =
+  'vc:meeting.meetingevent:read vc:record:readonly minutes:minutes.transcript:export offline_access';
+
+const OAUTH_SCOPE_DESCRIPTIONS: Record<string, string> = {
+  'vc:meeting.meetingevent:read': '获取会议信息',
+  'vc:record:readonly': '获取会议录制',
+  'minutes:minutes.transcript:export': '导出妙记转写文字',
+  offline_access: '持续访问已授权数据',
+};
 
 const REQUIRED_EVENTS = [
   {
@@ -230,23 +229,23 @@ function calculateStepStatus(
   integration: IntegrationView | null,
   checks: CheckStatusView | null | undefined,
   authorization: AuthorizationView | null | undefined,
-  credentialsSubmitted: boolean,
-  techConfigConfirmed: boolean
+  hasSavedCredentials: boolean,
+  hasTechConfigCompleted: boolean
 ) {
   switch (step) {
     case 1: // 登录
       return 'completed';
     case 2: // 配置飞书应用
-      return techConfigConfirmed ? 'completed' : 'current';
+      return hasTechConfigCompleted ? 'completed' : 'current';
     case 3: // OAuth 授权
-      if (!techConfigConfirmed) return 'pending';
+      if (!hasSavedCredentials || !hasTechConfigCompleted) return 'pending';
       return authorization?.status === 'authorized' ? 'completed' : 'current';
     case 4: // 初始化
-      if (!authorization?.status) return 'pending';
+      if (authorization?.status !== 'authorized') return 'pending';
       return integration?.initializedAt ? 'completed' : 'current';
     case 5: // 检查
       if (!integration?.initializedAt) return 'pending';
-      return checks ? 'current' : 'pending';
+      return checks?.allPassed ? 'completed' : 'current';
     default:
       return 'pending';
   }
@@ -281,26 +280,16 @@ export default function FeishuConfigPage() {
   const [detail, setDetail] = useState<IntegrationDetailResponse | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
-  // 步骤2的子状态
-  const [credentialsSubmitted, setCredentialsSubmitted] = useState(false);
-  const [techConfigConfirmed, setTechConfigConfirmed] = useState(false);
   const [isSubmittingCredentials, setIsSubmittingCredentials] = useState(false);
+  const [isSubmittingAdvanced, setIsSubmittingAdvanced] = useState(false);
 
   // 操作状态
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isRunningChecks, setIsRunningChecks] = useState(false);
   const [isInitializingBase, setIsInitializingBase] = useState(false);
   const [pageMessage, setPageMessage] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
-
-  // UI 状态
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    basic: true,
-    secrets: false,
-    advanced: false,
-  });
 
   useEffect(() => {
     setOrigin(window.location.origin);
@@ -315,15 +304,31 @@ export default function FeishuConfigPage() {
       }).toString()}`
     : null;
 
+  const hasSavedCredentials = Boolean(
+    integration?.appId && integration?.masked.appSecret && integration?.masked.webhookVerificationToken
+  );
+  const hasWebhookConnected = Boolean(
+    integration?.lastWebhookReceivedAt ||
+      detail?.checks?.webhookStatus === 'success' ||
+      detail?.checks?.eventSubscriptionStatus === 'success'
+  );
+  const hasTechConfigCompleted = Boolean(
+    hasWebhookConnected || detail?.authorization?.status === 'authorized' || integration?.initializedAt
+  );
+  const effectiveOauthScopes = useMemo(() => {
+    const rawScope = integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
+    return Array.from(new Set(rawScope.split(/\s+/).filter(Boolean)));
+  }, [integration?.oauthScope]);
+
   // 计算步骤进度
   const currentStep = useMemo(() => {
     if (!user) return 1;
-    if (!credentialsSubmitted) return 2;
-    if (!techConfigConfirmed) return 2;
+    if (!hasSavedCredentials) return 2;
+    if (!hasTechConfigCompleted) return 2;
     if (!detail?.authorization?.status || detail.authorization.status !== 'authorized') return 3;
     if (!integration?.initializedAt) return 4;
     return 5;
-  }, [user, credentialsSubmitted, techConfigConfirmed, integration, detail]);
+  }, [user, hasSavedCredentials, hasTechConfigCompleted, integration, detail]);
 
   const stepProgress = ((currentStep - 1) / 4) * 100;
 
@@ -335,10 +340,6 @@ export default function FeishuConfigPage() {
     } catch {
       setPageError('复制失败，请手动复制。');
     }
-  };
-
-  const toggleSection = (section: string) => {
-    setExpandedSections((prev) => ({ ...prev, [section]: !prev[section] }));
   };
 
   const loadIntegrationDetail = useCallback(async (integrationId: string) => {
@@ -361,40 +362,26 @@ export default function FeishuConfigPage() {
     }
   }, []);
 
-  const ensureIntegrationExists = useCallback(async () => {
-    if (integration?.id) return integration.id;
-    
-    try {
-      const data = await parseJsonResponse<IntegrationView>(
-        await fetch('/api/feishu/integrations', {
-          method: 'GET',
-          cache: 'no-store',
-        })
-      );
-      
-      if (data && 'id' in data) {
-        const list = data as unknown as IntegrationView[];
-        if (Array.isArray(list) && list.length > 0) {
-          await loadIntegrationDetail(list[0].id);
-          return list[0].id;
-        }
-      }
-      
-      // 创建新集成
-      const newIntegration = await parseJsonResponse<IntegrationView>(
-        await fetch('/api/feishu/integrations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: '我的飞书集成' }),
-        })
-      );
-      await loadIntegrationDetail(newIntegration.id);
-      return newIntegration.id;
-    } catch {
-      // 如果创建失败，返回 null
-      return null;
+  const loadSingleIntegration = useCallback(async () => {
+    const list = await parseJsonResponse<IntegrationView[]>(
+      await fetch('/api/feishu/integrations', {
+        method: 'GET',
+        cache: 'no-store',
+      })
+    );
+
+    if (list.length === 0) {
+      setIntegration(null);
+      setDetail(null);
+      setForm({
+        ...EMPTY_FORM,
+        name: '默认飞书集成',
+      });
+      return;
     }
-  }, [integration, loadIntegrationDetail]);
+
+    await loadIntegrationDetail(list[0].id);
+  }, [loadIntegrationDetail]);
 
   useEffect(() => {
     let cancelled = false;
@@ -412,7 +399,14 @@ export default function FeishuConfigPage() {
 
         setUser(currentUser);
         if (currentUser) {
-          await ensureIntegrationExists();
+          await loadSingleIntegration();
+        } else {
+          setIntegration(null);
+          setDetail(null);
+          setForm({
+            ...EMPTY_FORM,
+            name: '默认飞书集成',
+          });
         }
       } catch (error) {
         if (!cancelled) {
@@ -427,7 +421,7 @@ export default function FeishuConfigPage() {
 
     void bootstrap();
     return () => { cancelled = true; };
-  }, [ensureIntegrationExists]);
+  }, [loadSingleIntegration]);
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
@@ -467,56 +461,14 @@ export default function FeishuConfigPage() {
       setUser(null);
       setIntegration(null);
       setDetail(null);
-      setForm(EMPTY_FORM);
+      setForm({
+        ...EMPTY_FORM,
+        name: '默认飞书集成',
+      });
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '退出登录失败。');
     } finally {
       setIsSigningOut(false);
-    }
-  };
-
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    setPageMessage(null);
-    setPageError(null);
-
-    if (!integration?.id) {
-      setPageError('请先确保集成已创建。');
-      return;
-    }
-
-    if (!form.appId.trim()) {
-      setPageError('请填写 App ID。');
-      return;
-    }
-
-    const payload: Record<string, string | null> = {
-      name: form.name.trim() || '我的飞书集成',
-      appId: form.appId.trim(),
-      meetingTableId: form.meetingTableId.trim() || null,
-    };
-
-    if (form.appSecret.trim()) payload.appSecret = form.appSecret.trim();
-    if (form.webhookVerificationToken.trim()) payload.webhookVerificationToken = form.webhookVerificationToken.trim();
-    if (form.baseAppToken.trim()) payload.baseAppToken = form.baseAppToken.trim();
-    if (form.oauthScope.trim()) payload.oauthScope = form.oauthScope.trim();
-
-    setIsSaving(true);
-    try {
-      await parseJsonResponse<IntegrationView>(
-        await fetch(`/api/feishu/integrations/${integration.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-      );
-      await loadIntegrationDetail(integration.id);
-      setPageMessage('配置已保存。');
-      setForm((current) => ({ ...current, appSecret: '', webhookVerificationToken: '', baseAppToken: '' }));
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '保存失败。');
-    } finally {
-      setIsSaving(false);
     }
   };
 
@@ -525,11 +477,6 @@ export default function FeishuConfigPage() {
     e.preventDefault();
     setPageMessage(null);
     setPageError(null);
-
-    if (!integration?.id) {
-      setPageError('请先确保集成已创建。');
-      return;
-    }
 
     if (!form.appId.trim()) {
       setPageError('请填写 App ID。');
@@ -547,24 +494,30 @@ export default function FeishuConfigPage() {
     }
 
     const payload = {
+      name: form.name.trim() || integration?.name || '默认飞书集成',
       appId: form.appId.trim(),
       appSecret: form.appSecret.trim(),
       webhookVerificationToken: form.webhookVerificationToken.trim(),
+      oauthScope: form.oauthScope.trim() || null,
     };
 
     setIsSubmittingCredentials(true);
     try {
-      await parseJsonResponse<IntegrationView>(
-        await fetch(`/api/feishu/integrations/${integration.id}`, {
-          method: 'PATCH',
+      const savedIntegration = await parseJsonResponse<IntegrationView>(
+        await fetch(integration?.id ? `/api/feishu/integrations/${integration.id}` : '/api/feishu/integrations', {
+          method: integration?.id ? 'PATCH' : 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
       );
-      await loadIntegrationDetail(integration.id);
-      setCredentialsSubmitted(true);
-      setPageMessage('基础凭证已提交，可以继续配置技术细节了。');
-      setForm((current) => ({ ...current, appSecret: '', webhookVerificationToken: '' }));
+      await loadIntegrationDetail(savedIntegration.id);
+      setPageMessage('基础凭证已保存，请继续在飞书开放平台完成技术配置。');
+      setForm((current) => ({
+        ...current,
+        name: savedIntegration.name,
+        appSecret: '',
+        webhookVerificationToken: '',
+      }));
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '提交失败。');
     } finally {
@@ -572,10 +525,45 @@ export default function FeishuConfigPage() {
     }
   };
 
-  // 确认配置完成（步骤2第二部分）
-  const handleConfirmConfig = () => {
-    setTechConfigConfirmed(true);
-    setPageMessage('已确认配置完成，可以继续下一步了。');
+  const handleSaveAdvancedConfig = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!integration?.id) {
+      setPageError('请先保存基础凭证。');
+      return;
+    }
+
+    setPageMessage(null);
+    setPageError(null);
+    setIsSubmittingAdvanced(true);
+
+    try {
+      await parseJsonResponse<IntegrationView>(
+        await fetch(`/api/feishu/integrations/${integration.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: form.name.trim() || integration.name || '默认飞书集成',
+            baseAppToken: form.baseAppToken.trim() || null,
+            meetingTableId: form.meetingTableId.trim() || null,
+            oauthScope: form.oauthScope.trim() || null,
+          }),
+        })
+      );
+      await loadIntegrationDetail(integration.id);
+      setPageMessage('附加配置已保存，等待飞书回调验证通过后即可继续下一步。');
+      setForm((current) => ({ ...current, baseAppToken: '' }));
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '保存附加配置失败。');
+    } finally {
+      setIsSubmittingAdvanced(false);
+    }
+  };
+
+  const handleRefreshIntegration = async () => {
+    if (!integration?.id) return;
+    setPageMessage(null);
+    setPageError(null);
+    await loadIntegrationDetail(integration.id);
   };
 
   const handleRunChecks = async () => {
@@ -755,22 +743,25 @@ export default function FeishuConfigPage() {
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              {renderStepIndicator(2, calculateStepStatus(2, integration, detail?.checks, detail?.authorization, credentialsSubmitted, techConfigConfirmed))}
-              {credentialsSubmitted && !credentialsSubmitted && (
-                <Badge className="bg-emerald-100 text-emerald-700">配置中</Badge>
+              {renderStepIndicator(
+                2,
+                calculateStepStatus(
+                  2,
+                  integration,
+                  detail?.checks,
+                  detail?.authorization,
+                  hasSavedCredentials,
+                  hasTechConfigCompleted
+                )
               )}
+              {hasTechConfigCompleted ? (
+                <Badge className="bg-emerald-100 text-emerald-700">已完成</Badge>
+              ) : hasSavedCredentials ? (
+                <Badge className="bg-amber-100 text-amber-700">待验证</Badge>
+              ) : null}
             </div>
             <CardDescription className="pt-2">
-              填写你的飞书应用凭证信息，你可以去{' '}
-              <a
-                href="https://open.feishu.cn/app"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-indigo-600 hover:underline"
-              >
-                飞书开放平台
-              </a>{' '}
-              创建应用获取这些信息
+              先保存基础凭证，再在飞书开放平台完成 Webhook、权限与回调地址配置。
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -782,17 +773,25 @@ export default function FeishuConfigPage() {
               </div>
             ) : (
               <>
-                {/* ===== 第一部分：基础凭证 ===== */}
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
                     <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-xs font-medium text-indigo-700">
                       1
                     </div>
-                    基础凭证
+                    提交基础凭证
                   </div>
 
                   <form onSubmit={handleSubmitCredentials} className="space-y-4 pl-8">
                     <div className="space-y-4 rounded-lg border border-slate-200 p-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="integration-name">集成名称</Label>
+                        <Input
+                          id="integration-name"
+                          value={form.name}
+                          onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))}
+                          placeholder="默认飞书集成"
+                        />
+                      </div>
                       <div className="grid gap-4 md:grid-cols-2">
                         <div className="space-y-2">
                           <Label htmlFor="appId">App ID</Label>
@@ -810,7 +809,7 @@ export default function FeishuConfigPage() {
                             type="password"
                             value={form.appSecret}
                             onChange={(e) => setForm((c) => ({ ...c, appSecret: e.target.value }))}
-                            placeholder="请输入"
+                            placeholder={integration?.masked.appSecret ? '如需替换请输入新值' : '请输入'}
                           />
                           {integration?.masked.appSecret && (
                             <div className="text-xs text-slate-500">已保存：{integration.masked.appSecret}</div>
@@ -824,34 +823,61 @@ export default function FeishuConfigPage() {
                           type="password"
                           value={form.webhookVerificationToken}
                           onChange={(e) => setForm((c) => ({ ...c, webhookVerificationToken: e.target.value }))}
-                          placeholder="请输入"
+                          placeholder={
+                            integration?.masked.webhookVerificationToken ? '如需替换请输入新值' : '请输入'
+                          }
                         />
                         {integration?.masked.webhookVerificationToken && (
-                          <div className="text-xs text-slate-500">已保存：{integration.masked.webhookVerificationToken}</div>
+                          <div className="text-xs text-slate-500">
+                            已保存：{integration.masked.webhookVerificationToken}
+                          </div>
                         )}
                       </div>
                     </div>
                     <Button type="submit" disabled={isSubmittingCredentials}>
-                      {isSubmittingCredentials ? '提交中...' : '提交信息'}
+                      {isSubmittingCredentials ? '保存中...' : integration?.id ? '更新基础凭证' : '保存基础凭证'}
                     </Button>
                   </form>
                 </div>
 
-                {/* ===== 第二部分：技术配置（提交后显示） ===== */}
-                {credentialsSubmitted && (
+                {hasSavedCredentials && (
                   <>
                     <Separator />
-
                     <div className="space-y-4">
                       <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
                         <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-xs font-medium text-indigo-700">
                           2
                         </div>
-                        技术配置
+                        提交信息与通信校验
                       </div>
 
                       <div className="space-y-6 pl-8">
-                        {/* Webhook 地址 */}
+                        <div className="rounded-lg border border-slate-200 p-4">
+                          <div className="mb-3 flex items-center justify-between">
+                            <div className="text-sm font-medium text-slate-900">通信状态</div>
+                            <Badge
+                              variant="outline"
+                              className={getStatusBadgeClass(
+                                hasWebhookConnected ? 'success' : detail?.checks?.webhookStatus || 'pending'
+                              )}
+                            >
+                              {hasWebhookConnected ? '已打通' : '待验证'}
+                            </Badge>
+                          </div>
+                          <div className="space-y-2 text-sm text-slate-600">
+                            <div>最近收到 Webhook：{formatDateTime(integration?.lastWebhookReceivedAt || null)}</div>
+                            <div>
+                              在飞书开放平台保存 Webhook 地址后，系统收到 challenge 或真实事件回调，才会自动解锁下一步。
+                            </div>
+                          </div>
+                          <div className="mt-4">
+                            <Button type="button" variant="outline" onClick={() => void handleRefreshIntegration()}>
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                              刷新状态
+                            </Button>
+                          </div>
+                        </div>
+
                         <div className="rounded-lg bg-blue-50 p-4">
                           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-blue-900">
                             <ExternalLink className="h-4 w-4" />
@@ -862,79 +888,98 @@ export default function FeishuConfigPage() {
                           </div>
                           <div className="space-y-2">
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-slate-600 w-20">请求地址：</span>
+                              <span className="w-20 text-xs text-slate-600">请求地址：</span>
                               <code className="flex-1 break-all rounded bg-white px-3 py-1.5 text-xs">{webhookUrl}</code>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => void copyToClipboard('webhook', webhookUrl)}
-                              >
-                                {copiedKey === 'webhook' ? '已复制' : '复制'}
-                              </Button>
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-slate-600 w-20">事件名称：</span>
-                              <code className="flex-1 rounded bg-white px-3 py-1.5 font-mono text-xs">vc.meeting.participant_meeting_ended_v1</code>
+                              <span className="w-20 text-xs text-slate-600">事件名称：</span>
+                              <code className="flex-1 rounded bg-white px-3 py-1.5 font-mono text-xs">
+                                {REQUIRED_EVENTS[0].id}
+                              </code>
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-slate-600 w-20">加密策略：</span>
-                              <code className="flex-1 rounded bg-white px-3 py-1.5 text-xs">Verification Token 验证</code>
+                              <span className="w-20 text-xs text-slate-600">加密策略：</span>
+                              <code className="flex-1 rounded bg-white px-3 py-1.5 text-xs">
+                                Verification Token 验证
+                              </code>
                             </div>
                           </div>
                         </div>
 
-                        {/* 权限管理 */}
                         <div className="rounded-lg border border-slate-200 p-4">
-                          <div className="mb-3 text-sm font-medium">权限管理</div>
-                          
+                          <div className="mb-3 text-sm font-medium text-slate-900">权限管理</div>
                           <div className="mb-4">
-                            <div className="mb-2 text-xs text-slate-600">应用权限：</div>
-                            <div className="flex flex-wrap gap-1">
-                              {['vc:meeting.meetingevent:read', 'vc:record:readonly', 'minutes:minutes.transcript:export', 'bitable:app:read', 'bitable:table:read', 'bitable:record:read', 'bitable:record:write'].map(p => (
-                                <Badge key={p} variant="outline" className="text-xs font-mono">{p}</Badge>
+                            <div className="mb-2 text-xs text-slate-600">应用身份权限：</div>
+                            <div className="space-y-2">
+                              {APP_PERMISSION_ITEMS.map((permission) => (
+                                <div key={permission.id} className="flex items-center gap-2 text-sm">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  <code className="text-slate-700">{permission.id}</code>
+                                  <span className="text-slate-500">{permission.description}</span>
+                                </div>
                               ))}
                             </div>
                           </div>
-                          
+
                           <div>
-                            <div className="mb-2 text-xs text-slate-600">用户权限：</div>
-                            <div className="flex flex-wrap gap-1">
-                              {['vc:record:readonly', 'minutes:minutes.transcript:readonly'].map(p => (
-                                <Badge key={p} variant="outline" className="text-xs font-mono">{p}</Badge>
+                            <div className="mb-2 text-xs text-slate-600">用户身份权限：</div>
+                            <div className="space-y-2">
+                              {effectiveOauthScopes.map((scope) => (
+                                <div key={scope} className="flex items-center gap-2 text-sm">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  <code className="text-slate-700">{scope}</code>
+                                  <span className="text-slate-500">
+                                    {OAUTH_SCOPE_DESCRIPTIONS[scope] || '用于飞书用户授权'}
+                                  </span>
+                                </div>
                               ))}
                             </div>
                           </div>
                         </div>
 
-                        {/* 安全设置 */}
-                        <div className="rounded-lg border border-slate-200 p-4">
-                          <div className="mb-3 text-sm font-medium">安全设置</div>
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-slate-600 w-20">重定向 URL：</span>
-                              <code className="flex-1 break-all rounded bg-slate-50 px-3 py-1.5 text-xs">{oauthCallbackUrl}</code>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => void copyToClipboard('oauth', oauthCallbackUrl)}
-                              >
-                                {copiedKey === 'oauth' ? '已复制' : '复制'}
-                              </Button>
+                        <form onSubmit={handleSaveAdvancedConfig} className="space-y-4 rounded-lg border border-slate-200 p-4">
+                          <div className="text-sm font-medium text-slate-900">附加配置（可选）</div>
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label htmlFor="oauthScope">OAuth Scope</Label>
+                              <Input
+                                id="oauthScope"
+                                value={form.oauthScope}
+                                onChange={(e) => setForm((c) => ({ ...c, oauthScope: e.target.value }))}
+                                placeholder={DEFAULT_USER_OAUTH_SCOPE}
+                              />
+                              <div className="text-xs text-slate-500">留空则使用平台默认 scope。</div>
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="meetingTableId">数据表 ID</Label>
+                              <Input
+                                id="meetingTableId"
+                                value={form.meetingTableId}
+                                onChange={(e) => setForm((c) => ({ ...c, meetingTableId: e.target.value }))}
+                                placeholder="tblxxxx，可后补"
+                              />
                             </div>
                           </div>
-                        </div>
-
-                        {/* 提醒和确认按钮 */}
-                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                          <div className="mb-3 text-sm text-amber-800">
-                            完成上述操作后，请创建版本并发布！
+                          <div className="space-y-2">
+                            <Label htmlFor="baseAppToken">Base App Token</Label>
+                            <Input
+                              id="baseAppToken"
+                              type="password"
+                              value={form.baseAppToken}
+                              onChange={(e) => setForm((c) => ({ ...c, baseAppToken: e.target.value }))}
+                              placeholder="appcnxxxx，可后补"
+                            />
+                            {integration?.masked.baseAppToken && (
+                              <div className="text-xs text-slate-500">已保存：{integration.masked.baseAppToken}</div>
+                            )}
                           </div>
-                          <Button onClick={handleConfirmConfig}>
-                            完成配置，确认无误
+                          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                            完成上述操作后，请在飞书开放平台创建版本并发布，然后返回这里点击“刷新状态”确认 Webhook 已打通。
+                          </div>
+                          <Button type="submit" variant="outline" disabled={isSubmittingAdvanced}>
+                            {isSubmittingAdvanced ? '保存中...' : '保存附加配置'}
                           </Button>
-                        </div>
+                        </form>
                       </div>
                     </div>
                   </>
@@ -948,7 +993,17 @@ export default function FeishuConfigPage() {
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              {renderStepIndicator(3, calculateStepStatus(3, integration, detail?.checks, detail?.authorization, credentialsSubmitted, techConfigConfirmed))}
+              {renderStepIndicator(
+                3,
+                calculateStepStatus(
+                  3,
+                  integration,
+                  detail?.checks,
+                  detail?.authorization,
+                  hasSavedCredentials,
+                  hasTechConfigCompleted
+                )
+              )}
               {detail?.authorization?.status === 'authorized' && (
                 <Badge className="bg-emerald-100 text-emerald-700">已授权</Badge>
               )}
@@ -958,13 +1013,13 @@ export default function FeishuConfigPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!credentialsSubmitted ? (
+            {!hasSavedCredentials ? (
               <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-slate-500">
                 请先完成第 2 步基础凭证
               </div>
-            ) : !techConfigConfirmed ? (
+            ) : !hasTechConfigCompleted ? (
               <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-slate-500">
-                请先完成第 2 步技术配置并确认
+                请先完成第 2 步中的飞书后台配置，并确保 Webhook challenge 已成功回到系统。
               </div>
             ) : (
               <>
@@ -1021,7 +1076,17 @@ export default function FeishuConfigPage() {
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              {renderStepIndicator(4, calculateStepStatus(4, integration, detail?.checks, detail?.authorization, credentialsSubmitted, techConfigConfirmed))}
+              {renderStepIndicator(
+                4,
+                calculateStepStatus(
+                  4,
+                  integration,
+                  detail?.checks,
+                  detail?.authorization,
+                  hasSavedCredentials,
+                  hasTechConfigCompleted
+                )
+              )}
               {integration?.initializedAt && (
                 <Badge className="bg-emerald-100 text-emerald-700">已初始化</Badge>
               )}
@@ -1070,7 +1135,17 @@ export default function FeishuConfigPage() {
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
-              {renderStepIndicator(5, calculateStepStatus(5, integration, detail?.checks, detail?.authorization, credentialsSubmitted, techConfigConfirmed))}
+              {renderStepIndicator(
+                5,
+                calculateStepStatus(
+                  5,
+                  integration,
+                  detail?.checks,
+                  detail?.authorization,
+                  hasSavedCredentials,
+                  hasTechConfigCompleted
+                )
+              )}
               {detail?.checks?.allPassed && (
                 <Badge className="bg-emerald-100 text-emerald-700">全部通过</Badge>
               )}
@@ -1131,45 +1206,6 @@ export default function FeishuConfigPage() {
           </CardContent>
         </Card>
 
-        {/* 权限列表（折叠） */}
-        <Card>
-          <CardHeader className="pb-3">
-            <button
-              type="button"
-              onClick={() => toggleSection('permissions')}
-              className="flex w-full items-center justify-between"
-            >
-              <CardTitle className="text-base">技术配置参考</CardTitle>
-              {expandedSections.permissions !== false && <ChevronDown className="h-4 w-4" />}
-              {expandedSections.permissions === false && <ChevronRight className="h-4 w-4" />}
-            </button>
-            <CardDescription>这些信息用于在飞书开放平台配置应用</CardDescription>
-          </CardHeader>
-          {expandedSections.permissions !== false && (
-            <CardContent className="space-y-6">
-              <div>
-                <div className="mb-2 text-sm font-medium">需要的权限</div>
-                <div className="space-y-1">
-                  {REQUIRED_PERMISSIONS.map((p) => (
-                    <div key={p} className="rounded bg-slate-50 px-3 py-1.5 font-mono text-xs">{p}</div>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div className="mb-2 text-sm font-medium">需要的事件</div>
-                <div className="space-y-2">
-                  {REQUIRED_EVENTS.map((event) => (
-                    <div key={event.id} className="rounded bg-slate-50 p-3">
-                      <div className="font-medium text-sm">{event.name}</div>
-                      <div className="font-mono text-xs text-slate-500">{event.id}</div>
-                      <div className="mt-1 text-xs text-slate-500">{event.desc}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          )}
-        </Card>
       </div>
     </Layout>
   );
