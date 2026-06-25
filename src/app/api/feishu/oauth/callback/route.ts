@@ -79,33 +79,6 @@ function renderErrorPage(message: string) {
   });
 }
 
-function renderManagedSuccessPage(options: {
-  integrationName: string;
-  redirectUri: string;
-  state: string;
-}) {
-  const html = renderHtml(
-    '飞书用户授权成功',
-    '当前授权结果已直接写入数据库，后续会由服务端自动刷新和使用，无需手工复制环境变量。',
-    `<div class="panel">
-      <p><strong>集成名称:</strong> <code>${escapeHtml(options.integrationName)}</code></p>
-      <p><strong>state:</strong> <code>${escapeHtml(options.state)}</code></p>
-      <p><strong>redirect_uri:</strong> <code>${escapeHtml(options.redirectUri)}</code></p>
-    </div>
-    <div class="panel">
-      <p>这次授权已经自动保存到当前账号的飞书集成配置中。</p>
-      <p>下一步建议返回配置页，继续完成权限检查、多维表格初始化和联通性验证。</p>
-    </div>
-    <div class="actions">
-      <a href="${escapeHtml(`${getProjectPublicUrl()}/feishu-config`)}">返回飞书配置页</a>
-    </div>`
-  );
-
-  return new NextResponse(html, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
-  });
-}
-
 async function exchangeOauthCode(options: {
   code: string;
   appId: string;
@@ -281,11 +254,9 @@ export async function GET(request: NextRequest) {
       redirectUri,
     });
 
-    return renderManagedSuccessPage({
-      integrationName: integration.name,
-      redirectUri,
-      state,
-    });
+    const redirectTarget = new URL(oauthState.redirectTo || '/feishu-config', getProjectPublicUrl());
+    redirectTarget.searchParams.set('oauth', 'success');
+    return NextResponse.redirect(redirectTarget);
   } catch (error) {
     logRuntimeMonitor('error', 'oauth_callback', 'oauth_callback_failed', {
       ...toRuntimeErrorContext(error),
