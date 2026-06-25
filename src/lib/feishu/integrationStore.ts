@@ -92,6 +92,7 @@ export type FeishuCheckStatusView = {
   webhookStatus: string;
   oauthStatus: string;
   baseStatus: string;
+  allPassed: boolean;
   lastCheckedAt: string | null;
   lastErrorType: string | null;
   lastErrorMessage: string | null;
@@ -256,6 +257,17 @@ function mapAuthorizationContext(row: FeishuAuthorizationRow): FeishuAuthorizati
   };
 }
 
+function isAllCheckStatusesPassed(row: FeishuIntegrationCheckRow): boolean {
+  return (
+    row.appCredentialStatus === 'success' &&
+    row.permissionStatus === 'success' &&
+    row.eventSubscriptionStatus === 'success' &&
+    row.webhookStatus === 'success' &&
+    row.oauthStatus === 'authorized' &&
+    row.baseStatus === 'success'
+  );
+}
+
 function mapCheckStatus(row: FeishuIntegrationCheckRow): FeishuCheckStatusView {
   return {
     appCredentialStatus: row.appCredentialStatus,
@@ -264,6 +276,7 @@ function mapCheckStatus(row: FeishuIntegrationCheckRow): FeishuCheckStatusView {
     webhookStatus: row.webhookStatus,
     oauthStatus: row.oauthStatus,
     baseStatus: row.baseStatus,
+    allPassed: isAllCheckStatusesPassed(row),
     lastCheckedAt: toIsoString(row.lastCheckedAt),
     lastErrorType: row.lastErrorType,
     lastErrorMessage: row.lastErrorMessage,

@@ -105,11 +105,11 @@ type CheckStatusView = {
   webhookStatus: string;
   oauthStatus: string;
   baseStatus: string;
+  allPassed: boolean;
   lastCheckedAt: string | null;
   lastErrorType: string | null;
   lastErrorMessage: string | null;
   details: Record<string, unknown>;
-  allPassed?: boolean;
 };
 
 type IntegrationDetailResponse = {
@@ -410,7 +410,6 @@ export default function FeishuConfigWorkspace() {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isRunningChecks, setIsRunningChecks] = useState(false);
   const [isInitializingBase, setIsInitializingBase] = useState(false);
-  const [pageMessage, setPageMessage] = useState<string | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -501,7 +500,6 @@ export default function FeishuConfigWorkspace() {
     }
 
     if (oauthResult === 'success') {
-      setPageMessage('飞书授权成功，请继续初始化多维表格。');
       setPageError(null);
       if (user) {
         void loadSingleIntegration();
@@ -531,6 +529,7 @@ export default function FeishuConfigWorkspace() {
   const hasTechConfigCompleted = Boolean(
     hasWebhookConnected || detail?.authorization?.status === 'authorized' || integration?.initializedAt
   );
+  const hasAllChecksPassed = Boolean(detail?.checks?.allPassed);
   const effectiveOauthScopes = useMemo(() => {
     const rawScope = integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
     return Array.from(new Set(rawScope.split(/\s+/).filter(Boolean)));
@@ -578,6 +577,25 @@ export default function FeishuConfigWorkspace() {
   );
 
   const summaryToneClasses = getSummaryToneClasses(setupSummary.tone);
+
+  const autoCheckTriggerKey = useMemo(() => {
+    if (!integration?.id || !integration.initializedAt || hasAllChecksPassed) {
+      return null;
+    }
+
+    return [
+      integration.id,
+      integration.initializedAt,
+      integration.lastWebhookReceivedAt ?? 'no-webhook',
+      detail?.authorization?.updatedAt ?? 'no-oauth-update',
+    ].join(':');
+  }, [
+    detail?.authorization?.updatedAt,
+    hasAllChecksPassed,
+    integration?.id,
+    integration?.initializedAt,
+    integration?.lastWebhookReceivedAt,
+  ]);
 
   const sidebarSteps = useMemo(
     () =>
@@ -649,7 +667,6 @@ export default function FeishuConfigWorkspace() {
 
   const handleSubmitCredentials = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setPageMessage(null);
     setPageError(null);
 
     if (!form.appId.trim()) {
@@ -684,7 +701,6 @@ export default function FeishuConfigWorkspace() {
         })
       );
       await loadIntegrationDetail(savedIntegration.id);
-      setPageMessage('基础凭证已保存，请继续在飞书开放平台完成事件、权限和重定向 URL 配置。');
       setForm((current) => ({
         ...current,
         appId: savedIntegration.appId,
@@ -700,7 +716,6 @@ export default function FeishuConfigWorkspace() {
 
   const handleRefreshIntegration = async () => {
     if (!integration?.id) return;
-    setPageMessage(null);
     setPageError(null);
     await loadIntegrationDetail(integration.id);
   };
@@ -709,7 +724,6 @@ export default function FeishuConfigWorkspace() {
     async (integrationId: string, options?: { silent?: boolean }) => {
       setIsRunningChecks(true);
       if (!options?.silent) {
-        setPageMessage(null);
         setPageError(null);
       }
       try {
@@ -717,9 +731,6 @@ export default function FeishuConfigWorkspace() {
           await fetch(`/api/feishu/integrations/${integrationId}/checks`, { method: 'POST' })
         );
         await loadIntegrationDetail(integrationId);
-        if (!options?.silent) {
-          setPageMessage('系统内部校验已更新。');
-        }
       } catch (error) {
         if (!options?.silent) {
           setPageError(error instanceof Error ? error.message : '系统内部校验失败。');
@@ -732,33 +743,24 @@ export default function FeishuConfigWorkspace() {
   );
 
   useEffect(() => {
-    if (!integration?.id || !integration.initializedAt || detail?.checks?.allPassed || isRunningChecks) {
+    if (!integration?.id || !autoCheckTriggerKey || isRunningChecks) {
       return;
     }
 
-    const autoCheckKey = `${integration.id}:${integration.initializedAt}:${detail?.checks?.lastCheckedAt ?? 'never'}`;
-    if (autoCheckKeyRef.current === autoCheckKey) {
+    if (autoCheckKeyRef.current === autoCheckTriggerKey) {
       return;
     }
 
-    autoCheckKeyRef.current = autoCheckKey;
+    autoCheckKeyRef.current = autoCheckTriggerKey;
     void runAutomatedChecks(integration.id, { silent: true });
-  }, [
-    detail?.checks?.allPassed,
-    detail?.checks?.lastCheckedAt,
-    integration?.id,
-    integration?.initializedAt,
-    isRunningChecks,
-    runAutomatedChecks,
-  ]);
+  }, [autoCheckTriggerKey, integration?.id, isRunningChecks, runAutomatedChecks]);
 
   const handleInitializeBase = async () => {
     if (!integration?.id) return;
     setIsInitializingBase(true);
-    setPageMessage(null);
     setPageError(null);
     try {
-      const result = await parseJsonResponse<{
+      await parseJsonResponse<{
         appToken: string;
         tableId: string;
         createdFields: string[];
@@ -769,11 +771,6 @@ export default function FeishuConfigWorkspace() {
         await fetch(`/api/feishu/integrations/${integration.id}/base/initialize`, { method: 'POST' })
       );
       await loadIntegrationDetail(integration.id);
-      setPageMessage(
-        result.checkResult?.allPassed
-          ? '多维表格初始化完成，系统已完成内部校验，可以开始使用系统。'
-          : '多维表格初始化完成，系统正在后台校验联通状态，请稍候查看结果。'
-      );
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '初始化失败。');
     } finally {
@@ -856,13 +853,6 @@ export default function FeishuConfigWorkspace() {
           </aside>
 
           <div className="space-y-6">
-            {pageMessage ? (
-              <Alert className="border-emerald-200 bg-emerald-50">
-                <Check className="h-4 w-4 text-emerald-700" />
-                <AlertDescription className="text-emerald-800">{pageMessage}</AlertDescription>
-              </Alert>
-            ) : null}
-
             {pageError ? (
               <Alert className="border-red-200 bg-red-50">
                 <AlertCircle className="h-4 w-4 text-red-700" />
@@ -1175,10 +1165,6 @@ export default function FeishuConfigWorkspace() {
                           </Badge>
                         </div>
                         <div className="flex items-center justify-between gap-4">
-                          <span>授权用户</span>
-                          <span>{detail?.authorization?.authorizedUserName || '未授权'}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
                           <span>最近更新时间</span>
                           <span>{formatDateTime(detail?.authorization?.updatedAt || null)}</span>
                         </div>
@@ -1240,7 +1226,7 @@ export default function FeishuConfigWorkspace() {
 
                     <Button
                       onClick={() => void handleInitializeBase()}
-                      disabled={isInitializingBase || isLoadingDetail}
+                      disabled={isInitializingBase}
                     >
                       {isInitializingBase ? '初始化中...' : '一键初始化多维表格'}
                     </Button>
