@@ -1,5 +1,5 @@
 const DEFAULT_FEISHU_USER_OAUTH_SCOPE =
-  'vc:record:readonly minutes:minutes.transcript:export offline_access';
+  'vc:meeting.meetingevent:read vc:record:readonly minutes:minutes.transcript:export offline_access';
 
 function getRequiredValue(name: string, value: string | undefined): string {
   const normalized = value?.trim();
