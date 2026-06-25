@@ -498,7 +498,7 @@ export default function FeishuConfigPage() {
       appId: form.appId.trim(),
       appSecret: form.appSecret.trim(),
       webhookVerificationToken: form.webhookVerificationToken.trim(),
-      oauthScope: form.oauthScope.trim() || null,
+      ...(form.oauthScope.trim() ? { oauthScope: form.oauthScope.trim() } : {}),
     };
 
     setIsSubmittingCredentials(true);
@@ -545,7 +545,7 @@ export default function FeishuConfigPage() {
             name: form.name.trim() || integration.name || '默认飞书集成',
             baseAppToken: form.baseAppToken.trim() || null,
             meetingTableId: form.meetingTableId.trim() || null,
-            oauthScope: form.oauthScope.trim() || null,
+            ...(form.oauthScope.trim() ? { oauthScope: form.oauthScope.trim() } : {}),
           }),
         })
       );
