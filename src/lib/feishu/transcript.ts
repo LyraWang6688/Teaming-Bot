@@ -12,30 +12,11 @@ export async function fetchTranscriptByDocToken(
   docToken: string,
   integration: FeishuIntegrationContext
 ): Promise<string> {
-  let result: DocRawContentResult | null = null;
-  let tenantError: unknown;
-
-  try {
-    result = await callFeishuIntegrationUserOpenApi<DocRawContentResult>(
-      integration,
-      'GET',
-      `/docx/v1/documents/${docToken}/raw_content?lang=0`
-    );
-  } catch (error) {
-    tenantError = error;
-  }
-
-  if (!result) {
-    try {
-      result = await callFeishuIntegrationTenantOpenApi<DocRawContentResult>(
-        integration,
-        'GET',
-        `/docx/v1/documents/${docToken}/raw_content?lang=0`
-      );
-    } catch (error) {
-      throw tenantError || error;
-    }
-  }
+  const result = await callFeishuIntegrationUserOpenApi<DocRawContentResult>(
+    integration,
+    'GET',
+    `/docx/v1/documents/${docToken}/raw_content?lang=0`
+  );
 
   const transcript = (result.content || '').trim();
   if (!transcript) {
@@ -49,7 +30,7 @@ export async function fetchTranscriptByMinuteToken(
   minuteToken: string,
   integration: FeishuIntegrationContext
 ): Promise<string> {
-  const text = await callFeishuIntegrationOpenApiTextPreferUser(
+  const text = await callFeishuIntegrationUserOpenApiText(
     integration,
     'GET',
     `/minutes/v1/minutes/${minuteToken}/transcript?need_speaker=true&need_timestamp=true&file_format=txt`

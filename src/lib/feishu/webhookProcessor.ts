@@ -18,7 +18,7 @@ import {
   updateMeetingRecordFields,
   upsertMeetingWaitingRecord,
 } from './bitableOpenApi';
-import { callFeishuIntegrationOpenApiPreferUser } from './integrationOpenApi';
+import { callFeishuIntegrationUserOpenApi } from './integrationOpenApi';
 import {
   type FeishuIntegrationContext,
   getFeishuIntegrationContextById,
@@ -595,7 +595,7 @@ async function analyzeMeetingTranscriptWithRetries(
 }
 
 async function getMeetingRecording(context: Pick<MeetingEndedSource, 'integration' | 'meetingId'>) {
-  return callFeishuIntegrationOpenApiPreferUser<MeetingRecordingResult>(
+  return callFeishuIntegrationUserOpenApi<MeetingRecordingResult>(
     context.integration,
     'GET',
     `/vc/v1/meetings/${context.meetingId}/recording`
