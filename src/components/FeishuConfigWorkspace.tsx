@@ -412,13 +412,9 @@ export default function FeishuConfigWorkspace() {
   }, [user, integration, detail?.authorization?.status]);
 
   const effectiveOauthScopes = useMemo(() => {
-    const scope = integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
+    const scope = detail?.authorization?.scope || integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
     return scope.split(/\s+/).filter(Boolean);
-  }, [integration?.oauthScope]);
-
-  const eventListenerStatus = useMemo(() => {
-    return detail?.checks?.eventSubscriptionStatus === 'success' ? '已连接' : '未连接';
-  }, [detail?.checks?.eventSubscriptionStatus]);
+  }, [detail?.authorization?.scope, integration?.oauthScope]);
 
   const setupSummary = useMemo(() => {
     return buildSetupSummary({
@@ -957,28 +953,6 @@ export default function FeishuConfigWorkspace() {
                               </div>
                             </div>
 
-                            <div className="rounded-lg border border-slate-200 p-4">
-                              <div className="mb-3 flex items-center justify-between">
-                                <div className="text-sm font-medium text-slate-900">事件监听配置</div>
-                                <Badge
-                                  variant="outline"
-                                  className={getStatusBadgeClass(
-                                    detail?.checks?.eventSubscriptionStatus
-                                  )}
-                                >
-                                  {eventListenerStatus}
-                                </Badge>
-                              </div>
-                              <div className="space-y-2 text-sm text-slate-600">
-                                <div>
-                                  <span className="text-xs text-slate-500">事件名称：</span>
-                                  <code className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs">minutes.minute.generated_v1</code>
-                                </div>
-                                <div className="text-xs text-slate-500">
-                                  系统通过飞书 CLI 自动监听妙记生成事件。
-                                </div>
-                              </div>
-                            </div>
                           </div>
                         )}
                       </CardContent>

@@ -85,7 +85,7 @@ export async function POST(request: Request) {
       appId,
       appSecret: 'PLACEHOLDER', // CLI manages the real secret
       profileName,
-      oauthScope: 'offline_access minutes:minutes.search:read minutes:minutes.transcript:export',
+      oauthScope: 'minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app',
     });
 
     console.log('[feishu:register:poll] 应用创建成功', {
