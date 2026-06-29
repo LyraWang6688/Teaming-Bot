@@ -1,8 +1,9 @@
 FROM node:20-alpine AS base
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+RUN apk add --no-cache curl
 RUN corepack enable
-RUN npm install -g @larksuite/cli
+RUN npm install -g @larksuite/cli --registry=https://registry.npmmirror.com
 ENV LARKSUITE_CLI_CONFIG_DIR=/app/.lark-cli
 
 FROM base AS deps
