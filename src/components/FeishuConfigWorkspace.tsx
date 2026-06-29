@@ -20,6 +20,7 @@ import {
   Shield,
   Table,
   User,
+  QrCode,
 } from 'lucide-react';
 
 const DEFAULT_USER_OAUTH_SCOPE =
@@ -165,7 +166,7 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 function getStepTitle(step: number) {
   switch (step) {
     case 1:
-      return '登录飞书账号';
+      return '创建应用并登录';
     case 2:
       return '创建飞书应用';
     case 3:
@@ -180,9 +181,9 @@ function getStepTitle(step: number) {
 function getStepDescription(step: number) {
   switch (step) {
     case 1:
-      return '使用飞书账号登录后，即可开始配置。';
+      return '扫码创建你的飞书应用，系统自动完成配置。';
     case 2:
-      return '点击按钮，系统自动创建飞书应用并配置权限。';
+      return '扫码创建你的飞书应用，系统自动完成配置。';
     case 3:
       return '点击授权，飞书将发送授权卡片到你的客户端。';
     case 4:
@@ -203,14 +204,14 @@ function buildSetupSummary(options: {
     return {
       tone: 'indigo',
       title: '请先登录',
-      description: '登录后即可开始配置飞书集成，全程自动完成。',
+      description: '创建你的飞书应用后即可开始配置，全程自动完成。',
     };
   }
 
   if (!options.integration) {
     return {
       tone: 'indigo',
-      title: '创建飞书应用',
+      title: '完成配置',
       description: '点击按钮，系统将自动为你创建飞书应用并配置所需权限。',
     };
   }
@@ -359,6 +360,9 @@ export default function FeishuConfigWorkspace() {
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [registrationQrUrl, setRegistrationQrUrl] = useState<string | null>(null);
+  const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const currentStep = useMemo(() => {
     if (!user) return 1;
@@ -373,15 +377,15 @@ export default function FeishuConfigWorkspace() {
       {
         step: 1,
         anchor: 'step-login',
-        title: '登录飞书账号',
+        title: '创建应用并登录',
         description: '使用飞书账号登录',
         status: user ? 'completed' : 'current',
       },
       {
         step: 2,
         anchor: 'step-create-app',
-        title: '创建飞书应用',
-        description: '系统自动创建应用',
+        title: '完成配置',
+        description: '应用创建并授权',
         status: integration ? 'completed' : user ? 'current' : 'pending',
       },
       {
@@ -530,7 +534,7 @@ export default function FeishuConfigWorkspace() {
       setUser(null);
       setIntegration(null);
       setDetail(null);
-      router.push('/login');
+      router.push('/feishu-config');
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '退出登录失败。');
     } finally {
@@ -539,17 +543,47 @@ export default function FeishuConfigWorkspace() {
   };
 
   const handleCreateApp = async () => {
-    setIsCreatingApp(true);
     setPageError(null);
+    setRegistrationQrUrl(null);
+    setVerificationUrl(null);
     try {
-      const result = await parseJsonResponse<IntegrationView>(
-        await fetch('/api/feishu/integrations/create-app', { method: 'POST' })
-      );
-      await loadIntegrationDetail(result.id);
+      const result = await parseJsonResponse<{
+        deviceCode: string;
+        verificationUrl: string;
+        expiresIn: number;
+        interval: number;
+      }>(await fetch('/api/feishu/integrations/create-app', { method: 'POST' }));
+      
+      setVerificationUrl(result.verificationUrl);
+      setRegistrationQrUrl(result.verificationUrl);
+      
+      const intervalMs = Math.max((result.interval || 5) * 1000, 3000);
+      
+      const poll = async () => {
+        try {
+          const pollRes = await fetch('/api/feishu/integrations/register/poll', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ deviceCode: result.deviceCode }),
+          });
+          const pollData = await pollRes.json();
+          
+          if (pollData.status === 'completed') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            window.location.reload();
+          } else if (pollData.status === 'denied' || pollData.status === 'expired') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            setRegistrationQrUrl(null);
+            setPageError(pollData.error || '创建失败');
+          }
+        } catch (e) {
+          console.error('[poll]', e);
+        }
+      };
+      
+      pollRef.current = setInterval(poll, intervalMs);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '创建应用失败。');
-    } finally {
-      setIsCreatingApp(false);
     }
   };
 
@@ -731,13 +765,13 @@ export default function FeishuConfigWorkspace() {
                     <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
                       <User className="h-8 w-8 text-indigo-600" />
                     </div>
-                    <h3 className="mb-2 text-lg font-semibold text-slate-900">请先登录</h3>
+                    <h3 className="mb-2 text-lg font-semibold text-slate-900">创建应用并登录</h3>
                     <p className="mb-6 text-center text-sm text-slate-500">
-                      使用飞书账号登录后，系统将自动为你创建飞书应用并完成配置。
+                      点击按钮后使用飞书扫码，系统将自动为你创建应用并完成配置。
                     </p>
-                    <Button onClick={() => router.push('/login')} className="w-full max-w-xs">
-                      <User className="mr-2 h-4 w-4" />
-                      使用飞书登录
+                    <Button onClick={handleCreateApp} className="w-full max-w-xs">
+                      <QrCode className="mr-2 h-4 w-4" />
+                      创建应用并登录
                     </Button>
                   </div>
                 ) : (

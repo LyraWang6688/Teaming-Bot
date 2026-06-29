@@ -40,15 +40,3 @@ export function getAppEncryptionKey(): string {
 export function getDefaultFeishuOauthScope(): string {
   return process.env.FEISHU_USER_OAUTH_SCOPE?.trim() || DEFAULT_FEISHU_USER_OAUTH_SCOPE;
 }
-
-export function getFeishuLoginAppId(): string {
-  return getRequiredValue('FEISHU_LOGIN_APP_ID', process.env.FEISHU_LOGIN_APP_ID);
-}
-
-export function getFeishuLoginAppSecret(): string {
-  return getRequiredValue('FEISHU_LOGIN_APP_SECRET', process.env.FEISHU_LOGIN_APP_SECRET);
-}
-
-export function getFeishuLoginRedirectUri(): string {
-  return `${getProjectPublicUrl()}/api/auth/callback`;
-}

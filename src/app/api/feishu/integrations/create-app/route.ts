@@ -1,110 +1,46 @@
 import { NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth/session';
-import { createUserFeishuIntegration, type FeishuIntegrationView } from '@/lib/feishu/integration/integrationStore';
-import { exec } from 'child_process';
 
-const REQUIRED_USER_PERMISSIONS = [
-  'bitable:app',
-  'minutes:minutes.basic:read',
-  'minutes:minutes.transcript:export',
-  'offline_access',
-];
+const ACCOUNTS_FEISHU = 'https://accounts.feishu.cn';
+const OPEN_FEISHU = 'https://open.feishu.cn';
+const APP_REGISTRATION_PATH = '/oauth/v1/app/registration';
 
 export async function POST() {
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ success: false, error: '请先登录' }, { status: 401 });
-  }
-
   try {
-    const appName = `Teaming-Bot-${user.id.slice(0, 8)}`;
-    const profileName = `teaming-${user.id.slice(0, 8)}`;
-    
-    const createResult = await new Promise<string>((resolve, reject) => {
-      exec(
-        `lark-cli app create "${appName}" --app-name "${appName}" --description "智能会议分析工具"`,
-        { timeout: 30000 },
-        (error, stdout, stderr) => {
-          if (error) {
-            reject(new Error(stderr || error.message));
-            return;
-          }
-          resolve(stdout);
-        }
-      );
+    const formData = new URLSearchParams();
+    formData.append('action', 'begin');
+    formData.append('archetype', 'PersonalAgent');
+    formData.append('auth_method', 'client_secret');
+    formData.append('request_user_info', 'open_id tenant_brand');
+
+    const response = await fetch(`${ACCOUNTS_FEISHU}${APP_REGISTRATION_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: formData.toString(),
     });
 
-    const appIdMatch = createResult.match(/app_id["']?\s*[:=]\s*["']?([^"'\\s]+)["']?/);
-    const appSecretMatch = createResult.match(/app_secret["']?\s*[:=]\s*["']?([^"'\\s]+)["']?/);
+    const body = await response.json();
 
-    if (!appIdMatch || !appSecretMatch) {
-      throw new Error('创建应用失败，无法解析 App ID 和 App Secret');
+    if (response.status >= 400 || body.error) {
+      return NextResponse.json(
+        { success: false, error: body.error_description || body.error || '创建应用失败' },
+        { status: 500 }
+      );
     }
 
-    const appId = appIdMatch[1];
-    const appSecret = appSecretMatch[1];
-
-    for (const permission of REQUIRED_USER_PERMISSIONS) {
-      await new Promise<string>((resolve, reject) => {
-        exec(
-          `lark-cli app add-permission --app-id ${appId} --permission ${permission}`,
-          { timeout: 30000 },
-          (error, stdout, stderr) => {
-            if (error) {
-              reject(new Error(`添加权限 ${permission} 失败: ${stderr || error.message}`));
-              return;
-            }
-            resolve(stdout);
-          }
-        );
-      });
-    }
-
-    await new Promise<string>((resolve, reject) => {
-      exec(
-        `lark-cli app add-event-subscription --app-id ${appId} --event minutes.minute.generated_v1`,
-        { timeout: 30000 },
-        (error, stdout, stderr) => {
-          if (error) {
-            reject(new Error(stderr || error.message));
-            return;
-          }
-          resolve(stdout);
-        }
-      );
-    });
-
-    const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/auth/callback`;
-    
-    await new Promise<string>((resolve, reject) => {
-      exec(
-        `lark-cli app set-oauth-redirect-uri --app-id ${appId} --redirect-uri ${redirectUri}`,
-        { timeout: 30000 },
-        (error, stdout, stderr) => {
-          if (error) {
-            reject(new Error(stderr || error.message));
-            return;
-          }
-          resolve(stdout);
-        }
-      );
-    });
-
-    const integration = await createUserFeishuIntegration({
-      userId: user.id,
-      name: appName,
-      appId,
-      appSecret,
-      profileName,
-      oauthScope: 'minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app',
-    });
+    const verificationUrl = `${OPEN_FEISHU}/page/cli?user_code=${body.user_code}`;
 
     return NextResponse.json({
       success: true,
-      data: integration,
+      data: {
+        deviceCode: body.device_code,
+        userCode: body.user_code,
+        verificationUrl,
+        expiresIn: body.expires_in,
+        interval: body.interval,
+      },
     });
   } catch (error) {
-    console.error('[feishu:create-app] 创建应用失败', error);
+    console.error('[feishu:create-app] 发起设备流失败', error);
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : '创建应用失败' },
       { status: 500 }
