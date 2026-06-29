@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth/session';
 import { getUserFeishuIntegrationContext } from '@/lib/feishu/integration/integrationStore';
+import { setDeviceCode } from '@/lib/feishu/authDeviceCodeStore';
 import { exec } from 'child_process';
+
+const CLI_TIMEOUT = 15000;
 
 export async function POST(request: Request) {
   const user = await getCurrentUser();
@@ -26,12 +29,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: '集成配置缺少 profileName' }, { status: 400 });
     }
 
-    const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/auth/callback`;
-    
+    // Run lark-cli auth login with --no-wait to get device code + verification URL
+    // CLI already has the real appSecret in its keychain from config init --new
     const authResult = await new Promise<string>((resolve, reject) => {
       exec(
-        `lark-cli auth login --app-id ${integration.appId} --profile ${integration.profileName} --scope "minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app" --redirect-uri ${redirectUri}`,
-        { timeout: 60000 },
+        `lark-cli auth login --profile ${integration.profileName} --scope "minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app" --no-wait --json`,
+        { timeout: CLI_TIMEOUT },
         (error, stdout, stderr) => {
           if (error) {
             reject(new Error(stderr || error.message));
@@ -42,14 +45,36 @@ export async function POST(request: Request) {
       );
     });
 
+    const parsed = JSON.parse(authResult);
+    const deviceCode = parsed.device_code;
+    const verificationUrl = parsed.verification_url;
+
+    if (!deviceCode || !verificationUrl) {
+      return NextResponse.json(
+        { success: false, error: '获取设备授权信息失败' },
+        { status: 500 }
+      );
+    }
+
+    // Save device code in memory for polling
+    setDeviceCode(integrationId, {
+      deviceCode,
+      expiresAt: Date.now() + (parsed.expires_in || 300) * 1000,
+      appId: integration.appId,
+      appSecret: '', // Not needed — poll endpoint uses CLI directly
+    });
+
     return NextResponse.json({
       success: true,
-      data: { message: '授权卡片已发送，请在飞书客户端确认授权', result: authResult },
+      data: {
+        verificationUrl,
+        deviceCode,
+      },
     });
   } catch (error) {
-    console.error('[feishu:authorize] 推送授权失败', error);
+    console.error('[feishu:authorize:start] 发起授权失败', error);
     return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : '推送授权失败' },
+      { success: false, error: error instanceof Error ? error.message : '发起授权失败' },
       { status: 500 }
     );
   }

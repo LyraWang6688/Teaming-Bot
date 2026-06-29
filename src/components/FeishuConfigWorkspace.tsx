@@ -166,11 +166,11 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 function getStepTitle(step: number) {
   switch (step) {
     case 1:
-      return '创建应用并登录';
+      return '创建应用';
     case 2:
-      return '创建飞书应用';
+      return '用户授权';
     case 3:
-      return '完成授权';
+      return '事件订阅';
     case 4:
       return '初始化多维表格';
     default:
@@ -181,11 +181,11 @@ function getStepTitle(step: number) {
 function getStepDescription(step: number) {
   switch (step) {
     case 1:
-      return '扫码创建你的飞书应用，系统自动完成配置。';
+      return '使用飞书 CLI 创建新的飞书应用。';
     case 2:
-      return '扫码创建你的飞书应用，系统自动完成配置。';
+      return '授权应用访问妙记、多维表格等权限。';
     case 3:
-      return '点击授权，飞书将发送授权卡片到你的客户端。';
+      return '订阅妙记生成事件，系统将自动监听会议。';
     case 4:
       return '初始化多维表格，自动创建会议信息表。';
     default:
@@ -203,24 +203,24 @@ function buildSetupSummary(options: {
   if (!options.user) {
     return {
       tone: 'indigo',
-      title: '请先登录',
-      description: '创建你的飞书应用后即可开始配置，全程自动完成。',
+      title: '创建应用',
+      description: '点击下方按钮创建你的飞书应用。',
     };
   }
 
   if (!options.integration) {
     return {
       tone: 'indigo',
-      title: '完成配置',
-      description: '点击按钮，系统将自动为你创建飞书应用并配置所需权限。',
+      title: '创建应用',
+      description: '点击下方按钮，通过飞书 CLI 创建新的飞书应用。',
     };
   }
 
   if (!options.authorization || options.authorization.status !== 'authorized') {
     return {
       tone: 'indigo',
-      title: '完成飞书授权',
-      description: '点击授权按钮，飞书将发送授权卡片到你的客户端，请确认授权。',
+      title: '授权应用',
+      description: '点击按钮，通过飞书 CLI 完成授权。',
     };
   }
 
@@ -357,12 +357,17 @@ export default function FeishuConfigWorkspace() {
   const [isCreatingApp, setIsCreatingApp] = useState(false);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
   const [isInitializingBase, setIsInitializingBase] = useState(false);
+  const [listenerState, setListenerState] = useState<string>('stopped');
+  const [isStartingListener, setIsStartingListener] = useState(false);
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [registrationQrUrl, setRegistrationQrUrl] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
+  const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
+  const [authorizePollStatus, setAuthorizePollStatus] = useState<string>('idle');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const authorizePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const currentStep = useMemo(() => {
     if (!user) return 1;
@@ -376,31 +381,31 @@ export default function FeishuConfigWorkspace() {
     const steps = [
       {
         step: 1,
-        anchor: 'step-login',
-        title: '创建应用并登录',
-        description: '使用飞书账号登录',
-        status: user ? 'completed' : 'current',
+        anchor: 'step-create-app',
+        title: '创建应用',
+        description: '使用飞书 CLI 创建应用',
+        status: integration ? 'completed' : 'current',
       },
       {
         step: 2,
-        anchor: 'step-create-app',
-        title: '完成配置',
-        description: '应用创建并授权',
-        status: integration ? 'completed' : user ? 'current' : 'pending',
+        anchor: 'step-authorize',
+        title: '用户授权',
+        description: '授权访问权限',
+        status: (detail?.authorization?.status === 'authorized') ? 'completed' : integration ? 'current' : 'pending',
       },
       {
         step: 3,
-        anchor: 'step-authorize',
-        title: '完成授权',
-        description: '点击授权卡片',
-        status: (detail?.authorization?.status === 'authorized') ? 'completed' : integration ? 'current' : 'pending',
+        anchor: 'step-subscribe',
+        title: '事件订阅',
+        description: '订阅妙记生成事件',
+        status: 'pending' as const,
       },
       {
         step: 4,
         anchor: 'step-base',
         title: '初始化表格',
         description: '创建会议信息表',
-        status: integration?.initializedAt ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending',
+        status: integration?.initializedAt ? 'completed' : (listenerState === 'running') ? 'current' : 'pending',
       },
     ];
     return steps;
@@ -441,9 +446,6 @@ export default function FeishuConfigWorkspace() {
           | null;
         if (payload?.success) {
           setUser(payload.data ?? null);
-          if (payload.data) {
-            await loadIntegrationDetail(null);
-          }
         }
       } catch (error) {
         console.error('[auth:me] 获取用户信息失败', error);
@@ -452,6 +454,12 @@ export default function FeishuConfigWorkspace() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      loadIntegrationDetail(null);
+    }
+  }, [user]);
 
   useEffect(() => {
     const authCode = searchParams.get('code');
@@ -542,39 +550,58 @@ export default function FeishuConfigWorkspace() {
     }
   };
 
+  const handleStartListener = async () => {
+    if (!integration?.id) return;
+    setIsStartingListener(true);
+    setPageError(null);
+    try {
+      await parseJsonResponse(
+        await fetch(`/api/feishu/integrations/${integration.id}/event-listener`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      setListenerState('running');
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '\u542f\u52a8\u76d1\u542c\u5931\u8d25\u3002');
+    } finally {
+      setIsStartingListener(false);
+    }
+  };
+
   const handleCreateApp = async () => {
     setPageError(null);
     setRegistrationQrUrl(null);
     setVerificationUrl(null);
     try {
       const result = await parseJsonResponse<{
-        deviceCode: string;
         verificationUrl: string;
-        expiresIn: number;
-        interval: number;
+        sessionToken: string;
+        profileName: string;
       }>(await fetch('/api/feishu/integrations/create-app', { method: 'POST' }));
       
       setVerificationUrl(result.verificationUrl);
       setRegistrationQrUrl(result.verificationUrl);
       
-      const intervalMs = Math.max((result.interval || 5) * 1000, 3000);
+      const intervalMs = 3000;
       
       const poll = async () => {
         try {
           const pollRes = await fetch('/api/feishu/integrations/register/poll', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ deviceCode: result.deviceCode }),
+            body: JSON.stringify({ sessionToken: result.sessionToken }),
           });
           const pollData = await pollRes.json();
+          const status = pollData?.data?.status || pollData?.status;
           
-          if (pollData.status === 'completed') {
+          if (status === 'completed') {
             if (pollRef.current) clearInterval(pollRef.current);
             window.location.reload();
-          } else if (pollData.status === 'denied' || pollData.status === 'expired') {
+          } else if (status === 'error' || status === 'denied' || status === 'expired') {
             if (pollRef.current) clearInterval(pollRef.current);
             setRegistrationQrUrl(null);
-            setPageError(pollData.error || '创建失败');
+            setPageError(pollData?.data?.error || pollData?.error || '创建失败');
           }
         } catch (e) {
           console.error('[poll]', e);
@@ -591,17 +618,55 @@ export default function FeishuConfigWorkspace() {
     if (!integration?.id) return;
     setIsAuthorizing(true);
     setPageError(null);
+    setAuthorizeUrl(null);
+    setAuthorizePollStatus('idle');
     try {
-      await parseJsonResponse(
-        await fetch(`/api/feishu/integrations/${integration.id}/authorize`, {
+      const result = await parseJsonResponse<{ verificationUrl: string; deviceCode: string }>(
+        await fetch(`/api/feishu/integrations/${integration.id}/authorize/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ integrationId: integration.id }),
         })
       );
-      await loadIntegrationDetail(integration.id);
+
+      setAuthorizeUrl(result.verificationUrl);
+      setAuthorizePollStatus('pending');
+
+      if (authorizePollRef.current) {
+        clearInterval(authorizePollRef.current);
+      }
+      authorizePollRef.current = setInterval(async () => {
+        try {
+          const pollResult = await parseJsonResponse<{ status: string; error?: string }>(
+            await fetch(`/api/feishu/integrations/${integration.id}/authorize/poll`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ integrationId: integration.id }),
+            })
+          );
+
+          if (pollResult.status === 'completed') {
+            setAuthorizePollStatus('completed');
+            if (authorizePollRef.current) {
+              clearInterval(authorizePollRef.current);
+              authorizePollRef.current = null;
+            }
+            await loadIntegrationDetail(integration.id);
+          } else if (pollResult.status === 'denied' || pollResult.status === 'expired' || pollResult.status === 'error') {
+            setAuthorizePollStatus(pollResult.status);
+            setPageError(pollResult.error || '授权失败');
+            if (authorizePollRef.current) {
+              clearInterval(authorizePollRef.current);
+              authorizePollRef.current = null;
+            }
+          }
+        } catch (pollErr) {
+          console.error('[feishu:authorize:poll] 轮询失败', pollErr);
+        }
+      }, 3000);
     } catch (error) {
-      setPageError(error instanceof Error ? error.message : '推送授权失败。');
+      console.error('[feishu:authorize] 发起授权失败', error);
+      setPageError(error instanceof Error ? error.message : '发起授权失败。');
     } finally {
       setIsAuthorizing(false);
     }
@@ -762,17 +827,46 @@ export default function FeishuConfigWorkspace() {
                   </div>
                 ) : !user ? (
                   <div id="step-login" className="flex flex-col items-center justify-center py-12">
-                    <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
-                      <User className="h-8 w-8 text-indigo-600" />
-                    </div>
-                    <h3 className="mb-2 text-lg font-semibold text-slate-900">创建应用并登录</h3>
-                    <p className="mb-6 text-center text-sm text-slate-500">
-                      点击按钮后使用飞书扫码，系统将自动为你创建应用并完成配置。
-                    </p>
-                    <Button onClick={handleCreateApp} className="w-full max-w-xs">
-                      <QrCode className="mr-2 h-4 w-4" />
-                      创建应用并登录
-                    </Button>
+                    {registrationQrUrl ? (
+                      <>
+                        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
+                          <QrCode className="h-8 w-8 text-indigo-600" />
+                        </div>
+                        <h3 className="mb-2 text-lg font-semibold text-slate-900">请使用飞书扫码</h3>
+                        <p className="mb-4 text-center text-sm text-slate-500">
+                          打开飞书扫描下方二维码创建应用。
+                        </p>
+                        <div className="mb-4 rounded-lg border bg-white p-4 shadow-sm">
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(verificationUrl || registrationQrUrl)}`}
+                            alt="QR Code"
+                            className="mx-auto h-48 w-48"
+                          />
+                        </div>
+                        <p className="text-xs text-slate-400">
+                          二维码有效期 5 分钟，请尽快扫码
+                        </p>
+                        <p className="mt-2 text-xs text-slate-400 break-all text-center max-w-xs">
+                          <a href={verificationUrl || registrationQrUrl} target="_blank" rel="noopener noreferrer" className="underline">
+                            或点击打开链接
+                          </a>
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
+                          <User className="h-8 w-8 text-indigo-600" />
+                        </div>
+                        <h3 className="mb-2 text-lg font-semibold text-slate-900">创建应用</h3>
+                        <p className="mb-6 text-center text-sm text-slate-500">
+                          点击按钮后使用飞书扫码创建应用。
+                        </p>
+                        <Button onClick={handleCreateApp} className="w-full max-w-xs">
+                          <QrCode className="mr-2 h-4 w-4" />
+                          创建应用
+                        </Button>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -807,14 +901,14 @@ export default function FeishuConfigWorkspace() {
                               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
                                 <Rocket className="h-8 w-8 text-indigo-600" />
                               </div>
-                              <h3 className="mb-2 text-lg font-semibold text-slate-900">创建飞书应用</h3>
+                              <h3 className="mb-2 text-lg font-semibold text-slate-900">创建应用</h3>
                               <p className="mb-6 text-sm text-slate-600">
                                 点击下方按钮，系统将自动完成以下操作：
                               </p>
                               <ul className="mb-6 text-left text-sm text-slate-600 space-y-2">
                                 <li className="flex items-center gap-2">
                                   <Check className="h-4 w-4 text-emerald-500" />
-                                  创建飞书应用（App ID + App Secret）
+                                  创建应用（App ID + App Secret）
                                 </li>
                                 <li className="flex items-center gap-2">
                                   <Check className="h-4 w-4 text-emerald-500" />
@@ -838,7 +932,7 @@ export default function FeishuConfigWorkspace() {
                                 ) : (
                                   <>
                                     <Rocket className="mr-2 h-4 w-4" />
-                                    创建飞书应用
+                                    创建应用
                                   </>
                                 )}
                               </Button>
@@ -894,14 +988,14 @@ export default function FeishuConfigWorkspace() {
 
                     <div id="step-authorize">
                       <StepHeader
-                        step={3}
-                        status={(detail?.authorization?.status === 'authorized') ? 'completed' : 'current'}
-                        description={getStepDescription(3)}
+                        step={2}
+                        status={(detail?.authorization?.status === 'authorized') ? 'completed' : integration ? 'current' : 'pending'}
+                        description={getStepDescription(2)}
                       />
                       <CardContent>
                         {!integration ? (
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-                            <div className="mb-2 text-sm font-medium text-slate-500">请先创建飞书应用</div>
+                            <div className="mb-2 text-sm font-medium text-slate-500">请先创建应用</div>
                           </div>
                         ) : detail?.authorization?.status === 'authorized' ? (
                           <div className="space-y-4">
@@ -943,9 +1037,9 @@ export default function FeishuConfigWorkspace() {
                               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
                                 <Shield className="h-8 w-8 text-indigo-600" />
                               </div>
-                              <h3 className="mb-2 text-lg font-semibold text-slate-900">完成飞书授权</h3>
+                              <h3 className="mb-2 text-lg font-semibold text-slate-900">授权应用</h3>
                               <p className="mb-6 text-sm text-slate-600">
-                                点击下方按钮，飞书将发送授权卡片到你的客户端，请确认授权。
+                                点击下方按钮，通过飞书 CLI 授权应用访问权限。
                               </p>
                               <ul className="mb-6 text-left text-sm text-slate-600 space-y-2">
                                 <li className="flex items-center gap-2">
@@ -965,20 +1059,113 @@ export default function FeishuConfigWorkspace() {
                                   多维表格（查看、评论、编辑）
                                 </li>
                               </ul>
-                              <Button onClick={handleAuthorize} disabled={isAuthorizing} className="w-full">
-                                {isAuthorizing ? (
-                                  <>
-                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                                    发送授权卡片中...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Shield className="mr-2 h-4 w-4" />
-                                    发送授权卡片
-                                  </>
-                                )}
-                              </Button>
+                              {authorizeUrl ? (
+                                <div className="space-y-4">
+                                  <div className="rounded-lg bg-white p-4 text-center">
+                                    <div className="mb-2 text-sm font-medium text-slate-700">请用飞书扫描下方二维码进行授权</div>
+                                    <img
+                                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(authorizeUrl)}`}
+                                      alt="授权二维码"
+                                      className="mx-auto"
+                                      width={200}
+                                      height={200}
+                                      onError={(e) => {
+                                        // Fallback: show URL as link if QR image fails
+                                        (e.target as HTMLImageElement).style.display = 'none';
+                                      }}
+                                    />
+                                    <p className="mt-2 text-xs text-slate-500">
+                                      或
+                                      <a href={authorizeUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-indigo-600 hover:underline">
+                                        点击此处打开链接
+                                      </a>
+                                    </p>
+                                    {authorizePollStatus === 'pending' && (
+                                      <div className="mt-3 flex items-center justify-center gap-2 text-sm text-slate-500">
+                                        <RefreshCw className="h-4 w-4 animate-spin" />
+                                        等待授权确认...
+                                      </div>
+                                    )}
+                                    {authorizePollStatus === 'completed' && (
+                                      <div className="mt-3 flex items-center justify-center gap-2 text-sm text-emerald-600">
+                                        <Check className="h-4 w-4" />
+                                        授权已完成
+                                      </div>
+                                    )}
+                                  </div>
+                                  <Button
+                                    variant="outline"
+                                    onClick={() => {
+                                      setAuthorizeUrl(null);
+                                      setAuthorizePollStatus('idle');
+                                      if (authorizePollRef.current) {
+                                        clearInterval(authorizePollRef.current);
+                                        authorizePollRef.current = null;
+                                      }
+                                    }}
+                                    className="w-full"
+                                  >
+                                    重新发起授权
+                                  </Button>
+                                </div>
+                              ) : (
+                                <>
+                                  <Button onClick={handleAuthorize} disabled={isAuthorizing} className="w-full">
+                                    {isAuthorizing ? (
+                                      <>
+                                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                        生成授权二维码中...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Shield className="mr-2 h-4 w-4" />
+                                        开始授权
+                                      </>
+                                    )}
+                                  </Button>
+                                </>
+                              )}
                             </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </div>
+
+                    <Separator />
+
+                    <div id="step-subscribe">
+                      <StepHeader
+                        step={3}
+                        status={listenerState === 'running' ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
+                        description={getStepDescription(3)}
+                      />
+                      <CardContent>
+                        {!detail?.authorization || detail?.authorization?.status !== 'authorized' ? (
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                            <div className="mb-2 text-sm font-medium text-slate-500">\u8bf7\u5148\u5b8c\u6210\u6388\u6743</div>
+                          </div>
+                        ) : listenerState === 'running' ? (
+                          <div className="rounded-lg bg-emerald-50 p-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Check className="h-4 w-4 text-emerald-600" />
+                              <span className="font-medium text-emerald-900">\u4e8b\u4ef6\u76d1\u542c\u5df2\u542f\u7528</span>
+                            </div>
+                            <p className="text-sm text-slate-600">
+                              \u7cfb\u7edf\u6b63\u5728\u76d1\u542c\u5999\u8bb0\u751f\u6210\u4e8b\u4ef6\uff0c\u65b0\u7684\u4f1a\u8bae\u5c06\u81ea\u52a8\u88ab\u6355\u83b7\u5e76\u5206\u6790\u3002
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
+                            <p className="mb-4 text-sm text-slate-600">
+                              \u70b9\u51fb\u4e0b\u65b9\u6309\u94ae\uff0c\u542f\u52a8\u5999\u8bb0\u751f\u6210\u4e8b\u4ef6\u76d1\u542c\u3002
+                            </p>
+                            <Button onClick={handleStartListener} disabled={isStartingListener} className="w-full">
+                              {isStartingListener ? (
+                                <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />\u542f\u52a8\u4e2d...</>
+                              ) : (
+                                <><Rocket className="mr-2 h-4 w-4" />\u542f\u52a8\u4e8b\u4ef6\u76d1\u542c</>
+                              )}
+                            </Button>
                           </div>
                         )}
                       </CardContent>
@@ -989,7 +1176,7 @@ export default function FeishuConfigWorkspace() {
                     <div id="step-base">
                       <StepHeader
                         step={4}
-                        status={integration?.initializedAt ? 'completed' : 'current'}
+                        status={integration?.initializedAt ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
                         description={getStepDescription(4)}
                       />
                       <CardContent>

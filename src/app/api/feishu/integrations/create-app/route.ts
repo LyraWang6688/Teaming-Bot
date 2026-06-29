@@ -1,46 +1,92 @@
 import { NextResponse } from 'next/server';
-
-const ACCOUNTS_FEISHU = 'https://accounts.feishu.cn';
-const OPEN_FEISHU = 'https://open.feishu.cn';
-const APP_REGISTRATION_PATH = '/oauth/v1/app/registration';
+import { spawn, type ChildProcess } from 'child_process';
+import { randomUUID } from 'crypto';
+import { storeProcess, getProcess } from '@/lib/feishu/cliProcessStore';
 
 export async function POST() {
   try {
-    const formData = new URLSearchParams();
-    formData.append('action', 'begin');
-    formData.append('archetype', 'PersonalAgent');
-    formData.append('auth_method', 'client_secret');
-    formData.append('request_user_info', 'open_id tenant_brand');
+    const sessionToken = randomUUID().slice(0, 8);
+    const profileName = `teaming-${sessionToken}`;
 
-    const response = await fetch(`${ACCOUNTS_FEISHU}${APP_REGISTRATION_PATH}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: formData.toString(),
+    const child = spawn('lark-cli', [
+      'config', 'init', '--new',
+      '--name', profileName,
+      '--force-init',
+      '--lang', 'zh',
+    ], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 300000,
     });
 
-    const body = await response.json();
+    // Store entry first — listeners will update the stored ref
+    storeProcess(sessionToken, {
+      child,
+      profileName,
+      startedAt: new Date(),
+      integrationId: null,
+      stdoutBuffer: '',
+      stderrBuffer: '',
+    });
 
-    if (response.status >= 400 || body.error) {
+    let verificationUrl: string | null = null;
+
+    child.stdout?.on('data', (data: Buffer) => {
+      const entry = getProcess(sessionToken);
+      if (entry) {
+        entry.stdoutBuffer += data.toString();
+      }
+    });
+
+    child.stderr?.on('data', (data: Buffer) => {
+      const entry = getProcess(sessionToken);
+      if (entry) {
+        entry.stderrBuffer += data.toString();
+      }
+      if (!verificationUrl) {
+        const text = entry ? entry.stderrBuffer : data.toString();
+        const match = text.match(/https:\/\/[^\s]+/);
+        if (match) {
+          verificationUrl = match[0];
+        }
+      }
+    });
+
+    child.on('error', (err) => {
+      console.error('[feishu:create-app] 子进程错误', err);
+    });
+
+    // Wait up to 5 seconds for the URL to appear
+    const url = await new Promise<string | null>((resolve) => {
+      const check = setInterval(() => {
+        if (verificationUrl) {
+          clearInterval(check);
+          resolve(verificationUrl);
+        }
+      }, 200);
+      setTimeout(() => {
+        clearInterval(check);
+        resolve(verificationUrl);
+      }, 5000);
+    });
+
+    if (!url) {
+      child.kill();
       return NextResponse.json(
-        { success: false, error: body.error_description || body.error || '创建应用失败' },
+        { success: false, error: '无法获取二维码，请重试' },
         { status: 500 }
       );
     }
 
-    const verificationUrl = `${OPEN_FEISHU}/page/cli?user_code=${body.user_code}`;
-
     return NextResponse.json({
       success: true,
       data: {
-        deviceCode: body.device_code,
-        userCode: body.user_code,
-        verificationUrl,
-        expiresIn: body.expires_in,
-        interval: body.interval,
+        verificationUrl: url,
+        sessionToken,
+        profileName,
       },
     });
   } catch (error) {
-    console.error('[feishu:create-app] 发起设备流失败', error);
+    console.error('[feishu:create-app] 创建应用失败', error);
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : '创建应用失败' },
       { status: 500 }

@@ -46,6 +46,12 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       integrationId,
       ...toRuntimeErrorContext(error),
     });
+    console.error('[feishu:base:initialize] 初始化失败', {
+      userId: user.id,
+      integrationId,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : '初始化 Base 失败。' },
       { status: 500 }
