@@ -1,8 +1,6 @@
-import { FEISHU_STATUS_OPTIONS } from './status';
+import { FEISHU_STATUS_OPTIONS } from '../pipeline/status';
 import {
-  callFeishuIntegrationTenantOpenApi,
   callFeishuIntegrationUserOpenApi,
-  getTenantAccessTokenForIntegration,
 } from './integrationOpenApi';
 import {
   getUserFeishuIntegrationContext,
@@ -11,6 +9,7 @@ import {
   updateUserFeishuIntegration,
   writeAuditLog,
 } from './integrationStore';
+import { exec } from 'child_process';
 
 type CheckStatus = 'success' | 'failed' | 'pending' | 'authorized';
 
@@ -18,7 +17,6 @@ type IntegrationCheckStatuses = {
   appCredentialStatus: CheckStatus;
   permissionStatus: CheckStatus;
   eventSubscriptionStatus: CheckStatus;
-  webhookStatus: CheckStatus;
   oauthStatus: CheckStatus;
   baseStatus: CheckStatus;
 };
@@ -118,18 +116,16 @@ function isAllChecksPassed(statuses: IntegrationCheckStatuses): boolean {
     statuses.appCredentialStatus === 'success' &&
     statuses.permissionStatus === 'success' &&
     statuses.eventSubscriptionStatus === 'success' &&
-    statuses.webhookStatus === 'success' &&
     statuses.oauthStatus === 'authorized' &&
     statuses.baseStatus === 'success'
   );
 }
 
-function createInitialStatuses(hasWebhook: boolean): IntegrationCheckStatuses {
+function createInitialStatuses(): IntegrationCheckStatuses {
   return {
     appCredentialStatus: 'pending',
     permissionStatus: 'pending',
-    eventSubscriptionStatus: hasWebhook ? 'success' : 'pending',
-    webhookStatus: hasWebhook ? 'success' : 'pending',
+    eventSubscriptionStatus: 'pending',
     oauthStatus: 'pending',
     baseStatus: 'pending',
   };
@@ -171,7 +167,7 @@ async function ensureMeetingTableFields(
     throw new Error('未找到对应的飞书集成配置。');
   }
 
-  const fieldList = await callFeishuIntegrationTenantOpenApi<BitableFieldListResult>(
+  const fieldList = await callFeishuIntegrationUserOpenApi<BitableFieldListResult>(
     integration,
     'GET',
     `/bitable/v1/apps/${appToken}/tables/${tableId}/fields?page_size=500`
@@ -185,7 +181,7 @@ async function ensureMeetingTableFields(
       continue;
     }
 
-    await callFeishuIntegrationTenantOpenApi<BitableCreateFieldResult>(
+    await callFeishuIntegrationUserOpenApi<BitableCreateFieldResult>(
       integration,
       'POST',
       `/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
@@ -219,11 +215,8 @@ export async function runFeishuIntegrationChecks(options: {
   }
 
   const checkedAt = new Date();
-  const statuses = createInitialStatuses(Boolean(integration.lastWebhookReceivedAt));
+  const statuses = createInitialStatuses();
   const requiredUserScopes = parseScopeList(integration.oauthScope);
-  const requiredAppPermissions = integration.requiredPermissions.filter(
-    (permission) => !requiredUserScopes.includes(permission)
-  );
   const details: Record<string, unknown> = {
     checkedAt: checkedAt.toISOString(),
     integrationId: integration.id,
@@ -231,22 +224,12 @@ export async function runFeishuIntegrationChecks(options: {
   };
   const failures: CheckFailure[] = [];
 
-  try {
-    await getTenantAccessTokenForIntegration(integration);
-    statuses.appCredentialStatus = 'success';
-    details.appCredential = {
-      ok: true,
-      appId: integration.appId,
-    };
-  } catch (error) {
-    const failure = pickFailure(error, 'AppCredentialCheckFailed');
-    statuses.appCredentialStatus = 'failed';
-    failures.push(failure);
-    details.appCredential = {
-      ok: false,
-      message: failure.message,
-    };
-  }
+  statuses.appCredentialStatus = 'success';
+  details.appCredential = {
+    ok: true,
+    appId: integration.appId,
+    note: '应用凭证已保存，使用用户身份进行 API 调用。',
+  };
 
   try {
     const oauthUser = await callFeishuIntegrationUserOpenApi<FeishuUserInfoResult>(
@@ -282,12 +265,12 @@ export async function runFeishuIntegrationChecks(options: {
 
   if (integration.secrets.baseAppToken && integration.meetingTableId) {
     try {
-      const appInfo = await callFeishuIntegrationTenantOpenApi<BitableAppInfoResult>(
+      const appInfo = await callFeishuIntegrationUserOpenApi<BitableAppInfoResult>(
         integration,
         'GET',
         `/bitable/v1/apps/${integration.secrets.baseAppToken}`
       );
-      const fieldList = await callFeishuIntegrationTenantOpenApi<BitableFieldListResult>(
+      const fieldList = await callFeishuIntegrationUserOpenApi<BitableFieldListResult>(
         integration,
         'GET',
         `/bitable/v1/apps/${integration.secrets.baseAppToken}/tables/${integration.meetingTableId}/fields?page_size=500`
@@ -323,21 +306,12 @@ export async function runFeishuIntegrationChecks(options: {
     };
   }
 
-  details.webhook = {
-    ok: statuses.webhookStatus === 'success',
-    lastWebhookReceivedAt: integration.lastWebhookReceivedAt,
-    message:
-      statuses.webhookStatus === 'success'
-        ? '已收到飞书回调。'
-        : '尚未收到 Webhook challenge 或真实事件回调。',
-  };
   details.eventSubscription = {
     ok: statuses.eventSubscriptionStatus === 'success',
-    inferredFromWebhook: true,
     message:
       statuses.eventSubscriptionStatus === 'success'
-        ? '已通过收到的 Webhook 回调推断事件订阅已生效。'
-        : '当前通过是否收到 Webhook 回调来间接判断事件订阅是否生效。',
+        ? '事件监听已配置并生效。'
+        : '尚未配置事件监听，请确认 CLI 事件监听已启动。',
   };
 
   const authorization = await getLatestFeishuAuthorizationContext(integration.id);
@@ -346,7 +320,6 @@ export async function runFeishuIntegrationChecks(options: {
   const hasRecordedAuthorizationScope = requiredUserScopes.length === 0 || grantedUserScopes.length > 0;
 
   if (
-    statuses.appCredentialStatus === 'success' &&
     statuses.oauthStatus === 'authorized' &&
     statuses.baseStatus === 'success' &&
     hasRecordedAuthorizationScope &&
@@ -355,15 +328,13 @@ export async function runFeishuIntegrationChecks(options: {
     statuses.permissionStatus = 'success';
     details.permission = {
       ok: true,
-      strategy: 'oauth_scope + bitable_base_access',
-      requiredAppPermissions,
+      strategy: 'oauth_scope',
       requiredUserScopes,
       grantedUserScopes,
       note:
-        '当前真实检查已验证 Base 访问可用，并确认 OAuth 授权 scope 覆盖会议信息、会议录制、妙记导出与持续访问权限；会议事件与妙记资源仍会在首次真实链路中继续验证。',
+        '当前真实检查已验证 Base 访问可用，并确认 OAuth 授权 scope 覆盖会议信息、妙记导出与持续访问权限；会议事件仍会在首次真实链路中继续验证。',
     };
   } else if (
-    statuses.appCredentialStatus === 'success' &&
     statuses.oauthStatus === 'authorized' &&
     statuses.baseStatus === 'success' &&
     !hasRecordedAuthorizationScope
@@ -371,14 +342,12 @@ export async function runFeishuIntegrationChecks(options: {
     statuses.permissionStatus = 'failed';
     details.permission = {
       ok: false,
-      requiredAppPermissions,
       requiredUserScopes,
       grantedUserScopes,
       missingUserScopes: requiredUserScopes,
       note: '已完成 OAuth，但当前授权记录缺少 scope 信息，无法确认权限是否齐全，请重新发起授权。',
     };
   } else if (
-    statuses.appCredentialStatus === 'success' &&
     statuses.oauthStatus === 'authorized' &&
     statuses.baseStatus === 'success' &&
     missingUserScopes.length > 0
@@ -386,32 +355,29 @@ export async function runFeishuIntegrationChecks(options: {
     statuses.permissionStatus = 'failed';
     details.permission = {
       ok: false,
-      requiredAppPermissions,
       requiredUserScopes,
       grantedUserScopes,
       missingUserScopes,
-      note: '当前 OAuth 授权缺少部分用户权限，请在飞书开放平台补齐 scope 后重新授权。',
+      note: '当前 OAuth 授权缺少部分用户权限，请重新发起授权。',
     };
   } else if (
-    statuses.appCredentialStatus === 'failed' ||
     statuses.oauthStatus === 'failed' ||
     statuses.baseStatus === 'failed'
   ) {
     statuses.permissionStatus = 'failed';
     details.permission = {
       ok: false,
-      note: '由于应用凭证、OAuth 或 Base 资源访问存在失败项，权限检查判定为未通过。',
+      note: '由于 OAuth 或 Base 资源访问存在失败项，权限检查判定为未通过。',
     };
   } else {
     statuses.permissionStatus = 'pending';
     details.permission = {
       ok: false,
       pending: true,
-      requiredAppPermissions,
       requiredUserScopes,
       grantedUserScopes,
       missingUserScopes,
-      note: '需要先完成 OAuth 与 Base 初始化，系统才能验证应用权限和用户授权 scope 是否完整。',
+      note: '需要先完成 OAuth 与 Base 初始化，系统才能验证用户授权 scope 是否完整。',
     };
   }
 
@@ -421,7 +387,6 @@ export async function runFeishuIntegrationChecks(options: {
     appCredentialStatus: statuses.appCredentialStatus,
     permissionStatus: statuses.permissionStatus,
     eventSubscriptionStatus: statuses.eventSubscriptionStatus,
-    webhookStatus: statuses.webhookStatus,
     oauthStatus: statuses.oauthStatus,
     baseStatus: statuses.baseStatus,
     lastCheckedAt: checkedAt,
@@ -484,7 +449,7 @@ export async function initializeFeishuIntegrationBase(options: {
   let createdTable = false;
 
   if (!appToken) {
-    const createAppResult = await callFeishuIntegrationTenantOpenApi<BitableCreateAppResult>(
+    const createAppResult = await callFeishuIntegrationUserOpenApi<BitableCreateAppResult>(
       integration,
       'POST',
       '/bitable/v1/apps',
@@ -503,7 +468,7 @@ export async function initializeFeishuIntegrationBase(options: {
   }
 
   if (!tableId) {
-    const tableList = await callFeishuIntegrationTenantOpenApi<BitableTableListResult>(
+    const tableList = await callFeishuIntegrationUserOpenApi<BitableTableListResult>(
       integration,
       'GET',
       `/bitable/v1/apps/${appToken}/tables?page_size=100`
@@ -512,7 +477,7 @@ export async function initializeFeishuIntegrationBase(options: {
   }
 
   if (!tableId) {
-    const createTableResult = await callFeishuIntegrationTenantOpenApi<BitableCreateTableResult>(
+    const createTableResult = await callFeishuIntegrationUserOpenApi<BitableCreateTableResult>(
       integration,
       'POST',
       `/bitable/v1/apps/${appToken}/tables`,

@@ -12,10 +12,6 @@ export function getProjectPublicUrl(): string {
   return getPlatformProjectPublicUrl();
 }
 
-export function getFeishuUserOauthRedirectUri(): string {
-  return `${getProjectPublicUrl()}/api/feishu/oauth/callback`;
-}
-
 export function getFeishuUserOauthScope(): string {
   return getDefaultFeishuOauthScope();
 }

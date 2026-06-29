@@ -5,15 +5,14 @@ import {
   getLatestFeishuAuthorization,
   getUserFeishuIntegrationDetail,
   updateUserFeishuIntegration,
-} from '@/lib/feishu/integrationStore';
+} from '@/lib/feishu/integration/integrationStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
-import { getAuthenticatedUser } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/session';
 
 const updateIntegrationSchema = z.object({
   name: z.string().trim().min(1).optional(),
   appId: z.string().trim().min(1).optional(),
   appSecret: z.string().trim().min(1).optional(),
-  webhookVerificationToken: z.string().trim().min(1).optional(),
   baseAppToken: z.string().trim().min(1).nullable().optional(),
   meetingTableId: z.string().trim().min(1).nullable().optional(),
   oauthScope: z.string().trim().min(1).optional(),
@@ -29,7 +28,7 @@ type RouteContext = {
 };
 
 export async function GET(_request: NextRequest, context: RouteContext) {
-  const user = await getAuthenticatedUser();
+  const user = await getCurrentUser();
   if (!user) {
     logRuntimeMonitor('warn', 'integration_api', 'integration_detail_rejected_unauthenticated');
     return NextResponse.json(
@@ -83,7 +82,7 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const user = await getAuthenticatedUser();
+  const user = await getCurrentUser();
   if (!user) {
     logRuntimeMonitor('warn', 'integration_api', 'integration_update_rejected_unauthenticated');
     return NextResponse.json(

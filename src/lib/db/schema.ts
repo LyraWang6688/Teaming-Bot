@@ -19,36 +19,31 @@ export const feishuIntegrations = pgTable(
     setupStep: text('setup_step').notNull().default('app'),
     appId: text('app_id').notNull(),
     appSecretEncrypted: text('app_secret_encrypted').notNull(),
-    webhookVerificationTokenEncrypted: text('webhook_verification_token_encrypted').notNull(),
-    webhookVerificationTokenHash: text('webhook_verification_token_hash').notNull(),
     baseAppTokenEncrypted: text('base_app_token_encrypted'),
     meetingTableId: text('meeting_table_id'),
+    profileName: text('profile_name'),
+    cliConfigDir: text('cli_config_dir'),
     oauthScope: text('oauth_scope').notNull(),
     requiredEvents: jsonb('required_events')
       .$type<string[]>()
       .notNull()
-      .default(['vc.meeting.participant_meeting_ended_v1']),
+      .default(['minutes.minute.generated_v1']),
     requiredPermissions: jsonb('required_permissions')
       .$type<string[]>()
       .notNull()
       .default([
-        'vc:meeting.meetingevent:read',
-        'vc:record:readonly',
+        'minutes:minutes.basic:read',
         'minutes:minutes.transcript:export',
         'offline_access',
         'bitable:app',
       ]),
     initializedAt: timestamp('initialized_at', { withTimezone: true }),
-    lastWebhookReceivedAt: timestamp('last_webhook_received_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
     index('feishu_integrations_user_id_idx').on(table.userId),
-    uniqueIndex('feishu_integrations_webhook_token_hash_uidx').on(
-      table.webhookVerificationTokenHash
-    ),
   ]
 );
 
@@ -82,7 +77,6 @@ export const feishuIntegrationChecks = pgTable(
     appCredentialStatus: text('app_credential_status').notNull().default('pending'),
     permissionStatus: text('permission_status').notNull().default('pending'),
     eventSubscriptionStatus: text('event_subscription_status').notNull().default('pending'),
-    webhookStatus: text('webhook_status').notNull().default('pending'),
     oauthStatus: text('oauth_status').notNull().default('pending'),
     baseStatus: text('base_status').notNull().default('pending'),
     lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
@@ -194,9 +188,49 @@ export const meetingPipelineTasks = pgTable(
       table.integrationId,
       table.feishuMeetingId
     ),
+    uniqueIndex('meeting_pipeline_tasks_integration_event_uidx').on(
+      table.integrationId,
+      table.eventId
+    ),
     index('meeting_pipeline_tasks_status_next_run_idx').on(table.status, table.nextRunAt),
     index('meeting_pipeline_tasks_integration_id_idx').on(table.integrationId),
     index('meeting_pipeline_tasks_event_id_idx').on(table.eventId),
+  ]
+);
+
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    feishuOpenId: text('feishu_open_id').notNull(),
+    feishuUnionId: text('feishu_union_id'),
+    feishuName: text('feishu_name').notNull(),
+    feishuEmail: text('feishu_email'),
+    feishuAvatarUrl: text('feishu_avatar_url'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('users_feishu_open_id_uidx').on(table.feishuOpenId),
+  ]
+);
+
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull(),
+    sessionToken: text('session_token').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    lastActiveAt: timestamp('last_active_at', { withTimezone: true }).defaultNow().notNull(),
+    userAgent: text('user_agent'),
+    ipAddress: text('ip_address'),
+  },
+  (table) => [
+    uniqueIndex('sessions_session_token_uidx').on(table.sessionToken),
+    index('sessions_user_id_idx').on(table.userId),
+    index('sessions_expires_at_idx').on(table.expiresAt),
   ]
 );
 
@@ -207,3 +241,5 @@ export type FeishuOauthStateRow = typeof feishuOauthStates.$inferSelect;
 export type FeishuAuditLogRow = typeof feishuAuditLogs.$inferSelect;
 export type MeetingRecordRow = typeof meetingRecords.$inferSelect;
 export type MeetingPipelineTaskRow = typeof meetingPipelineTasks.$inferSelect;
+export type UserRow = typeof users.$inferSelect;
+export type SessionRow = typeof sessions.$inferSelect;

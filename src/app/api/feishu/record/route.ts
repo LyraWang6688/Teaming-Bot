@@ -7,8 +7,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   createIntegrationBitableAccess,
   getBitableRecord,
-} from '@/lib/feishu/bitableOpenApi';
-import { getFeishuIntegrationContextById } from '@/lib/feishu/integrationStore';
+} from '@/lib/feishu/bitable/bitableOpenApi';
+import { getFeishuIntegrationContextById } from '@/lib/feishu/integration/integrationStore';
 
 export async function GET(request: NextRequest) {
   try {

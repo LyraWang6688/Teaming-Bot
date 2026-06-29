@@ -1,5 +1,5 @@
 const DEFAULT_FEISHU_USER_OAUTH_SCOPE =
-  'vc:meeting.meetingevent:read vc:record:readonly minutes:minutes.transcript:export offline_access';
+  'minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app';
 
 function getRequiredValue(name: string, value: string | undefined): string {
   const normalized = value?.trim();
@@ -39,4 +39,16 @@ export function getAppEncryptionKey(): string {
 
 export function getDefaultFeishuOauthScope(): string {
   return process.env.FEISHU_USER_OAUTH_SCOPE?.trim() || DEFAULT_FEISHU_USER_OAUTH_SCOPE;
+}
+
+export function getFeishuLoginAppId(): string {
+  return getRequiredValue('FEISHU_LOGIN_APP_ID', process.env.FEISHU_LOGIN_APP_ID);
+}
+
+export function getFeishuLoginAppSecret(): string {
+  return getRequiredValue('FEISHU_LOGIN_APP_SECRET', process.env.FEISHU_LOGIN_APP_SECRET);
+}
+
+export function getFeishuLoginRedirectUri(): string {
+  return `${getProjectPublicUrl()}/api/auth/callback`;
 }

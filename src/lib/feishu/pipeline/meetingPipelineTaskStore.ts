@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db/client';
 import { meetingPipelineTasks, type MeetingPipelineTaskRow } from '@/lib/db/schema';
-import type { FeishuIntegrationContext } from './integrationStore';
+import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import { FEISHU_PROCESS_STATUS, type FeishuProcessStatus } from './status';
 
 export const MEETING_PIPELINE_TASK_STATUS = {
@@ -29,9 +29,10 @@ type UpsertMeetingPipelineTaskInput = {
   eventId?: string;
   eventType?: string;
   meetingId: string;
+  minuteToken?: string;
   title: string;
   startTime?: number;
-  endTime: number;
+  endTime?: number;
   organizer?: string;
   organizerSource?: string;
 };
@@ -97,7 +98,32 @@ export async function getMeetingPipelineTaskByMeeting(
   return row || null;
 }
 
+export async function getMeetingPipelineTaskByEventId(
+  integrationId: string,
+  eventId: string
+): Promise<MeetingPipelineTaskRow | null> {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(meetingPipelineTasks)
+    .where(
+      and(
+        eq(meetingPipelineTasks.integrationId, integrationId),
+        eq(meetingPipelineTasks.eventId, eventId)
+      )
+    )
+    .limit(1);
+
+  return row || null;
+}
+
 export async function upsertMeetingPipelineTaskForMeetingEnded(
+  input: UpsertMeetingPipelineTaskInput
+): Promise<{ task: MeetingPipelineTaskRow; duplicate: boolean; created: boolean }> {
+  return upsertMeetingPipelineTaskForMinuteGenerated(input);
+}
+
+export async function upsertMeetingPipelineTaskForMinuteGenerated(
   input: UpsertMeetingPipelineTaskInput
 ): Promise<{ task: MeetingPipelineTaskRow; duplicate: boolean; created: boolean }> {
   if (!input.integration) {
@@ -123,7 +149,8 @@ export async function upsertMeetingPipelineTaskForMeetingEnded(
         feishuMeetingId: input.meetingId,
         eventId: input.eventId || null,
         eventType: input.eventType || null,
-        currentStage: FEISHU_PROCESS_STATUS.meetingEnded,
+        minuteToken: input.minuteToken || null,
+        currentStage: FEISHU_PROCESS_STATUS.minuteGenerated,
         status: MEETING_PIPELINE_TASK_STATUS.pending,
         attemptCount: 0,
         payload,
@@ -149,6 +176,7 @@ export async function upsertMeetingPipelineTaskForMeetingEnded(
     .set({
       eventId: input.eventId || existing.eventId,
       eventType: input.eventType || existing.eventType,
+      minuteToken: input.minuteToken || existing.minuteToken,
       status:
         existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
         existing.status === MEETING_PIPELINE_TASK_STATUS.failed
@@ -157,7 +185,7 @@ export async function upsertMeetingPipelineTaskForMeetingEnded(
       currentStage:
         existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
         existing.status === MEETING_PIPELINE_TASK_STATUS.failed
-          ? FEISHU_PROCESS_STATUS.meetingEnded
+          ? FEISHU_PROCESS_STATUS.minuteGenerated
           : existing.currentStage,
       attemptCount:
         existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
@@ -233,8 +261,9 @@ export async function markMeetingPipelineTaskRunning(
   taskId: string,
   input: {
     currentStage: FeishuProcessStatus;
-    attemptCount: number;
-  }
+      attemptCount: number;
+      minuteToken?: string | null;
+    }
 ): Promise<MeetingPipelineTaskRow | null> {
   return updateMeetingPipelineTask(taskId, {
     currentStage: input.currentStage,
@@ -336,7 +365,7 @@ type ClaimMeetingPipelineTasksOptions = {
 };
 
 /**
- * 通过数据库直接领取到期任务，避免 webhook 请求线程自己执行耗时链路。
+ * 通过数据库直接领取到期任务，避免事件监听线程自己执行耗时链路。
  * 这里使用 SKIP LOCKED 让多个实例可以安全并发抢占不同任务。
  */
 export async function claimDueMeetingPipelineTasks(

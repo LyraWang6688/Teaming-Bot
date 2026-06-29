@@ -3,22 +3,21 @@ import { z } from 'zod';
 import {
   createUserFeishuIntegration,
   listUserFeishuIntegrations,
-} from '@/lib/feishu/integrationStore';
+} from '@/lib/feishu/integration/integrationStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
-import { getAuthenticatedUser } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/session';
 
 const createIntegrationSchema = z.object({
   name: z.string().trim().min(1, '请输入集成名称'),
   appId: z.string().trim().min(1, '请输入 App ID'),
   appSecret: z.string().trim().min(1, '请输入 App Secret'),
-  webhookVerificationToken: z.string().trim().min(1, '请输入 Webhook Verification Token'),
   baseAppToken: z.string().trim().min(1).nullable().optional(),
   meetingTableId: z.string().trim().min(1).nullable().optional(),
   oauthScope: z.string().trim().optional(),
 });
 
 export async function GET() {
-  const user = await getAuthenticatedUser();
+  const user = await getCurrentUser();
   if (!user) {
     logRuntimeMonitor('warn', 'integration_api', 'integration_list_rejected_unauthenticated');
     return NextResponse.json(
@@ -47,7 +46,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const user = await getAuthenticatedUser();
+  const user = await getCurrentUser();
   if (!user) {
     logRuntimeMonitor('warn', 'integration_api', 'integration_create_rejected_unauthenticated');
     return NextResponse.json(

@@ -1,17 +1,14 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
   AlertCircle,
   ArrowRight,
@@ -19,33 +16,21 @@ import {
   ExternalLink,
   LogOut,
   RefreshCw,
+  Rocket,
+  Shield,
+  Table,
   User,
 } from 'lucide-react';
 
-const APP_PERMISSION_ITEMS = [
-  {
-    id: 'bitable:app',
-    description: '多维表格（查看、评论、编辑）',
-  },
-] as const;
-
 const DEFAULT_USER_OAUTH_SCOPE =
-  'vc:meeting.meetingevent:read vc:record:readonly minutes:minutes.transcript:export offline_access';
+  'minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app';
 
 const OAUTH_SCOPE_DESCRIPTIONS: Record<string, string> = {
-  'vc:meeting.meetingevent:read': '获取会议信息',
-  'vc:record:readonly': '获取会议录制',
+  'minutes:minutes.basic:read': '获取妙记基本信息',
   'minutes:minutes.transcript:export': '导出妙记转写文字',
   offline_access: '持续访问已授权数据',
+  'bitable:app': '多维表格（查看、评论、编辑）',
 };
-
-const REQUIRED_EVENTS = [
-  {
-    id: 'vc.meeting.participant_meeting_ended_v1',
-    name: '参与会议结束',
-    desc: '会议结束后自动开始分析',
-  },
-] as const;
 
 type StepDisplayStatus = 'completed' | 'current' | 'pending';
 type SummaryTone = 'slate' | 'indigo' | 'amber' | 'emerald';
@@ -65,7 +50,6 @@ type IntegrationView = {
   oauthScope: string;
   meetingTableId: string | null;
   initializedAt: string | null;
-  lastWebhookReceivedAt: string | null;
   createdAt: string;
   updatedAt: string;
   links: {
@@ -73,7 +57,6 @@ type IntegrationView = {
   };
   masked: {
     appSecret: string | null;
-    webhookVerificationToken: string | null;
     baseAppToken: string | null;
   };
 };
@@ -102,7 +85,6 @@ type CheckStatusView = {
   appCredentialStatus: string;
   permissionStatus: string;
   eventSubscriptionStatus: string;
-  webhookStatus: string;
   oauthStatus: string;
   baseStatus: string;
   allPassed: boolean;
@@ -118,22 +100,10 @@ type IntegrationDetailResponse = {
   checks: CheckStatusView | null;
 };
 
-type FormState = {
-  appId: string;
-  appSecret: string;
-  webhookVerificationToken: string;
-};
-
 type SetupSummary = {
   tone: SummaryTone;
   title: string;
   description: string;
-};
-
-const EMPTY_FORM: FormState = {
-  appId: '',
-  appSecret: '',
-  webhookVerificationToken: '',
 };
 
 function formatDateTime(value: string | null) {
@@ -182,15 +152,6 @@ function getStatusBadgeClass(status: string | null | undefined) {
   }
 }
 
-function mapIntegrationToForm(integration: IntegrationView | null): FormState {
-  if (!integration) return EMPTY_FORM;
-  return {
-    appId: integration.appId,
-    appSecret: '',
-    webhookVerificationToken: '',
-  };
-}
-
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => null)) as
     | { success?: boolean; data?: T; error?: string }
@@ -204,11 +165,11 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
 function getStepTitle(step: number) {
   switch (step) {
     case 1:
-      return '登录账号';
+      return '登录飞书账号';
     case 2:
-      return '配置飞书应用';
+      return '创建飞书应用';
     case 3:
-      return '授权飞书账号';
+      return '完成授权';
     case 4:
       return '初始化多维表格';
     default:
@@ -219,13 +180,13 @@ function getStepTitle(step: number) {
 function getStepDescription(step: number) {
   switch (step) {
     case 1:
-      return '登录后才能绑定你的飞书集成。';
+      return '使用飞书账号登录后，即可开始配置。';
     case 2:
-      return '保存基础凭证，并去飞书后台补齐配置。';
+      return '点击按钮，系统自动创建飞书应用并配置权限。';
     case 3:
-      return '完成用户授权，系统才能读取会议资源。';
+      return '点击授权，飞书将发送授权卡片到你的客户端。';
     case 4:
-      return '初始化多维表格，随后系统自动完成内部校验。';
+      return '初始化多维表格，自动创建会议信息表。';
     default:
       return '';
   }
@@ -233,50 +194,40 @@ function getStepDescription(step: number) {
 
 function buildSetupSummary(options: {
   user: AuthUser | null;
-  hasSavedCredentials: boolean;
-  hasTechConfigCompleted: boolean;
-  authorization: AuthorizationView | null | undefined;
   integration: IntegrationView | null;
+  authorization: AuthorizationView | null | undefined;
   checks: CheckStatusView | null | undefined;
   isRunningChecks: boolean;
 }): SetupSummary {
   if (!options.user) {
     return {
       tone: 'indigo',
-      title: '先登录账号',
-      description: '登录后即可开始绑定飞书应用，完成后续 4 步配置。',
+      title: '请先登录',
+      description: '登录后即可开始配置飞书集成，全程自动完成。',
     };
   }
 
-  if (!options.hasSavedCredentials) {
+  if (!options.integration) {
     return {
       tone: 'indigo',
-      title: '请先保存基础凭证',
-      description: '先保存 App ID、App Secret 和 Verification Token，再去飞书后台补齐事件、权限和重定向 URL。',
+      title: '创建飞书应用',
+      description: '点击按钮，系统将自动为你创建飞书应用并配置所需权限。',
     };
   }
 
-  if (!options.hasTechConfigCompleted) {
-    return {
-      tone: 'amber',
-      title: '等待飞书后台配置完成',
-      description: '请完成 Webhook、事件订阅、权限和重定向 URL 配置，然后返回页面刷新状态。',
-    };
-  }
-
-  if (options.authorization?.status !== 'authorized') {
+  if (!options.authorization || options.authorization.status !== 'authorized') {
     return {
       tone: 'indigo',
-      title: '请完成飞书授权',
-      description: '授权完成后会自动返回配置页，继续初始化多维表格。',
+      title: '完成飞书授权',
+      description: '点击授权按钮，飞书将发送授权卡片到你的客户端，请确认授权。',
     };
   }
 
-  if (!options.integration?.initializedAt) {
+  if (!options.integration.initializedAt) {
     return {
       tone: 'indigo',
-      title: '请初始化多维表格',
-      description: '初始化完成后，系统会自动在后台校验联通状态。',
+      title: '初始化多维表格',
+      description: '点击按钮，系统将自动创建会议信息表。',
     };
   }
 
@@ -284,7 +235,7 @@ function buildSetupSummary(options: {
     return {
       tone: 'emerald',
       title: '配置完成，可以开始使用',
-      description: '系统将自动监听并分析后续会议，无需再手动执行检查。',
+      description: '系统将自动监听并分析后续会议。',
     };
   }
 
@@ -292,14 +243,14 @@ function buildSetupSummary(options: {
     return {
       tone: 'amber',
       title: '系统正在自动校验',
-      description: '正在后台检查凭证、Webhook、OAuth 和多维表格联通状态。',
+      description: '正在后台检查各项配置是否正常。',
     };
   }
 
   return {
     tone: 'amber',
-    title: '等待系统完成内部校验',
-    description: '用户配置步骤已完成，系统正在后台确认各项状态，请稍候查看结果。',
+    title: '等待系统完成校验',
+    description: '配置步骤已完成，系统正在确认各项状态。',
   };
 }
 
@@ -389,7 +340,6 @@ function StepHeader(props: {
 export default function FeishuConfigWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const autoCheckKeyRef = useRef<string | null>(null);
 
   const [origin, setOrigin] = useState('');
@@ -397,267 +347,190 @@ export default function FeishuConfigWorkspace() {
 
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [loginEmail, setLoginEmail] = useState('');
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [loginMessage, setLoginMessage] = useState<string | null>(null);
 
   const [integration, setIntegration] = useState<IntegrationView | null>(null);
   const [detail, setDetail] = useState<IntegrationDetailResponse | null>(null);
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
-
-  const [isSubmittingCredentials, setIsSubmittingCredentials] = useState(false);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
-  const [isSigningOut, setIsSigningOut] = useState(false);
   const [isRunningChecks, setIsRunningChecks] = useState(false);
+
+  const [isCreatingApp, setIsCreatingApp] = useState(false);
+  const [isAuthorizing, setIsAuthorizing] = useState(false);
   const [isInitializingBase, setIsInitializingBase] = useState(false);
+
   const [pageError, setPageError] = useState<string | null>(null);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  const currentStep = useMemo(() => {
+    if (!user) return 1;
+    if (!integration) return 2;
+    if (!detail?.authorization || detail.authorization.status !== 'authorized') return 3;
+    if (!integration.initializedAt) return 4;
+    return 4;
+  }, [user, integration, detail?.authorization?.status]);
+
+  const sidebarSteps = useMemo(() => {
+    const steps = [
+      {
+        step: 1,
+        anchor: 'step-login',
+        title: '登录飞书账号',
+        description: '使用飞书账号登录',
+        status: user ? 'completed' : 'current',
+      },
+      {
+        step: 2,
+        anchor: 'step-create-app',
+        title: '创建飞书应用',
+        description: '系统自动创建应用',
+        status: integration ? 'completed' : user ? 'current' : 'pending',
+      },
+      {
+        step: 3,
+        anchor: 'step-authorize',
+        title: '完成授权',
+        description: '点击授权卡片',
+        status: (detail?.authorization?.status === 'authorized') ? 'completed' : integration ? 'current' : 'pending',
+      },
+      {
+        step: 4,
+        anchor: 'step-base',
+        title: '初始化表格',
+        description: '创建会议信息表',
+        status: integration?.initializedAt ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending',
+      },
+    ];
+    return steps;
+  }, [user, integration, detail?.authorization?.status]);
+
+  const effectiveOauthScopes = useMemo(() => {
+    const scope = integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
+    return scope.split(/\s+/).filter(Boolean);
+  }, [integration?.oauthScope]);
+
+  const eventListenerStatus = useMemo(() => {
+    return detail?.checks?.eventSubscriptionStatus === 'success' ? '已连接' : '未连接';
+  }, [detail?.checks?.eventSubscriptionStatus]);
+
+  const setupSummary = useMemo(() => {
+    return buildSetupSummary({
+      user,
+      integration,
+      authorization: detail?.authorization,
+      checks: detail?.checks,
+      isRunningChecks,
+    });
+  }, [user, integration, detail?.authorization, detail?.checks, isRunningChecks]);
+
+  const summaryToneClasses = useMemo(() => getSummaryToneClasses(setupSummary.tone), [setupSummary.tone]);
 
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
 
-  const loadIntegrationDetail = useCallback(async (integrationId: string) => {
-    setIsLoadingDetail(true);
-    setPageError(null);
-    try {
-      const data = await parseJsonResponse<IntegrationDetailResponse>(
-        await fetch(`/api/feishu/integrations/${integrationId}`, {
-          method: 'GET',
-          cache: 'no-store',
-        })
-      );
-      setDetail(data);
-      setIntegration(data.integration);
-      setForm(mapIntegrationToForm(data.integration));
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '读取配置失败。');
-    } finally {
-      setIsLoadingDetail(false);
-    }
+  useEffect(() => {
+    setAuthLoading(true);
+    void (async () => {
+      try {
+        const response = await fetch('/api/auth/me');
+        const payload = (await response.json().catch(() => null)) as
+          | { success?: boolean; data?: AuthUser | null }
+          | null;
+        if (payload?.success) {
+          setUser(payload.data ?? null);
+          if (payload.data) {
+            await loadIntegrationDetail(null);
+          }
+        }
+      } catch (error) {
+        console.error('[auth:me] 获取用户信息失败', error);
+      } finally {
+        setAuthLoading(false);
+      }
+    })();
   }, []);
 
-  const loadSingleIntegration = useCallback(async () => {
-    const list = await parseJsonResponse<IntegrationView[]>(
-      await fetch('/api/feishu/integrations', {
-        method: 'GET',
-        cache: 'no-store',
-      })
-    );
-
-    if (list.length === 0) {
-      setIntegration(null);
-      setDetail(null);
-      setForm(EMPTY_FORM);
-      return;
-    }
-
-    await loadIntegrationDetail(list[0].id);
-  }, [loadIntegrationDetail]);
-
   useEffect(() => {
-    let cancelled = false;
+    const authCode = searchParams.get('code');
+    if (authCode && integration?.id) {
+      void runAutomatedChecks(integration.id, { silent: true });
+    }
+  }, [searchParams]);
 
-    const bootstrap = async () => {
-      setAuthLoading(true);
+  const loadIntegrationDetail = useCallback(
+    async (integrationId: string | null) => {
+      if (!user) return;
+
+      setIsLoadingDetail(true);
       setPageError(null);
 
       try {
-        const currentUser = await parseJsonResponse<AuthUser | null>(
-          await fetch('/api/auth/me', { method: 'GET', cache: 'no-store' })
-        );
+        const listResponse = await fetch('/api/feishu/integrations');
+        const listPayload = (await listResponse.json().catch(() => null)) as
+          | { success?: boolean; data?: IntegrationView[] }
+          | null;
 
-        if (cancelled) return;
-
-        setUser(currentUser);
-        if (currentUser) {
-          await loadSingleIntegration();
-        } else {
+        if (!listPayload?.success) {
           setIntegration(null);
           setDetail(null);
-          setForm(EMPTY_FORM);
+          return;
         }
+
+        const integrations = listPayload.data || [];
+        const targetId = integrationId || integrations[0]?.id;
+
+        if (!targetId) {
+          setIntegration(null);
+          setDetail(null);
+          return;
+        }
+
+        const detailResponse = await fetch(`/api/feishu/integrations/${targetId}`);
+        const detailPayload = (await detailResponse.json().catch(() => null)) as
+          | { success?: boolean; data?: IntegrationDetailResponse }
+          | null;
+
+        if (!detailPayload?.success) {
+          setIntegration(integrations.find((i) => i.id === targetId) || null);
+          setDetail(null);
+          return;
+        }
+
+        const detailData = detailPayload.data;
+        if (!detailData) {
+          setIntegration(integrations.find((i) => i.id === targetId) || null);
+          setDetail(null);
+          return;
+        }
+
+        setIntegration(detailData.integration);
+        setDetail(detailData);
       } catch (error) {
-        if (!cancelled) {
-          setPageError(error instanceof Error ? error.message : '初始化失败。');
-        }
+        setPageError(error instanceof Error ? error.message : '加载配置失败。');
       } finally {
-        if (!cancelled) {
-          setAuthLoading(false);
-        }
+        setIsLoadingDetail(false);
       }
-    };
-
-    void bootstrap();
-    return () => {
-      cancelled = true;
-    };
-  }, [loadSingleIntegration]);
-
-  useEffect(() => {
-    const oauthResult = searchParams.get('oauth');
-    if (!oauthResult) {
-      return;
-    }
-
-    if (oauthResult === 'success') {
-      setPageError(null);
-      if (user) {
-        void loadSingleIntegration();
-      }
-    }
-
-    router.replace('/feishu-config', { scroll: false });
-  }, [loadSingleIntegration, router, searchParams, user]);
-
-  const webhookUrl = `${origin || 'https://your-domain.com'}/api/feishu/webhook`;
-  const oauthCallbackUrl = `${origin || 'https://your-domain.com'}/api/feishu/oauth/callback`;
-  const oauthAuthorizeUrl = integration?.id
-    ? `/api/feishu/oauth/start?${new URLSearchParams({
-        integrationId: integration.id,
-        redirectTo: '/feishu-config',
-      }).toString()}`
-    : null;
-
-  const hasSavedCredentials = Boolean(
-    integration?.appId && integration?.masked.appSecret && integration?.masked.webhookVerificationToken
+    },
+    [user]
   );
-  const hasWebhookConnected = Boolean(
-    integration?.lastWebhookReceivedAt ||
-      detail?.checks?.webhookStatus === 'success' ||
-      detail?.checks?.eventSubscriptionStatus === 'success'
-  );
-  const hasTechConfigCompleted = Boolean(
-    hasWebhookConnected || detail?.authorization?.status === 'authorized' || integration?.initializedAt
-  );
-  const hasAllChecksPassed = Boolean(detail?.checks?.allPassed);
-  const effectiveOauthScopes = useMemo(() => {
-    const rawScope = integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
-    return Array.from(new Set(rawScope.split(/\s+/).filter(Boolean)));
-  }, [integration?.oauthScope]);
-
-  const stepStatuses = useMemo<Record<number, StepDisplayStatus>>(
-    () => ({
-      1: user ? 'completed' : 'current',
-      2: !user ? 'pending' : hasTechConfigCompleted ? 'completed' : 'current',
-      3:
-        !user || !hasSavedCredentials || !hasTechConfigCompleted
-          ? 'pending'
-          : detail?.authorization?.status === 'authorized'
-            ? 'completed'
-            : 'current',
-      4:
-        detail?.authorization?.status !== 'authorized'
-          ? 'pending'
-          : integration?.initializedAt
-            ? 'completed'
-            : 'current',
-    }),
-    [detail?.authorization?.status, hasSavedCredentials, hasTechConfigCompleted, integration?.initializedAt, user]
-  );
-
-  const currentStep = useMemo(() => {
-    if (!user) return 1;
-    if (stepStatuses[2] !== 'completed') return 2;
-    if (stepStatuses[3] !== 'completed') return 3;
-    return 4;
-  }, [stepStatuses, user]);
-
-  const setupSummary = useMemo(
-    () =>
-      buildSetupSummary({
-        user,
-        hasSavedCredentials,
-        hasTechConfigCompleted,
-        authorization: detail?.authorization,
-        integration,
-        checks: detail?.checks,
-        isRunningChecks,
-      }),
-    [detail?.authorization, detail?.checks, hasSavedCredentials, hasTechConfigCompleted, integration, isRunningChecks, user]
-  );
-
-  const summaryToneClasses = getSummaryToneClasses(setupSummary.tone);
 
   const autoCheckTriggerKey = useMemo(() => {
-    if (!integration?.id || !integration.initializedAt || hasAllChecksPassed) {
-      return null;
-    }
-
+    if (!integration?.id) return '';
     return [
       integration.id,
       integration.initializedAt,
-      integration.lastWebhookReceivedAt ?? 'no-webhook',
       detail?.authorization?.updatedAt ?? 'no-oauth-update',
     ].join(':');
-  }, [
-    detail?.authorization?.updatedAt,
-    hasAllChecksPassed,
-    integration?.id,
-    integration?.initializedAt,
-    integration?.lastWebhookReceivedAt,
-  ]);
-
-  const sidebarSteps = useMemo(
-    () =>
-      [1, 2, 3, 4].map((step) => ({
-        step,
-        anchor: `step-${step}`,
-        title: getStepTitle(step),
-        description: getStepDescription(step),
-        status: stepStatuses[step],
-      })),
-    [stepStatuses]
-  );
-
-  const copyToClipboard = async (key: string, text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopiedKey(key);
-      window.setTimeout(() => setCopiedKey((current) => (current === key ? null : current)), 2000);
-    } catch {
-      setPageError('复制失败，请手动复制。');
-    }
-  };
-
-  const handleLogin = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!loginEmail.trim()) {
-      setPageError('请输入邮箱地址。');
-      return;
-    }
-
-    setIsLoggingIn(true);
-    setLoginMessage(null);
-    setPageError(null);
-
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email: loginEmail.trim(),
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=/feishu-config`,
-        },
-      });
-
-      if (error) throw error;
-      setLoginMessage('登录链接已发送到邮箱，请查收。');
-      setLoginEmail('');
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '发送登录链接失败。');
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
+  }, [detail?.authorization?.updatedAt, integration?.id, integration?.initializedAt]);
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
     setPageError(null);
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+      await fetch('/api/auth/logout', { method: 'POST' });
       setUser(null);
       setIntegration(null);
       setDetail(null);
-      setForm(EMPTY_FORM);
+      router.push('/login');
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '退出登录失败。');
     } finally {
@@ -665,52 +538,38 @@ export default function FeishuConfigWorkspace() {
     }
   };
 
-  const handleSubmitCredentials = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const handleCreateApp = async () => {
+    setIsCreatingApp(true);
     setPageError(null);
-
-    if (!form.appId.trim()) {
-      setPageError('请填写 App ID。');
-      return;
-    }
-
-    if (!form.appSecret.trim()) {
-      setPageError('请填写 App Secret。');
-      return;
-    }
-
-    if (!form.webhookVerificationToken.trim()) {
-      setPageError('请填写 Verification Token。');
-      return;
-    }
-
-    const payload = {
-      name: integration?.name || '默认飞书集成',
-      appId: form.appId.trim(),
-      appSecret: form.appSecret.trim(),
-      webhookVerificationToken: form.webhookVerificationToken.trim(),
-    };
-
-    setIsSubmittingCredentials(true);
     try {
-      const savedIntegration = await parseJsonResponse<IntegrationView>(
-        await fetch(integration?.id ? `/api/feishu/integrations/${integration.id}` : '/api/feishu/integrations', {
-          method: integration?.id ? 'PATCH' : 'POST',
+      const result = await parseJsonResponse<IntegrationView>(
+        await fetch('/api/feishu/integrations/create-app', { method: 'POST' })
+      );
+      await loadIntegrationDetail(result.id);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '创建应用失败。');
+    } finally {
+      setIsCreatingApp(false);
+    }
+  };
+
+  const handleAuthorize = async () => {
+    if (!integration?.id) return;
+    setIsAuthorizing(true);
+    setPageError(null);
+    try {
+      await parseJsonResponse(
+        await fetch(`/api/feishu/integrations/${integration.id}/authorize`, {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ integrationId: integration.id }),
         })
       );
-      await loadIntegrationDetail(savedIntegration.id);
-      setForm((current) => ({
-        ...current,
-        appId: savedIntegration.appId,
-        appSecret: '',
-        webhookVerificationToken: '',
-      }));
+      await loadIntegrationDetail(integration.id);
     } catch (error) {
-      setPageError(error instanceof Error ? error.message : '提交失败。');
+      setPageError(error instanceof Error ? error.message : '推送授权失败。');
     } finally {
-      setIsSubmittingCredentials(false);
+      setIsAuthorizing(false);
     }
   };
 
@@ -855,410 +714,351 @@ export default function FeishuConfigWorkspace() {
           <div className="space-y-6">
             {pageError ? (
               <Alert className="border-red-200 bg-red-50">
-                <AlertCircle className="h-4 w-4 text-red-700" />
+                <AlertCircle className="h-4 w-4 text-red-600" />
                 <AlertDescription className="text-red-800">{pageError}</AlertDescription>
               </Alert>
             ) : null}
 
-            <Card id="step-1">
-              <StepHeader
-                step={1}
-                status={stepStatuses[1]}
-                description="先登录当前账号，再继续绑定飞书应用。"
-                badgeText={user ? '已完成' : undefined}
-              />
-              <CardContent className="space-y-4">
-                {user ? (
-                  <div className="flex items-center gap-3 rounded-lg bg-emerald-50 p-4">
-                    <User className="h-5 w-5 text-emerald-600" />
-                    <div>
-                      <div className="text-sm text-slate-600">已登录账号</div>
-                      <div className="font-medium text-slate-900">{user.email}</div>
+            <Card>
+              <CardContent className="space-y-6">
+                {authLoading ? (
+                  <div className="space-y-4">
+                    <Skeleton className="h-8 w-32" />
+                    <Skeleton className="h-48 w-full" />
+                  </div>
+                ) : !user ? (
+                  <div id="step-login" className="flex flex-col items-center justify-center py-12">
+                    <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
+                      <User className="h-8 w-8 text-indigo-600" />
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="ml-auto"
-                      onClick={handleSignOut}
-                      disabled={isSigningOut}
-                    >
-                      <LogOut className="mr-1 h-4 w-4" />
-                      {isSigningOut ? '退出中...' : '退出'}
+                    <h3 className="mb-2 text-lg font-semibold text-slate-900">请先登录</h3>
+                    <p className="mb-6 text-center text-sm text-slate-500">
+                      使用飞书账号登录后，系统将自动为你创建飞书应用并完成配置。
+                    </p>
+                    <Button onClick={() => router.push('/login')} className="w-full max-w-xs">
+                      <User className="mr-2 h-4 w-4" />
+                      使用飞书登录
                     </Button>
                   </div>
                 ) : (
-                  <form onSubmit={handleLogin} className="space-y-4">
-                    <p className="text-sm text-slate-600">输入你的邮箱，我们会发送一个登录链接给你。</p>
-                    {loginMessage ? (
-                      <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700">{loginMessage}</div>
-                    ) : null}
-                    <div className="flex gap-2">
-                      <Input
-                        type="email"
-                        placeholder="your@email.com"
-                        value={loginEmail}
-                        onChange={(e) => setLoginEmail(e.target.value)}
-                        disabled={isLoggingIn}
-                        className="flex-1"
-                      />
-                      <Button type="submit" disabled={isLoggingIn}>
-                        {isLoggingIn ? '发送中...' : '发送登录链接'}
-                      </Button>
-                    </div>
-                  </form>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card id="step-2">
-              <StepHeader
-                step={2}
-                status={stepStatuses[2]}
-                description="先保存基础凭证，再在飞书开放平台完成事件、权限和回调配置。"
-                badgeText={hasTechConfigCompleted ? '已完成' : hasSavedCredentials ? '待验证' : undefined}
-              />
-              <CardContent className="space-y-6">
-                {authLoading ? (
-                  <Skeleton className="h-40 w-full" />
-                ) : !user ? (
-                  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-slate-500">
-                    请先完成第 1 步登录
-                  </div>
-                ) : (
                   <>
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-xs font-medium text-indigo-700">
-                          1
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-100 text-sm font-medium text-indigo-700">
+                          <User className="h-4 w-4" />
                         </div>
-                        提交基础凭证
+                        <div>
+                          <div className="font-medium text-slate-900">已登录</div>
+                          <div className="text-xs text-slate-500">{user.email || '飞书用户'}</div>
+                        </div>
                       </div>
-
-                      <form onSubmit={handleSubmitCredentials} className="space-y-4 pl-8">
-                        <div className="space-y-4 rounded-lg border border-slate-200 p-4">
-                          <div className="grid gap-4 md:grid-cols-2">
-                            <div className="space-y-2">
-                              <Label htmlFor="appId">App ID</Label>
-                              <Input
-                                id="appId"
-                                value={form.appId}
-                                onChange={(e) => setForm((current) => ({ ...current, appId: e.target.value }))}
-                                placeholder="cli_xxx"
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="appSecret">App Secret</Label>
-                              <Input
-                                id="appSecret"
-                                type="password"
-                                value={form.appSecret}
-                                onChange={(e) => setForm((current) => ({ ...current, appSecret: e.target.value }))}
-                                placeholder={integration?.masked.appSecret ? '如需替换请输入新值' : '请输入'}
-                              />
-                              {integration?.masked.appSecret ? (
-                                <div className="text-xs text-slate-500">已保存：{integration.masked.appSecret}</div>
-                              ) : null}
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="webhookToken">Verification Token</Label>
-                            <Input
-                              id="webhookToken"
-                              type="password"
-                              value={form.webhookVerificationToken}
-                              onChange={(e) =>
-                                setForm((current) => ({ ...current, webhookVerificationToken: e.target.value }))
-                              }
-                              placeholder={
-                                integration?.masked.webhookVerificationToken ? '如需替换请输入新值' : '请输入'
-                              }
-                            />
-                            {integration?.masked.webhookVerificationToken ? (
-                              <div className="text-xs text-slate-500">
-                                已保存：{integration.masked.webhookVerificationToken}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                        <Button type="submit" disabled={isSubmittingCredentials}>
-                          {isSubmittingCredentials ? '保存中...' : integration?.id ? '更新基础凭证' : '保存基础凭证'}
-                        </Button>
-                      </form>
+                      <Button variant="outline" size="sm" onClick={handleSignOut} disabled={isSigningOut}>
+                        <LogOut className="mr-1.5 h-3.5 w-3.5" />
+                        {isSigningOut ? '退出中...' : '退出'}
+                      </Button>
                     </div>
 
                     <Separator />
 
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-xs font-medium text-indigo-700">
-                          2
-                        </div>
-                        提交信息与通信校验
-                      </div>
-
-                      {!hasSavedCredentials ? (
-                        <div className="ml-8 rounded-lg border border-dashed border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                          请先保存基础凭证。保存成功后，再到飞书开放平台依次完成下面这些配置。
-                        </div>
-                      ) : null}
-
-                      <div className="space-y-6 pl-8">
-                        <div className="rounded-lg bg-blue-50 p-4">
-                          <div className="mb-2 flex items-center gap-2 text-sm font-medium text-blue-900">
-                            <ExternalLink className="h-4 w-4" />
-                            事件与回调
-                          </div>
-                          <div className="mb-3 text-xs text-blue-700">订阅方式：将事件发送至开发者服务器</div>
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <span className="w-20 text-xs text-slate-600">请求地址：</span>
-                              <code className="flex-1 break-all rounded bg-white px-3 py-1.5 text-xs">{webhookUrl}</code>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => void copyToClipboard('webhook', webhookUrl)}
-                              >
-                                {copiedKey === 'webhook' ? '已复制' : '复制'}
+                    <div id="step-create-app">
+                      <StepHeader
+                        step={2}
+                        status={integration ? 'completed' : 'current'}
+                        description={getStepDescription(2)}
+                      />
+                      <CardContent>
+                        {!integration ? (
+                          <div className="space-y-4">
+                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
+                              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
+                                <Rocket className="h-8 w-8 text-indigo-600" />
+                              </div>
+                              <h3 className="mb-2 text-lg font-semibold text-slate-900">创建飞书应用</h3>
+                              <p className="mb-6 text-sm text-slate-600">
+                                点击下方按钮，系统将自动完成以下操作：
+                              </p>
+                              <ul className="mb-6 text-left text-sm text-slate-600 space-y-2">
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  创建飞书应用（App ID + App Secret）
+                                </li>
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  配置应用权限（多维表格）
+                                </li>
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  订阅妙记生成事件（minutes.minute.generated_v1）
+                                </li>
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  配置 OAuth 重定向地址
+                                </li>
+                              </ul>
+                              <Button onClick={handleCreateApp} disabled={isCreatingApp} className="w-full">
+                                {isCreatingApp ? (
+                                  <>
+                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                    创建中...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Rocket className="mr-2 h-4 w-4" />
+                                    创建飞书应用
+                                  </>
+                                )}
                               </Button>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span className="w-20 text-xs text-slate-600">事件名称：</span>
-                              <code className="flex-1 rounded bg-white px-3 py-1.5 font-mono text-xs">
-                                {REQUIRED_EVENTS[0].id}
-                              </code>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="w-20 text-xs text-slate-600">加密策略：</span>
-                              <code className="flex-1 rounded bg-white px-3 py-1.5 text-xs">Verification Token 验证</code>
-                            </div>
                           </div>
-                        </div>
-
-                        <div className="rounded-lg border border-slate-200 p-4">
-                          <div className="mb-3 text-sm font-medium text-slate-900">权限管理</div>
-                          <div className="mb-4">
-                            <div className="mb-2 text-xs text-slate-600">应用身份权限：</div>
-                            <div className="space-y-2">
-                              {APP_PERMISSION_ITEMS.map((permission) => (
-                                <div key={permission.id} className="flex items-center gap-2 text-sm">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  <code className="text-slate-700">{permission.id}</code>
-                                  <span className="text-slate-500">{permission.description}</span>
+                        ) : (
+                          <div className="space-y-4">
+                            <div className="rounded-lg bg-emerald-50 p-4">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Check className="h-4 w-4 text-emerald-600" />
+                                <span className="font-medium text-emerald-900">应用已创建</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                  <div className="text-xs text-emerald-600 mb-1">应用名称</div>
+                                  <div className="font-medium text-emerald-900">{integration.name}</div>
                                 </div>
-                              ))}
-                            </div>
-                          </div>
-                          <div>
-                            <div className="mb-2 text-xs text-slate-600">用户身份权限：</div>
-                            <div className="space-y-2">
-                              {effectiveOauthScopes.map((scope) => (
-                                <div key={scope} className="flex items-center gap-2 text-sm">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  <code className="text-slate-700">{scope}</code>
-                                  <span className="text-slate-500">
-                                    {OAUTH_SCOPE_DESCRIPTIONS[scope] || '用于飞书用户授权'}
-                                  </span>
+                                <div>
+                                  <div className="text-xs text-emerald-600 mb-1">App ID</div>
+                                  <div className="font-mono text-sm text-emerald-900">{integration.appId}</div>
                                 </div>
-                              ))}
+                              </div>
+                            </div>
+
+                            <div className="rounded-lg border border-slate-200 p-4">
+                              <div className="mb-3 flex items-center justify-between">
+                                <div className="text-sm font-medium text-slate-900">事件监听配置</div>
+                                <Badge
+                                  variant="outline"
+                                  className={getStatusBadgeClass(
+                                    detail?.checks?.eventSubscriptionStatus
+                                  )}
+                                >
+                                  {eventListenerStatus}
+                                </Badge>
+                              </div>
+                              <div className="space-y-2 text-sm text-slate-600">
+                                <div>
+                                  <span className="text-xs text-slate-500">事件名称：</span>
+                                  <code className="ml-2 rounded bg-slate-100 px-2 py-0.5 text-xs">minutes.minute.generated_v1</code>
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  系统通过飞书 CLI 自动监听妙记生成事件。
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
+                      </CardContent>
+                    </div>
 
-                        <div className="rounded-lg border border-slate-200 p-4">
-                          <div className="mb-3 text-sm font-medium text-slate-900">重定向 URL</div>
-                          <div className="flex items-center gap-2">
-                            <code className="flex-1 break-all rounded bg-slate-50 px-3 py-2 text-xs">{oauthCallbackUrl}</code>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => void copyToClipboard('oauth', oauthCallbackUrl)}
-                            >
-                              {copiedKey === 'oauth' ? '已复制' : '复制'}
-                            </Button>
+                    <Separator />
+
+                    <div id="step-authorize">
+                      <StepHeader
+                        step={3}
+                        status={(detail?.authorization?.status === 'authorized') ? 'completed' : 'current'}
+                        description={getStepDescription(3)}
+                      />
+                      <CardContent>
+                        {!integration ? (
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                            <div className="mb-2 text-sm font-medium text-slate-500">请先创建飞书应用</div>
                           </div>
-                          <div className="mt-2 text-xs text-slate-500">在飞书开放平台配置网页授权重定向地址时，请填写这个 URL。</div>
-                        </div>
+                        ) : detail?.authorization?.status === 'authorized' ? (
+                          <div className="space-y-4">
+                            <div className="rounded-lg bg-emerald-50 p-4">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Check className="h-4 w-4 text-emerald-600" />
+                                <span className="font-medium text-emerald-900">已完成授权</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                  <div className="text-xs text-emerald-600 mb-1">授权用户</div>
+                                  <div className="font-medium text-emerald-900">{detail.authorization.authorizedUserName || '未知'}</div>
+                                </div>
+                                <div>
+                                  <div className="text-xs text-emerald-600 mb-1">授权时间</div>
+                                  <div className="font-medium text-emerald-900">{formatDateTime(detail.authorization.updatedAt)}</div>
+                                </div>
+                              </div>
+                            </div>
 
-                        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                          完成上述操作后，请在飞书开放平台创建版本并发布，然后返回这里点击“刷新状态”确认 Webhook 已打通。
-                        </div>
-
-                        <div className="rounded-lg border border-slate-200 p-4">
-                          <div className="mb-3 flex items-center justify-between">
-                            <div className="text-sm font-medium text-slate-900">通信状态</div>
-                            <Badge
-                              variant="outline"
-                              className={getStatusBadgeClass(
-                                !hasSavedCredentials
-                                  ? 'pending'
-                                  : hasWebhookConnected
-                                    ? 'success'
-                                    : detail?.checks?.webhookStatus || 'pending'
-                              )}
-                            >
-                              {!hasSavedCredentials ? '待保存基础凭证' : hasWebhookConnected ? '已打通' : '待验证'}
-                            </Badge>
-                          </div>
-                          <div className="space-y-2 text-sm text-slate-600">
-                            <div>最近收到 Webhook：{formatDateTime(integration?.lastWebhookReceivedAt || null)}</div>
-                            <div>
-                              {!hasSavedCredentials
-                                ? '保存基础凭证后，系统才能根据当前集成识别并接收 Webhook challenge。'
-                                : hasWebhookConnected
-                                  ? '已收到飞书 challenge 或真实事件回调，第二步配置已打通。'
-                                  : '请在飞书开放平台保存上述配置并发布版本，然后返回这里刷新状态。'}
+                            <div className="rounded-lg border border-slate-200 p-4">
+                              <div className="mb-3 text-sm font-medium text-slate-900">已授权权限</div>
+                              <div className="space-y-2">
+                                {effectiveOauthScopes.map((scope) => (
+                                  <div key={scope} className="flex items-center gap-2 text-sm">
+                                    <Check className="h-4 w-4 text-emerald-500" />
+                                    <code className="text-slate-700">{scope}</code>
+                                    <span className="text-slate-500">
+                                      {OAUTH_SCOPE_DESCRIPTIONS[scope] || '用于飞书用户授权'}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           </div>
-                          <div className="mt-4">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => void handleRefreshIntegration()}
-                              disabled={isLoadingDetail}
-                            >
+                        ) : (
+                          <div className="space-y-4">
+                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
+                              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
+                                <Shield className="h-8 w-8 text-indigo-600" />
+                              </div>
+                              <h3 className="mb-2 text-lg font-semibold text-slate-900">完成飞书授权</h3>
+                              <p className="mb-6 text-sm text-slate-600">
+                                点击下方按钮，飞书将发送授权卡片到你的客户端，请确认授权。
+                              </p>
+                              <ul className="mb-6 text-left text-sm text-slate-600 space-y-2">
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  获取妙记基本信息
+                                </li>
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  导出妙记转写文字
+                                </li>
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  持续访问已授权数据
+                                </li>
+                                <li className="flex items-center gap-2">
+                                  <Check className="h-4 w-4 text-emerald-500" />
+                                  多维表格（查看、评论、编辑）
+                                </li>
+                              </ul>
+                              <Button onClick={handleAuthorize} disabled={isAuthorizing} className="w-full">
+                                {isAuthorizing ? (
+                                  <>
+                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                    发送授权卡片中...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Shield className="mr-2 h-4 w-4" />
+                                    发送授权卡片
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </div>
+
+                    <Separator />
+
+                    <div id="step-base">
+                      <StepHeader
+                        step={4}
+                        status={integration?.initializedAt ? 'completed' : 'current'}
+                        description={getStepDescription(4)}
+                      />
+                      <CardContent>
+                        {!integration || detail?.authorization?.status !== 'authorized' ? (
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                            <div className="mb-2 text-sm font-medium text-slate-500">请先完成前面的步骤</div>
+                          </div>
+                        ) : !integration.initializedAt ? (
+                          <div className="space-y-4">
+                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
+                              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
+                                <Table className="h-8 w-8 text-indigo-600" />
+                              </div>
+                              <h3 className="mb-2 text-lg font-semibold text-slate-900">初始化多维表格</h3>
+                              <p className="mb-6 text-sm text-slate-600">
+                                点击下方按钮，系统将自动创建会议信息表并添加所需字段。
+                              </p>
+                              <Button onClick={handleInitializeBase} disabled={isInitializingBase} className="w-full">
+                                {isInitializingBase ? (
+                                  <>
+                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                    初始化中...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Table className="mr-2 h-4 w-4" />
+                                    初始化多维表格
+                                  </>
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <div className="rounded-lg bg-emerald-50 p-4">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Check className="h-4 w-4 text-emerald-600" />
+                                <span className="font-medium text-emerald-900">多维表格已初始化</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                  <div className="text-xs text-emerald-600 mb-1">表格链接</div>
+                                  <a
+                                    href={integration.links.baseUrl ?? undefined}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-medium text-emerald-900 hover:underline flex items-center gap-1"
+                                  >
+                                    {integration.links.baseUrl || '点击查看'}
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                </div>
+                                <div>
+                                  <div className="text-xs text-emerald-600 mb-1">初始化时间</div>
+                                  <div className="font-medium text-emerald-900">{formatDateTime(integration.initializedAt)}</div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {detail?.checks && (
+                              <div className="rounded-lg border border-slate-200 p-4">
+                                <div className="mb-3 flex items-center justify-between">
+                                  <div className="text-sm font-medium text-slate-900">系统校验状态</div>
+                                  <Badge
+                                    variant="outline"
+                                    className={detail.checks.allPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
+                                  >
+                                    {detail.checks.allPassed ? '全部通过' : '部分失败'}
+                                  </Badge>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3 text-sm">
+                                  <div className={`flex items-center gap-2 ${detail.checks.appCredentialStatus === 'success' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                    <div className={`w-2 h-2 rounded-full ${detail.checks.appCredentialStatus === 'success' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                    应用凭证
+                                  </div>
+                                  <div className={`flex items-center gap-2 ${detail.checks.oauthStatus === 'authorized' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                    <div className={`w-2 h-2 rounded-full ${detail.checks.oauthStatus === 'authorized' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                    用户授权
+                                  </div>
+                                  <div className={`flex items-center gap-2 ${detail.checks.baseStatus === 'success' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                    <div className={`w-2 h-2 rounded-full ${detail.checks.baseStatus === 'success' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                    多维表格
+                                  </div>
+                                  <div className={`flex items-center gap-2 ${detail.checks.permissionStatus === 'success' ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                    <div className={`w-2 h-2 rounded-full ${detail.checks.permissionStatus === 'success' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                                    权限检查
+                                  </div>
+                                </div>
+                                {!detail.checks.allPassed && detail.checks.lastErrorMessage ? (
+                                  <div className="mt-3 text-xs text-red-600">
+                                    错误信息：{detail.checks.lastErrorMessage}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )}
+
+                            <Button type="button" variant="outline" onClick={() => void handleRefreshIntegration()} disabled={isLoadingDetail}>
                               <RefreshCw className="mr-2 h-4 w-4" />
                               刷新状态
                             </Button>
                           </div>
-                        </div>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card id="step-3">
-              <StepHeader
-                step={3}
-                status={stepStatuses[3]}
-                description="授权当前飞书账号，让系统能够读取会议与妙记资源。"
-                badgeText={detail?.authorization?.status === 'authorized' ? '已授权' : undefined}
-              />
-              <CardContent className="space-y-4">
-                {!hasSavedCredentials ? (
-                  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-slate-500">
-                    请先完成第 2 步基础凭证
-                  </div>
-                ) : !hasTechConfigCompleted ? (
-                  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-slate-500">
-                    请先完成第 2 步中的飞书后台配置，并确保 Webhook challenge 已成功回到系统。
-                  </div>
-                ) : (
-                  <>
-                    <div className="rounded-lg bg-purple-50 p-4 text-sm text-purple-900">
-                      授权完成后，系统会自动返回当前配置页，并继续展示最新状态。
-                    </div>
-
-                    <div className="rounded-lg border border-slate-200 p-4">
-                      <div className="mb-3 text-sm font-medium">授权状态</div>
-                      <div className="space-y-2 text-sm text-slate-600">
-                        <div className="flex items-center justify-between gap-4">
-                          <span>状态</span>
-                          <Badge
-                            variant="outline"
-                            className={getStatusBadgeClass(detail?.authorization?.status || detail?.checks?.oauthStatus)}
-                          >
-                            {getStatusLabel(detail?.authorization?.status || detail?.checks?.oauthStatus)}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <span>最近更新时间</span>
-                          <span>{formatDateTime(detail?.authorization?.updatedAt || null)}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {oauthAuthorizeUrl ? (
-                      <Button asChild>
-                        <a href={oauthAuthorizeUrl}>
-                          <ExternalLink className="mr-2 h-4 w-4" />
-                          前往授权
-                        </a>
-                      </Button>
-                    ) : (
-                      <Button disabled>请先保存配置</Button>
-                    )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card id="step-4">
-              <StepHeader
-                step={4}
-                status={stepStatuses[4]}
-                description="初始化多维表格；完成后系统会自动在后台做内部校验。"
-                badgeText={integration?.initializedAt ? '已初始化' : undefined}
-              />
-              <CardContent className="space-y-4">
-                {detail?.authorization?.status !== 'authorized' ? (
-                  <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-slate-500">
-                    请先完成第 3 步授权
-                  </div>
-                ) : (
-                  <>
-                    <div className="rounded-lg border border-slate-200 p-4">
-                      <div className="mb-3 text-sm font-medium">当前状态</div>
-                      <div className="space-y-3 text-sm text-slate-600">
-                        <div className="flex items-center justify-between gap-4">
-                          <span>初始化时间</span>
-                          <span>{formatDateTime(integration?.initializedAt || null)}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <span>多维表格链接</span>
-                          <span>{integration?.links.baseUrl ? '已生成' : '初始化后自动生成'}</span>
-                        </div>
-                        {integration?.links.baseUrl ? (
-                          <div>
-                            <Button asChild variant="outline">
-                              <a href={integration.links.baseUrl} target="_blank" rel="noopener noreferrer">
-                                <ExternalLink className="mr-2 h-4 w-4" />
-                                打开多维表格
-                              </a>
-                            </Button>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-
-                    <Button
-                      onClick={() => void handleInitializeBase()}
-                      disabled={isInitializingBase}
-                    >
-                      {isInitializingBase ? '初始化中...' : '一键初始化多维表格'}
-                    </Button>
-
-                    <div className="rounded-lg border border-slate-200 p-4">
-                      <div className="mb-3 flex items-center justify-between">
-                        <div className="text-sm font-medium text-slate-900">系统内部校验</div>
-                        <Badge
-                          variant="outline"
-                          className={getStatusBadgeClass(
-                            detail?.checks?.allPassed
-                              ? 'success'
-                              : isRunningChecks
-                                ? 'pending'
-                                : integration?.initializedAt
-                                  ? detail?.checks?.baseStatus || 'pending'
-                                  : 'pending'
-                          )}
-                        >
-                          {detail?.checks?.allPassed ? '已通过' : isRunningChecks ? '校验中' : '自动校验'}
-                        </Badge>
-                      </div>
-                      <div className="space-y-2 text-sm text-slate-600">
-                        <div>
-                          {detail?.checks?.allPassed
-                            ? '系统已完成应用凭证、权限、Webhook、OAuth 和多维表格联通性校验，可以开始使用系统。'
-                            : '完成初始化后，系统会自动在后台校验凭证、Webhook、OAuth 和多维表格联通状态。'}
-                        </div>
-                        {detail?.checks?.lastCheckedAt ? (
-                          <div>最近校验时间：{formatDateTime(detail.checks.lastCheckedAt)}</div>
-                        ) : null}
-                      </div>
+                        )}
+                      </CardContent>
                     </div>
                   </>
                 )}

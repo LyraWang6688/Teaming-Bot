@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeFeishuIntegrationBase } from '@/lib/feishu/integrationSetup';
+import { initializeFeishuIntegrationBase } from '@/lib/feishu/integration/integrationSetup';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
-import { getAuthenticatedUser } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/session';
 
 type RouteContext = {
   params: Promise<{
@@ -10,7 +10,7 @@ type RouteContext = {
 };
 
 export async function POST(_request: NextRequest, context: RouteContext) {
-  const user = await getAuthenticatedUser();
+  const user = await getCurrentUser();
   if (!user) {
     logRuntimeMonitor('warn', 'integration_base', 'integration_base_initialize_rejected_unauthenticated');
     return NextResponse.json(

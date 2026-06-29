@@ -1,11 +1,17 @@
 'use client';
 
-import React, { ReactNode, useEffect, useMemo, useState } from 'react';
+import React, { ReactNode, useEffect, useState } from 'react';
 import { Bot, Upload, Settings, LogOut, User, ChevronDown, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
-import type { User as SupabaseUser } from '@supabase/supabase-js';
+
+interface CurrentUser {
+  id: string;
+  feishuOpenId: string;
+  name: string;
+  email: string | null;
+  avatarUrl: string | null;
+}
 
 interface LayoutProps {
   children: ReactNode;
@@ -14,23 +20,26 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children }) => {
   const pathname = usePathname();
   const router = useRouter();
-  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  
-  const [user, setUser] = useState<SupabaseUser | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  
+
   const navItems = [
     { href: '/', label: '会议分析', icon: Upload },
     { href: '/feishu-config', label: '飞书配置', icon: Settings },
   ];
 
   useEffect(() => {
-    const getUser = async () => {
+    const fetchUser = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        setUser(user);
+        const res = await fetch('/api/auth/me');
+        const data = await res.json();
+        if (data.success && data.data) {
+          setUser(data.data);
+        } else {
+          setUser(null);
+        }
       } catch (error) {
         console.error('Error getting user:', error);
         setUser(null);
@@ -39,24 +48,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       }
     };
 
-    getUser();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: string, session: { user: SupabaseUser | null }) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [supabase]);
+    fetchUser();
+  }, []);
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
     try {
-      await supabase.auth.signOut();
+      await fetch('/api/auth/logout', { method: 'POST' });
       setUser(null);
       setShowUserMenu(false);
       router.push('/');
+      router.refresh();
     } catch (error) {
       console.error('Error signing out:', error);
     } finally {
@@ -74,7 +76,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </div>
             <h1 className="text-xl font-bold text-slate-900 tracking-tight">Teaming Bot</h1>
           </div>
-          
+
           {/* 导航链接 */}
           <div className="flex items-center space-x-4">
             <nav className="flex items-center space-x-1">
@@ -87,8 +89,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     href={item.href}
                     className={`
                       flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
-                      ${isActive 
-                        ? 'bg-indigo-100 text-indigo-700' 
+                      ${isActive
+                        ? 'bg-indigo-100 text-indigo-700'
                         : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}
                     `}
                   >
@@ -114,20 +116,20 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   >
                     <User className="w-4 h-4" />
                     <span className="max-w-[120px] truncate">
-                      {user.email?.split('@')[0] || user.id}
+                      {user.name}
                     </span>
                     <ChevronDown className="w-4 h-4" />
                   </button>
-                  
+
                   {showUserMenu && (
                     <>
-                      <div 
-                        className="fixed inset-0 z-10" 
+                      <div
+                        className="fixed inset-0 z-10"
                         onClick={() => setShowUserMenu(false)}
                       />
                       <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-20">
                         <div className="px-4 py-2 text-xs text-slate-500 truncate border-b border-slate-100">
-                          {user.email}
+                          {user.email || user.feishuOpenId}
                         </div>
                         <button
                           type="button"
@@ -136,7 +138,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                           className="flex items-center gap-2 w-full px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                         >
                           <LogOut className="w-4 h-4" />
-                          {isSigningOut ? '退出中...' : 'Sign Out'}
+                          {isSigningOut ? '退出中...' : '退出登录'}
                         </button>
                       </div>
                     </>
@@ -148,7 +150,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                   className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
                 >
                   <User className="w-4 h-4" />
-                  Sign In
+                  登录
                 </Link>
               )}
             </div>

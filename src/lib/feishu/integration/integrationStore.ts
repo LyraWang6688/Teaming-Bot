@@ -21,7 +21,6 @@ import {
 
 export type FeishuIntegrationSecrets = {
   appSecret: string;
-  webhookVerificationToken: string;
   baseAppToken: string | null;
 };
 
@@ -34,8 +33,8 @@ export type FeishuIntegrationView = {
   appId: string;
   oauthScope: string;
   meetingTableId: string | null;
+  profileName: string | null;
   initializedAt: string | null;
-  lastWebhookReceivedAt: string | null;
   createdAt: string;
   updatedAt: string;
   links: {
@@ -43,7 +42,6 @@ export type FeishuIntegrationView = {
   };
   masked: {
     appSecret: string | null;
-    webhookVerificationToken: string | null;
     baseAppToken: string | null;
   };
 };
@@ -89,7 +87,6 @@ export type FeishuCheckStatusView = {
   appCredentialStatus: string;
   permissionStatus: string;
   eventSubscriptionStatus: string;
-  webhookStatus: string;
   oauthStatus: string;
   baseStatus: string;
   allPassed: boolean;
@@ -104,7 +101,7 @@ type CreateIntegrationInput = {
   name: string;
   appId: string;
   appSecret: string;
-  webhookVerificationToken: string;
+  profileName?: string;
   baseAppToken?: string | null;
   meetingTableId?: string | null;
   oauthScope?: string;
@@ -114,7 +111,7 @@ type UpdateIntegrationInput = {
   name?: string;
   appId?: string;
   appSecret?: string;
-  webhookVerificationToken?: string;
+  profileName?: string | null;
   baseAppToken?: string | null;
   meetingTableId?: string | null;
   oauthScope?: string;
@@ -141,7 +138,6 @@ type UpsertCheckStatusInput = Partial<
     | 'appCredentialStatus'
     | 'permissionStatus'
     | 'eventSubscriptionStatus'
-    | 'webhookStatus'
     | 'oauthStatus'
     | 'baseStatus'
     | 'lastErrorType'
@@ -176,7 +172,6 @@ function buildFeishuBaseUrl(baseAppToken: string | null, meetingTableId: string 
 
 function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
   const appSecret = decrypt(row.appSecretEncrypted);
-  const webhookVerificationToken = decrypt(row.webhookVerificationTokenEncrypted);
   const baseAppToken = row.baseAppTokenEncrypted ? decrypt(row.baseAppTokenEncrypted) : null;
 
   return {
@@ -188,8 +183,8 @@ function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
     appId: row.appId,
     oauthScope: row.oauthScope,
     meetingTableId: row.meetingTableId,
+    profileName: row.profileName,
     initializedAt: toIsoString(row.initializedAt),
-    lastWebhookReceivedAt: toIsoString(row.lastWebhookReceivedAt),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     links: {
@@ -197,7 +192,6 @@ function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
     },
     masked: {
       appSecret: maskSecret(appSecret),
-      webhookVerificationToken: maskSecret(webhookVerificationToken),
       baseAppToken: maskSecret(baseAppToken),
     },
   };
@@ -216,7 +210,6 @@ function mapIntegrationContext(row: FeishuIntegrationRow): FeishuIntegrationCont
     ...mapIntegrationDetail(row),
     secrets: {
       appSecret: decrypt(row.appSecretEncrypted),
-      webhookVerificationToken: decrypt(row.webhookVerificationTokenEncrypted),
       baseAppToken: row.baseAppTokenEncrypted ? decrypt(row.baseAppTokenEncrypted) : null,
     },
   };
@@ -262,7 +255,6 @@ function isAllCheckStatusesPassed(row: FeishuIntegrationCheckRow): boolean {
     row.appCredentialStatus === 'success' &&
     row.permissionStatus === 'success' &&
     row.eventSubscriptionStatus === 'success' &&
-    row.webhookStatus === 'success' &&
     row.oauthStatus === 'authorized' &&
     row.baseStatus === 'success'
   );
@@ -273,7 +265,6 @@ function mapCheckStatus(row: FeishuIntegrationCheckRow): FeishuCheckStatusView {
     appCredentialStatus: row.appCredentialStatus,
     permissionStatus: row.permissionStatus,
     eventSubscriptionStatus: row.eventSubscriptionStatus,
-    webhookStatus: row.webhookStatus,
     oauthStatus: row.oauthStatus,
     baseStatus: row.baseStatus,
     allPassed: isAllCheckStatusesPassed(row),
@@ -326,8 +317,7 @@ export async function createUserFeishuIntegration(
       name: input.name.trim(),
       appId: input.appId.trim(),
       appSecretEncrypted: encrypt(input.appSecret.trim()),
-      webhookVerificationTokenEncrypted: encrypt(input.webhookVerificationToken.trim()),
-      webhookVerificationTokenHash: hashForLookup(input.webhookVerificationToken.trim()),
+      profileName: input.profileName?.trim() || null,
       baseAppTokenEncrypted: input.baseAppToken?.trim() ? encrypt(input.baseAppToken.trim()) : null,
       meetingTableId: input.meetingTableId?.trim() || null,
       oauthScope: input.oauthScope?.trim() || getDefaultFeishuOauthScope(),
@@ -344,6 +334,7 @@ export async function createUserFeishuIntegration(
     metadata: {
       appId: row.appId,
       name: row.name,
+      profileName: row.profileName,
     },
   });
 
@@ -369,9 +360,11 @@ export async function updateUserFeishuIntegration(
   if (typeof input.appSecret === 'string') {
     updateValues.appSecretEncrypted = encrypt(input.appSecret.trim());
   }
-  if (typeof input.webhookVerificationToken === 'string') {
-    updateValues.webhookVerificationTokenEncrypted = encrypt(input.webhookVerificationToken.trim());
-    updateValues.webhookVerificationTokenHash = hashForLookup(input.webhookVerificationToken.trim());
+  if (typeof input.profileName === 'string') {
+    updateValues.profileName = input.profileName.trim();
+  }
+  if (input.profileName === null) {
+    updateValues.profileName = null;
   }
   if (typeof input.baseAppToken === 'string') {
     updateValues.baseAppTokenEncrypted = encrypt(input.baseAppToken.trim());
@@ -426,24 +419,6 @@ export async function updateUserFeishuIntegration(
   });
 
   return mapIntegrationView(row);
-}
-
-export async function getFeishuIntegrationByWebhookToken(
-  verificationToken: string
-): Promise<FeishuIntegrationContext | null> {
-  const db = getDb();
-  const [row] = await db
-    .select()
-    .from(feishuIntegrations)
-    .where(
-      and(
-        eq(feishuIntegrations.webhookVerificationTokenHash, hashForLookup(verificationToken.trim())),
-        isNull(feishuIntegrations.deletedAt)
-      )
-    )
-    .limit(1);
-
-  return row ? mapIntegrationContext(row) : null;
 }
 
 export async function getUserFeishuIntegrationContext(
@@ -572,7 +547,6 @@ export async function upsertFeishuIntegrationCheckStatus(
       appCredentialStatus: input.appCredentialStatus || 'pending',
       permissionStatus: input.permissionStatus || 'pending',
       eventSubscriptionStatus: input.eventSubscriptionStatus || 'pending',
-      webhookStatus: input.webhookStatus || 'pending',
       oauthStatus: input.oauthStatus || 'pending',
       baseStatus: input.baseStatus || 'pending',
       lastCheckedAt: input.lastCheckedAt || new Date(),
@@ -588,7 +562,6 @@ export async function upsertFeishuIntegrationCheckStatus(
         permissionStatus: input.permissionStatus ?? sql`${feishuIntegrationChecks.permissionStatus}`,
         eventSubscriptionStatus:
           input.eventSubscriptionStatus ?? sql`${feishuIntegrationChecks.eventSubscriptionStatus}`,
-        webhookStatus: input.webhookStatus ?? sql`${feishuIntegrationChecks.webhookStatus}`,
         oauthStatus: input.oauthStatus ?? sql`${feishuIntegrationChecks.oauthStatus}`,
         baseStatus: input.baseStatus ?? sql`${feishuIntegrationChecks.baseStatus}`,
         lastCheckedAt: input.lastCheckedAt ?? new Date(),
@@ -620,35 +593,6 @@ export async function getFeishuIntegrationCheckStatus(
     .limit(1);
 
   return row ? mapCheckStatus(row) : null;
-}
-
-export async function markFeishuIntegrationWebhookReceived(
-  integrationId: string,
-  input?: {
-    receivedAt?: Date;
-    details?: Record<string, unknown>;
-  }
-): Promise<void> {
-  const db = getDb();
-  const receivedAt = input?.receivedAt || new Date();
-
-  await db
-    .update(feishuIntegrations)
-    .set({
-      lastWebhookReceivedAt: receivedAt,
-      updatedAt: new Date(),
-    })
-    .where(eq(feishuIntegrations.id, integrationId));
-
-  await upsertFeishuIntegrationCheckStatus({
-    integrationId,
-    eventSubscriptionStatus: 'success',
-    webhookStatus: 'success',
-    lastCheckedAt: receivedAt,
-    lastErrorType: null,
-    lastErrorMessage: null,
-    details: input?.details,
-  });
 }
 
 export async function createOauthState(input: {

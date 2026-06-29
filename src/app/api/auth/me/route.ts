@@ -1,16 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getAuthenticatedUser } from '@/lib/supabase/server';
+import { getCurrentUser } from '@/lib/auth/session';
 
 export async function GET() {
-  const user = await getAuthenticatedUser();
+  const user = await getCurrentUser();
 
   return NextResponse.json({
     success: true,
-    data: user
-      ? {
-          id: user.id,
-          email: user.email || null,
-        }
-      : null,
+    data: user || null,
   });
 }

@@ -1,8 +1,8 @@
 import type { AnalysisResult } from '@/types';
-import type { FeishuBitableConfig } from './config';
-import { callFeishuIntegrationTenantOpenApi } from './integrationOpenApi';
-import type { FeishuIntegrationContext } from './integrationStore';
-import { FEISHU_PROCESS_STATUS, type FeishuProcessStatus } from './status';
+import type { FeishuBitableConfig } from '../common/config';
+import { callFeishuIntegrationUserSdk } from '../integration/integrationOpenApi';
+import type { FeishuIntegrationContext } from '../integration/integrationStore';
+import { FEISHU_PROCESS_STATUS, type FeishuProcessStatus } from '../pipeline/status';
 
 type RecordFields = Record<string, unknown>;
 
@@ -76,7 +76,7 @@ async function callBitableOpenApi<T = unknown>(
   path: string,
   data?: Record<string, unknown>
 ): Promise<T> {
-  return callFeishuIntegrationTenantOpenApi<T>(config.integration, method, path, data);
+  return callFeishuIntegrationUserSdk<T>(config.integration, method, path, data);
 }
 
 function extractBitableText(value: unknown): string | undefined {
@@ -311,7 +311,7 @@ export async function upsertMeetingWaitingRecord(
   const existing = await findMeetingRecordByMeetingId(config, meeting.meetingId);
   const fields: RecordFields = {
     '会议ID': meeting.meetingId,
-    '处理状态': FEISHU_PROCESS_STATUS.meetingEnded,
+    '处理状态': FEISHU_PROCESS_STATUS.minuteGenerated,
   };
 
   if (meeting.topic) fields['会议主题'] = meeting.topic;
@@ -321,7 +321,7 @@ export async function upsertMeetingWaitingRecord(
 
   if (existing) {
     await updateMeetingRecordFields(config, existing.recordId, fields);
-    return { ...existing, ...meeting, processStatus: FEISHU_PROCESS_STATUS.meetingEnded };
+    return { ...existing, ...meeting, processStatus: FEISHU_PROCESS_STATUS.minuteGenerated };
   }
 
   return createMeetingRecord(config, fields);

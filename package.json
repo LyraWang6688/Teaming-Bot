@@ -9,10 +9,11 @@
     "dev": "NEXT_DISABLE_TURBOPACK=1 next dev --port 5000",
     "preinstall": "npx only-allow pnpm",
     "lint": "eslint",
-    "start": "next start",
+    "start": "node server.ts",
     "ts-check": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.0.0",
     "@aws-sdk/client-s3": "^3.958.0",
     "@aws-sdk/lib-storage": "^3.958.0",
     "@hookform/resolvers": "^5.2.2",

@@ -1,8 +1,8 @@
 import {
-  callFeishuIntegrationUserOpenApi,
-  callFeishuIntegrationUserOpenApiText,
-} from './integrationOpenApi';
-import type { FeishuIntegrationContext } from './integrationStore';
+  callFeishuIntegrationUserSdk,
+  callFeishuIntegrationUserSdkText,
+} from '../integration/integrationOpenApi';
+import type { FeishuIntegrationContext } from '../integration/integrationStore';
 
 type DocRawContentResult = {
   content?: string;
@@ -12,7 +12,7 @@ export async function fetchTranscriptByDocToken(
   docToken: string,
   integration: FeishuIntegrationContext
 ): Promise<string> {
-  const result = await callFeishuIntegrationUserOpenApi<DocRawContentResult>(
+  const result = await callFeishuIntegrationUserSdk<DocRawContentResult>(
     integration,
     'GET',
     `/docx/v1/documents/${docToken}/raw_content?lang=0`
@@ -30,7 +30,7 @@ export async function fetchTranscriptByMinuteToken(
   minuteToken: string,
   integration: FeishuIntegrationContext
 ): Promise<string> {
-  const text = await callFeishuIntegrationUserOpenApiText(
+  const text = await callFeishuIntegrationUserSdkText(
     integration,
     'GET',
     `/minutes/v1/minutes/${minuteToken}/transcript?need_speaker=true&need_timestamp=true&file_format=txt`

@@ -9,7 +9,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { AnalysisResult } from '@/types';
 import AnalysisDashboard from '@/components/AnalysisDashboard';
-import { FEISHU_ACTIVE_PROCESS_STATUSES, FEISHU_PROCESS_STATUS } from '@/lib/feishu/status';
+import { FEISHU_ACTIVE_PROCESS_STATUSES, FEISHU_PROCESS_STATUS } from '@/lib/feishu/pipeline/status';
 import { Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
 
 const ACTIVE_PROCESS_STATUSES = new Set<string>(FEISHU_ACTIVE_PROCESS_STATUSES);

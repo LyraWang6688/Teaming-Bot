@@ -2,8 +2,8 @@ import {
   claimDueMeetingPipelineTasks,
   failMeetingPipelineTask,
 } from './meetingPipelineTaskStore';
-import { logFeishuMonitor, toErrorContext } from './monitor';
-import { runMeetingPipelineTask } from './webhookProcessor';
+import { logFeishuMonitor, toErrorContext } from '../common/monitor';
+import { runMeetingPipelineTask } from './meetingPipelineProcessor';
 import type { FeishuProcessStatus } from './status';
 
 const WORKER_POLL_INTERVAL_MS = Number(

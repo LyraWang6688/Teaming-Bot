@@ -8,12 +8,12 @@ export const metadata: Metadata = {
     template: '%s | 组队会议动力分析',
   },
   description:
-    '基于 Teaming 与群体动力学框架的会议纪要分析工具，支持飞书 Webhook 自动分析与报告生成。',
+    '基于 Teaming 与群体动力学框架的会议纪要分析工具，支持飞书事件监听自动分析与报告生成。',
   keywords: [
     '会议分析',
     '团队动力学',
     'Teaming',
-    '飞书 Webhook',
+    '飞书事件监听',
     '豆包 API',
     'AI 报告',
   ],
