@@ -7,7 +7,7 @@ import { getProcess, deleteProcess } from '@/lib/feishu/cliProcessStore';
 
 export async function POST(request: Request) {
   try {
-    const { sessionToken } = await request.json();
+    const { sessionToken, profileName: reqProfileName } = await request.json();
 
     if (!sessionToken) {
       return NextResponse.json(
@@ -24,7 +24,8 @@ export async function POST(request: Request) {
       });
     }
 
-    const { child, profileName } = entry;
+    const profileName = reqProfileName || entry.profileName;
+    const { child } = entry;
 
     // Check if process has exited
     if (child.exitCode === null && child.killed === false) {

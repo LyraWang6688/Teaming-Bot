@@ -1,7 +1,8 @@
 /**
  * In-memory store for tracking lark-cli child processes.
- * Used by create-app flow to track `lark-cli config init --new` processes.
+ * Uses globalThis to survive Turbopack hot reloads.
  */
+
 import { type ChildProcess } from 'child_process';
 
 interface CliProcessEntry {
@@ -13,28 +14,35 @@ interface CliProcessEntry {
   stderrBuffer: string;
 }
 
-const processMap = new Map<string, CliProcessEntry>();
+const STORE_KEY = '__cli_process_store';
+
+function getStore(): Map<string, CliProcessEntry> {
+  if (!(globalThis as Record<string, unknown>)[STORE_KEY]) {
+    (globalThis as Record<string, unknown>)[STORE_KEY] = new Map<string, CliProcessEntry>();
+  }
+  return (globalThis as Record<string, unknown>)[STORE_KEY] as Map<string, CliProcessEntry>;
+}
 
 export function storeProcess(
   sessionToken: string,
   entry: CliProcessEntry
 ): void {
-  processMap.set(sessionToken, entry);
+  getStore().set(sessionToken, entry);
 }
 
 export function getProcess(sessionToken: string): CliProcessEntry | null {
-  return processMap.get(sessionToken) ?? null;
+  return getStore().get(sessionToken) ?? null;
 }
 
 export function deleteProcess(sessionToken: string): void {
-  processMap.delete(sessionToken);
+  getStore().delete(sessionToken);
 }
 
 export function setIntegrationId(
   sessionToken: string,
   integrationId: string
 ): void {
-  const entry = processMap.get(sessionToken);
+  const entry = getStore().get(sessionToken);
   if (entry) {
     entry.integrationId = integrationId;
   }

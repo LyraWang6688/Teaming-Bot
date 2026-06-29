@@ -11,6 +11,7 @@ import { getCurrentUser } from '@/lib/auth/session';
 
 const updateIntegrationSchema = z.object({
   name: z.string().trim().min(1).optional(),
+  profileName: z.string().trim().min(1).optional(),
   appId: z.string().trim().min(1).optional(),
   appSecret: z.string().trim().min(1).optional(),
   baseAppToken: z.string().trim().min(1).nullable().optional(),

@@ -358,8 +358,8 @@ export default function FeishuConfigWorkspace() {
   const [isCreatingApp, setIsCreatingApp] = useState(false);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
   const [isInitializingBase, setIsInitializingBase] = useState(false);
-  const [listenerState, setListenerState] = useState<string>('stopped');
-  const [isStartingListener, setIsStartingListener] = useState(false);
+  const [eventSubscribed, setEventSubscribed] = useState<boolean | null>(null);
+  const [isCheckingEvent, setIsCheckingEvent] = useState(false);
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -397,7 +397,7 @@ export default function FeishuConfigWorkspace() {
       {
         step: 3,
         anchor: 'step-subscribe',
-        title: '事件订阅',
+        title: '事件校验',
         description: '校验事件订阅状态',
         status: 'pending' as const,
       },
@@ -406,7 +406,7 @@ export default function FeishuConfigWorkspace() {
         anchor: 'step-base',
         title: '初始化表格',
         description: '创建会议信息表',
-        status: integration?.initializedAt ? 'completed' : (listenerState === 'running') ? 'current' : 'pending',
+        status: integration?.initializedAt ? 'completed' : (eventSubscribed === true) ? 'current' : 'pending',
       },
     ];
     return steps;
@@ -414,7 +414,9 @@ export default function FeishuConfigWorkspace() {
 
   const effectiveOauthScopes = useMemo(() => {
     const scope = detail?.authorization?.scope || integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
-    return scope.split(/\s+/).filter(Boolean);
+    const allScopes = scope.split(/\s+/).filter(Boolean);
+    const requestedScopes = new Set(DEFAULT_USER_OAUTH_SCOPE.split(/\s+/));
+    return allScopes.filter(s => requestedScopes.has(s));
   }, [detail?.authorization?.scope, integration?.oauthScope]);
 
   const setupSummary = useMemo(() => {
@@ -464,6 +466,28 @@ export default function FeishuConfigWorkspace() {
       void runAutomatedChecks(integration.id, { silent: true });
     }
   }, [searchParams]);
+
+  // Auto-check event subscription when authorization completes
+  useEffect(() => {
+    if (!integration?.id) return;
+    if (detail?.authorization?.status !== 'authorized') return;
+    if (eventSubscribed !== null) return;
+
+    setIsCheckingEvent(true);
+    fetch(`/api/feishu/integrations/${integration.id}/event-subscription/check`, {
+      method: 'POST',
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && data.data) {
+          setEventSubscribed(data.data.eventFound === true);
+        } else {
+          setEventSubscribed(false);
+        }
+      })
+      .catch(() => setEventSubscribed(false))
+      .finally(() => setIsCheckingEvent(false));
+  }, [integration?.id, detail?.authorization?.status, eventSubscribed]);
 
   const loadIntegrationDetail = useCallback(
     async (integrationId: string | null) => {
@@ -547,25 +571,6 @@ export default function FeishuConfigWorkspace() {
     }
   };
 
-  const handleStartListener = async () => {
-    if (!integration?.id) return;
-    setIsStartingListener(true);
-    setPageError(null);
-    try {
-      await parseJsonResponse(
-        await fetch(`/api/feishu/integrations/${integration.id}/event-listener`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        })
-      );
-      setListenerState('running');
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '\u542f\u52a8\u76d1\u542c\u5931\u8d25\u3002');
-    } finally {
-      setIsStartingListener(false);
-    }
-  };
-
   const handleCreateApp = async () => {
     setPageError(null);
     setRegistrationQrUrl(null);
@@ -587,7 +592,7 @@ export default function FeishuConfigWorkspace() {
           const pollRes = await fetch('/api/feishu/integrations/register/poll', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionToken: result.sessionToken }),
+            body: JSON.stringify({ sessionToken: result.sessionToken, profileName: result.profileName }),
           });
           const pollData = await pollRes.json();
           const status = pollData?.data?.status || pollData?.status;
@@ -1111,7 +1116,7 @@ export default function FeishuConfigWorkspace() {
                     <div id="step-subscribe">
                       <StepHeader
                         step={3}
-                        status={listenerState === 'running' ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
+                        status={eventSubscribed === true ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
                         description={getStepDescription(3)}
                       />
                       <CardContent>
@@ -1119,28 +1124,27 @@ export default function FeishuConfigWorkspace() {
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
                             <div className="mb-2 text-sm font-medium text-slate-500">\u8bf7\u5148\u5b8c\u6210\u6388\u6743</div>
                           </div>
-                        ) : listenerState === 'running' ? (
+                        ) : isCheckingEvent ? (
+                          <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
+                            <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin text-indigo-600" />
+                            <p className="text-sm text-slate-600">\u6b63\u5728\u6821\u9a8c\u4e8b\u4ef6\u8ba2\u9605\u72b6\u6001...</p>
+                          </div>
+                        ) : eventSubscribed === true ? (
                           <div className="rounded-lg bg-emerald-50 p-4">
                             <div className="flex items-center gap-2 mb-2">
                               <Check className="h-4 w-4 text-emerald-600" />
-                              <span className="font-medium text-emerald-900">\u4e8b\u4ef6\u76d1\u542c\u5df2\u542f\u7528</span>
+                              <span className="font-medium text-emerald-900">\u6821\u9a8c\u901a\u8fc7</span>
                             </div>
                             <p className="text-sm text-slate-600">
-                              \u7cfb\u7edf\u6b63\u5728\u76d1\u542c\u5999\u8bb0\u751f\u6210\u4e8b\u4ef6\uff0c\u65b0\u7684\u4f1a\u8bae\u5c06\u81ea\u52a8\u88ab\u6355\u83b7\u5e76\u5206\u6790\u3002
+                              \u5e94\u7528\u5df2\u8ba2\u9605 minutes.minute.generated_v1 \u4e8b\u4ef6\uff0c\u53ef\u4ee5\u7ee7\u7eed\u4e0b\u4e00\u6b65\u3002
                             </p>
                           </div>
                         ) : (
-                          <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
-                            <p className="mb-4 text-sm text-slate-600">
-                              \u70b9\u51fb\u4e0b\u65b9\u6309\u94ae\uff0c\u542f\u52a8\u5999\u8bb0\u751f\u6210\u4e8b\u4ef6\u76d1\u542c\u3002
+                          <div className="rounded-lg border border-dashed border-amber-200 bg-amber-50 p-6 text-center">
+                            <AlertCircle className="mx-auto mb-2 h-6 w-6 text-amber-600" />
+                            <p className="text-sm text-slate-600">
+                              \u672a\u68c0\u6d4b\u5230\u4e8b\u4ef6\u8ba2\u9605\uff0c\u8bf7\u786e\u8ba4\u5e94\u7528\u914d\u7f6e\u3002
                             </p>
-                            <Button onClick={handleStartListener} disabled={isStartingListener} className="w-full">
-                              {isStartingListener ? (
-                                <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />\u542f\u52a8\u4e2d...</>
-                              ) : (
-                                <><Rocket className="mr-2 h-4 w-4" />\u542f\u52a8\u4e8b\u4ef6\u76d1\u542c</>
-                              )}
-                            </Button>
                           </div>
                         )}
                       </CardContent>
@@ -1151,11 +1155,11 @@ export default function FeishuConfigWorkspace() {
                     <div id="step-base">
                       <StepHeader
                         step={4}
-                        status={integration?.initializedAt ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
+                        status={integration?.initializedAt ? 'completed' : (eventSubscribed === true) ? 'current' : 'pending'}
                         description={getStepDescription(4)}
                       />
                       <CardContent>
-                        {!integration || detail?.authorization?.status !== 'authorized' ? (
+                        {!integration || detail?.authorization?.status !== 'authorized' || eventSubscribed !== true ? (
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
                             <div className="mb-2 text-sm font-medium text-slate-500">请先完成前面的步骤</div>
                           </div>

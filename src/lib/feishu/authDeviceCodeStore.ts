@@ -1,6 +1,10 @@
-// In-memory storage for device codes from OAuth device flow.
-// Ephemeral — on server restart, the user would need to re-initiate.
-// Keyed by integrationId.
+/**
+ * In-memory storage for device codes from OAuth device flow.
+ * Uses globalThis to survive Turbopack hot reloads.
+ */
+
+const STORE_KEY = '__auth_device_code_store';
+
 type DeviceCodeEntry = {
   deviceCode: string;
   expiresAt: number;
@@ -8,27 +12,32 @@ type DeviceCodeEntry = {
   appSecret: string;
 };
 
-const deviceCodeStore = new Map<string, DeviceCodeEntry>();
+function getStore(): Map<string, DeviceCodeEntry> {
+  if (!(globalThis as Record<string, unknown>)[STORE_KEY]) {
+    (globalThis as Record<string, unknown>)[STORE_KEY] = new Map<string, DeviceCodeEntry>();
+  }
+  return (globalThis as Record<string, unknown>)[STORE_KEY] as Map<string, DeviceCodeEntry>;
+}
 
 export function setDeviceCode(
   integrationId: string,
   entry: DeviceCodeEntry
 ): void {
-  deviceCodeStore.set(integrationId, entry);
+  getStore().set(integrationId, entry);
 }
 
 export function getDeviceCode(
   integrationId: string
 ): DeviceCodeEntry | null {
-  const entry = deviceCodeStore.get(integrationId);
+  const entry = getStore().get(integrationId);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
-    deviceCodeStore.delete(integrationId);
+    getStore().delete(integrationId);
     return null;
   }
   return entry;
 }
 
 export function deleteDeviceCode(integrationId: string): void {
-  deviceCodeStore.delete(integrationId);
+  getStore().delete(integrationId);
 }
