@@ -9,7 +9,7 @@
     "dev": "NEXT_DISABLE_TURBOPACK=1 next dev --port 5000",
     "preinstall": "npx only-allow pnpm",
     "lint": "eslint",
-    "start": "node server.ts",
+    "start": "next start",
     "ts-check": "tsc -p tsconfig.json"
   },
   "dependencies": {
