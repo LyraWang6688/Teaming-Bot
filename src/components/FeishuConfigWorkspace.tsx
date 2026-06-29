@@ -28,6 +28,7 @@ const DEFAULT_USER_OAUTH_SCOPE =
 
 const OAUTH_SCOPE_DESCRIPTIONS: Record<string, string> = {
   'minutes:minutes.basic:read': '获取妙记基本信息',
+  'minutes:minutes.search:read': '搜索妙记',
   'minutes:minutes.transcript:export': '导出妙记转写文字',
   offline_access: '持续访问已授权数据',
   'bitable:app': '多维表格（查看、评论、编辑）',
@@ -170,7 +171,7 @@ function getStepTitle(step: number) {
     case 2:
       return '用户授权';
     case 3:
-      return '事件订阅';
+      return '事件校验';
     case 4:
       return '初始化多维表格';
     default:
@@ -185,7 +186,7 @@ function getStepDescription(step: number) {
     case 2:
       return '授权应用访问妙记、多维表格等权限。';
     case 3:
-      return '订阅妙记生成事件，系统将自动监听会议。';
+      return '校验应用是否已订阅妙记生成事件。';
     case 4:
       return '初始化多维表格，自动创建会议信息表。';
     default:
@@ -397,7 +398,7 @@ export default function FeishuConfigWorkspace() {
         step: 3,
         anchor: 'step-subscribe',
         title: '事件订阅',
-        description: '订阅妙记生成事件',
+        description: '校验事件订阅状态',
         status: 'pending' as const,
       },
       {
@@ -886,9 +887,9 @@ export default function FeishuConfigWorkspace() {
 
                     <div id="step-create-app">
                       <StepHeader
-                        step={2}
+                        step={1}
                         status={integration ? 'completed' : 'current'}
-                        description={getStepDescription(2)}
+                        description={getStepDescription(1)}
                       />
                       <CardContent>
                         {!integration ? (
