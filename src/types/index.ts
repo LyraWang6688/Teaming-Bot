@@ -83,6 +83,7 @@ export interface BatchItem {
   id: string;
   file: File;
   status: 'PENDING' | 'ANALYZING' | 'COMPLETE' | 'ERROR';
+  taskId?: string;
   result?: AnalysisResult;
   error?: string;
 }

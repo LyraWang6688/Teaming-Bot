@@ -11,6 +11,9 @@ import { jsPDF } from 'jspdf';
 import { ZONE_CONFIG } from '@/utils';
 import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
 
+const ANALYSIS_TASK_POLL_INTERVAL_MS = 2000;
+const ANALYSIS_TASK_TIMEOUT_MS = 20 * 60 * 1000;
+
 function HomeContent() {
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -40,10 +43,12 @@ function HomeContent() {
   };
 
   const processSingleItem = async (item: BatchItem) => {
-    setBatchItems(prev => prev.map(it => it.id === item.id ? { ...it, status: 'ANALYZING', error: undefined } : it));
+    setBatchItems(prev => prev.map(it => it.id === item.id ? { ...it, status: 'ANALYZING', error: undefined, result: undefined, taskId: undefined } : it));
 
     try {
-      const result = await analyzeMeetingMinutes(item.file);
+      const result = await analyzeMeetingMinutes(item.file, (taskId) => {
+        setBatchItems(prev => prev.map(it => it.id === item.id ? { ...it, taskId } : it));
+      });
       setBatchItems(prev => prev.map(it => it.id === item.id ? { ...it, status: 'COMPLETE', result } : it));
 
     } catch (error: unknown) {
@@ -93,7 +98,7 @@ function HomeContent() {
     // 将所有已完成的项重置为 PENDING 状态
     setBatchItems(prev => prev.map(item => {
       if (item.status === 'COMPLETE' || item.status === 'ERROR') {
-        return { ...item, status: 'PENDING', error: undefined };
+        return { ...item, status: 'PENDING', error: undefined, result: undefined, taskId: undefined };
       }
       return item;
     }));
@@ -416,22 +421,145 @@ function HomeContent() {
   );
 }
 
-// 调用后端 API 进行分析（支持 txt 和 docx 文件）
-async function analyzeMeetingMinutes(file: File): Promise<AnalysisResult> {
+async function readAnalyzeResponse(response: Response): Promise<unknown> {
+  const contentType = response.headers.get('content-type') || '';
+
+  if (contentType.includes('json')) {
+    return response.json().catch(() => null);
+  }
+
+  return response.text().catch(() => null);
+}
+
+type ApiResponse<T> = {
+  success?: boolean;
+  data?: T;
+  error?: string;
+};
+
+type WebAnalysisTaskPayload = {
+  id: string;
+  status: 'pending' | 'analyzing' | 'completed' | 'failed';
+  result?: AnalysisResult;
+  error?: string;
+};
+
+function getServerErrorMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const record = payload as Record<string, unknown>;
+  const message = record.error ?? record.message;
+  return typeof message === 'string' && message.trim() ? message : null;
+}
+
+function createAnalyzeError(response: Response, payload: unknown): Error {
+  const serverMessage = getServerErrorMessage(payload);
+  if (serverMessage) {
+    return new Error(serverMessage);
+  }
+
+  if (response.status === 504) {
+    return new Error('分析请求超过网关等待时间（504 Gateway Time-out）。服务器可能仍在分析，请稍后重试；若持续出现，请调大 Nginx 代理超时时间。');
+  }
+
+  if (response.status === 413) {
+    return new Error('上传文件超过网关允许大小（413 Payload Too Large）。请压缩文件，或调大 Nginx client_max_body_size。');
+  }
+
+  const statusText = response.statusText ? ` ${response.statusText}` : '';
+  const responseType = typeof payload === 'string' && payload.trim()
+    ? '服务器返回了非 JSON 错误页'
+    : '服务器没有返回可解析的错误信息';
+  return new Error(`分析请求失败（HTTP ${response.status}${statusText}）：${responseType}`);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getTaskPayload(payload: unknown): WebAnalysisTaskPayload {
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('分析接口返回了非 JSON 内容，请检查服务器或反向代理日志。');
+  }
+
+  const response = payload as ApiResponse<WebAnalysisTaskPayload>;
+  if (response.success === false) {
+    throw new Error(response.error || '分析任务请求失败');
+  }
+
+  if (!response.data?.id || !response.data.status) {
+    throw new Error('分析任务返回数据不完整，请重新尝试。');
+  }
+
+  return response.data;
+}
+
+async function createAnalyzeTask(file: File): Promise<WebAnalysisTaskPayload> {
   const formData = new FormData();
   formData.append('file', file);
 
-  const response = await fetch('/api/analyze', {
+  const response = await fetch('/api/analyze/tasks', {
     method: 'POST',
     body: formData,
   });
 
+  const payload = await readAnalyzeResponse(response);
+
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Analysis failed');
+    throw createAnalyzeError(response, payload);
   }
 
-  return response.json();
+  return getTaskPayload(payload);
+}
+
+async function fetchAnalyzeTask(taskId: string): Promise<WebAnalysisTaskPayload> {
+  const response = await fetch(`/api/analyze/tasks/${taskId}`, {
+    method: 'GET',
+    cache: 'no-store',
+  });
+
+  const payload = await readAnalyzeResponse(response);
+
+  if (!response.ok) {
+    throw createAnalyzeError(response, payload);
+  }
+
+  return getTaskPayload(payload);
+}
+
+async function waitForAnalyzeTask(taskId: string): Promise<AnalysisResult> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < ANALYSIS_TASK_TIMEOUT_MS) {
+    const task = await fetchAnalyzeTask(taskId);
+
+    if (task.status === 'completed') {
+      if (!task.result) {
+        throw new Error('分析任务已完成，但缺少报告数据。');
+      }
+      return task.result;
+    }
+
+    if (task.status === 'failed') {
+      throw new Error(task.error || '分析任务失败，请重新尝试。');
+    }
+
+    await sleep(ANALYSIS_TASK_POLL_INTERVAL_MS);
+  }
+
+  throw new Error('分析任务等待超时，请稍后重试。');
+}
+
+// 创建后端异步任务并轮询结果（支持 txt 和 docx 文件）
+async function analyzeMeetingMinutes(
+  file: File,
+  onTaskCreated?: (taskId: string) => void
+): Promise<AnalysisResult> {
+  const task = await createAnalyzeTask(file);
+  onTaskCreated?.(task.id);
+  return waitForAnalyzeTask(task.id);
 }
 
 export default function Home() {

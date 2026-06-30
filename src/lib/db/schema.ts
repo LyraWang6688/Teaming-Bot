@@ -8,6 +8,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+import type { AnalysisResult } from '@/types';
 
 export const feishuIntegrations = pgTable(
   'feishu_integrations',
@@ -198,6 +199,30 @@ export const meetingPipelineTasks = pgTable(
   ]
 );
 
+export const webAnalysisTasks = pgTable(
+  'web_analysis_tasks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    status: text('status').notNull().default('pending'),
+    fileName: text('file_name').notNull(),
+    meetingText: text('meeting_text').notNull(),
+    result: jsonb('result').$type<AnalysisResult>(),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    lastErrorType: text('last_error_type'),
+    lastErrorMessage: text('last_error_message'),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('web_analysis_tasks_status_idx').on(table.status),
+    index('web_analysis_tasks_expires_at_idx').on(table.expiresAt),
+    index('web_analysis_tasks_created_at_idx').on(table.createdAt),
+  ]
+);
+
 export const users = pgTable(
   'users',
   {
@@ -241,5 +266,6 @@ export type FeishuOauthStateRow = typeof feishuOauthStates.$inferSelect;
 export type FeishuAuditLogRow = typeof feishuAuditLogs.$inferSelect;
 export type MeetingRecordRow = typeof meetingRecords.$inferSelect;
 export type MeetingPipelineTaskRow = typeof meetingPipelineTasks.$inferSelect;
+export type WebAnalysisTaskRow = typeof webAnalysisTasks.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;

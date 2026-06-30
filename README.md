@@ -28,6 +28,15 @@ pnpm lint
 sudo docker compose up -d --build
 ```
 
+前端上传入口使用异步任务：先调用 `/api/analyze/tasks` 创建任务，再轮询 `/api/analyze/tasks/:taskId` 获取结果。保留的同步 `/api/analyze` 兼容接口仍可能等待大模型分析结果，生产 Nginx 建议允许较长代理等待时间：
+
+```nginx
+client_max_body_size 12m;
+proxy_connect_timeout 300s;
+proxy_send_timeout 300s;
+proxy_read_timeout 300s;
+```
+
 ## 生产环境变量
 
 ```env
@@ -50,7 +59,7 @@ FEISHU_ENABLE_STARTUP_RECOVERY=true
 
 ## 两条可用入口
 
-- 手动入口：前端上传 `.txt/.docx`，调用 `/api/analyze`
+- 手动入口：前端上传 `.txt/.docx`，调用 `/api/analyze/tasks` 创建 `web_analysis_tasks` 任务并轮询结果
 - 自动入口：飞书 CLI 监听 `minutes.minute.generated_v1` 妙记生成事件
 
 两条入口共享同一套分析服务与报告渲染逻辑。
