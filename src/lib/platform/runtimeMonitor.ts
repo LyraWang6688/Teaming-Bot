@@ -17,10 +17,10 @@ export function logRuntimeMonitor(
   context: RuntimeMonitorContext = {}
 ) {
   const payload = {
+    ...normalizeContext(context),
     timestamp: new Date().toISOString(),
     scope,
     event,
-    ...normalizeContext(context),
   };
 
   try {

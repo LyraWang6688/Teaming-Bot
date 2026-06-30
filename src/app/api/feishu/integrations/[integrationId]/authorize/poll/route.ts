@@ -303,7 +303,7 @@ export async function POST(request: Request) {
         userId: user.id,
         authorizedOpenId: openId,
         authorizedUserName: userName,
-        scope,
+        oauthScope: scope,
         durationMs: getElapsedMs(startedAt),
       });
 

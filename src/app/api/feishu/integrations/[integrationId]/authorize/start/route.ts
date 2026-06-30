@@ -61,7 +61,7 @@ export async function POST(request: Request) {
       integrationId,
       profileName: integration.profileName,
       userId: user.id,
-      scope: AUTH_SCOPE,
+      oauthScope: AUTH_SCOPE,
     });
 
     // Run lark-cli auth login with --no-wait to get device code + verification URL

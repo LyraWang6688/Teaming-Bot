@@ -16,10 +16,10 @@ export function logFeishuMonitor(
   context: MonitorContext = {}
 ) {
   const payload = {
+    ...normalizeContext(context),
     timestamp: new Date().toISOString(),
     scope: 'feishu_pipeline',
     event,
-    ...normalizeContext(context),
   };
 
   try {

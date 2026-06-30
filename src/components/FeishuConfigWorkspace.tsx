@@ -377,7 +377,7 @@ export default function FeishuConfigWorkspace() {
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const [authorizePollStatus, setAuthorizePollStatus] = useState<string>('idle');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const authorizePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const authorizePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getSetupTraceId = useCallback(() => {
     if (!setupTraceIdRef.current) {
@@ -664,41 +664,42 @@ export default function FeishuConfigWorkspace() {
       setAuthorizePollStatus('pending');
 
       if (authorizePollRef.current) {
-        clearInterval(authorizePollRef.current);
+        clearTimeout(authorizePollRef.current);
       }
-      authorizePollRef.current = setInterval(async () => {
-        try {
-          const pollResult = await parseJsonResponse<{ status: string; error?: string }>(
-            await fetch(`/api/feishu/integrations/${integration.id}/authorize/poll`, {
-              method: 'POST',
-              headers: setupHeaders({ 'Content-Type': 'application/json' }),
-              body: JSON.stringify({ integrationId: integration.id }),
-            })
-          );
 
-          if (pollResult.status === 'completed') {
-            setAuthorizePollStatus('completed');
-            if (authorizePollRef.current) {
-              clearInterval(authorizePollRef.current);
-              authorizePollRef.current = null;
+      const scheduleAuthorizePoll = () => {
+        authorizePollRef.current = setTimeout(async () => {
+          authorizePollRef.current = null;
+          try {
+            const pollResult = await parseJsonResponse<{ status: string; error?: string }>(
+              await fetch(`/api/feishu/integrations/${integration.id}/authorize/poll`, {
+                method: 'POST',
+                headers: setupHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ integrationId: integration.id }),
+              })
+            );
+
+            if (pollResult.status === 'completed') {
+              setAuthorizePollStatus('completed');
+              await loadIntegrationDetail(integration.id);
+            } else if (pollResult.status === 'denied' || pollResult.status === 'expired' || pollResult.status === 'error') {
+              setAuthorizePollStatus(pollResult.status);
+              setPageError(pollResult.error || '授权失败');
+            } else {
+              scheduleAuthorizePoll();
             }
-            await loadIntegrationDetail(integration.id);
-          } else if (pollResult.status === 'denied' || pollResult.status === 'expired' || pollResult.status === 'error') {
-            setAuthorizePollStatus(pollResult.status);
-            setPageError(pollResult.error || '授权失败');
-            if (authorizePollRef.current) {
-              clearInterval(authorizePollRef.current);
-              authorizePollRef.current = null;
-            }
+          } catch (pollErr) {
+            logClientMonitor('warn', 'feishu_config_workspace', 'authorize_poll_request_failed', {
+              ...toClientErrorContext(pollErr),
+              setupTraceId: getSetupTraceId(),
+              integrationId: integration.id,
+            });
+            scheduleAuthorizePoll();
           }
-        } catch (pollErr) {
-          logClientMonitor('warn', 'feishu_config_workspace', 'authorize_poll_request_failed', {
-            ...toClientErrorContext(pollErr),
-            setupTraceId: getSetupTraceId(),
-            integrationId: integration.id,
-          });
-        }
-      }, 3000);
+        }, 3000);
+      };
+
+      scheduleAuthorizePoll();
     } catch (error) {
       logClientMonitor('error', 'feishu_config_workspace', 'authorize_start_failed', {
         ...toClientErrorContext(error),
@@ -1122,7 +1123,7 @@ export default function FeishuConfigWorkspace() {
                                       setAuthorizeUrl(null);
                                       setAuthorizePollStatus('idle');
                                       if (authorizePollRef.current) {
-                                        clearInterval(authorizePollRef.current);
+                                        clearTimeout(authorizePollRef.current);
                                         authorizePollRef.current = null;
                                       }
                                     }}

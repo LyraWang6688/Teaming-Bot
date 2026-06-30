@@ -16,10 +16,10 @@ export function logAuthMonitor(
   context: AuthMonitorContext = {}
 ) {
   const payload = {
+    ...normalizeContext(context),
     timestamp: new Date().toISOString(),
     scope: 'auth_callback',
     event,
-    ...normalizeContext(context),
   };
 
   try {
