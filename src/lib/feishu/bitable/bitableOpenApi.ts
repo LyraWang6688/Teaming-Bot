@@ -1,8 +1,9 @@
 import type { AnalysisResult } from '@/types';
 import type { FeishuBitableConfig } from '../common/config';
-import { callFeishuIntegrationUserSdk } from '../integration/integrationOpenApi';
+import { callFeishuIntegrationUserCliOpenApi } from '../integration/integrationOpenApi';
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import { FEISHU_PROCESS_STATUS, type FeishuProcessStatus } from '../pipeline/status';
+import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 
 type RecordFields = Record<string, unknown>;
 
@@ -40,10 +41,6 @@ type BitableLinkValue = {
 export type FeishuMeetingRecord = {
   recordId: string;
   meetingId?: string;
-  topic?: string;
-  startTime?: unknown;
-  endTime?: unknown;
-  organizer?: unknown;
   processStatus?: unknown;
   transcript?: unknown;
   summary?: unknown;
@@ -76,7 +73,7 @@ async function callBitableOpenApi<T = unknown>(
   path: string,
   data?: Record<string, unknown>
 ): Promise<T> {
-  return callFeishuIntegrationUserSdk<T>(config.integration, method, path, data);
+  return callFeishuIntegrationUserCliOpenApi<T>(config.integration, method, path, data);
 }
 
 function extractBitableText(value: unknown): string | undefined {
@@ -154,7 +151,10 @@ function parseAnalysisData(value: unknown): AnalysisResult | null {
   try {
     return JSON.parse(normalized) as AnalysisResult;
   } catch (error) {
-    console.error('[Feishu Base] JSON数据解析失败:', error);
+    logRuntimeMonitor('warn', 'feishu_bitable', 'analysis_json_parse_failed', {
+      ...toRuntimeErrorContext(error),
+      valueLength: normalized.length,
+    });
     return null;
   }
 }
@@ -165,10 +165,6 @@ function toRecord(record: BitableRecord): FeishuMeetingRecord {
   return {
     recordId: record.record_id,
     meetingId: extractBitableText(fields['会议ID']),
-    topic: extractBitableText(fields['会议主题']),
-    startTime: fields['开始时间'],
-    endTime: fields['结束时间'],
-    organizer: extractBitableText(fields['组织者']),
     processStatus: extractSelectValue(fields['处理状态']) || fields['处理状态'],
     transcript: extractBitableText(fields['会议文字稿']),
     summary: extractBitableText(fields['分析摘要']),
@@ -212,7 +208,7 @@ export async function findMeetingRecordByMeetingId(
   const result = await callBitableOpenApi<RecordSearchResult>(
     config,
     'POST',
-    `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/search`,
+    `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/search?page_size=1`,
     {
       filter: {
         conjunction: 'and',
@@ -224,7 +220,7 @@ export async function findMeetingRecordByMeetingId(
           },
         ],
       },
-      page_size: 1,
+      automatic_fields: false,
     }
   );
 
@@ -243,10 +239,15 @@ export async function listMeetingRecordsByStatuses(
     let pageToken: string | undefined;
 
     do {
+      const query = new URLSearchParams({ page_size: String(pageSize) });
+      if (pageToken) {
+        query.set('page_token', pageToken);
+      }
+
       const result = await callBitableOpenApi<RecordSearchResult>(
         config,
         'POST',
-        `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/search`,
+        `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/search?${query.toString()}`,
         {
           filter: {
             conjunction: 'and',
@@ -258,8 +259,7 @@ export async function listMeetingRecordsByStatuses(
               },
             ],
           },
-          page_size: pageSize,
-          page_token: pageToken,
+          automatic_fields: false,
         }
       );
 
@@ -302,10 +302,6 @@ export async function upsertMeetingWaitingRecord(
   config: FeishuBitableAccess,
   meeting: {
     meetingId: string;
-    topic?: string;
-    startTime?: number;
-    endTime?: number;
-    organizer?: string;
   }
 ): Promise<FeishuMeetingRecord> {
   const existing = await findMeetingRecordByMeetingId(config, meeting.meetingId);
@@ -313,11 +309,6 @@ export async function upsertMeetingWaitingRecord(
     '会议ID': meeting.meetingId,
     '处理状态': FEISHU_PROCESS_STATUS.minuteGenerated,
   };
-
-  if (meeting.topic) fields['会议主题'] = meeting.topic;
-  if (meeting.startTime) fields['开始时间'] = meeting.startTime;
-  if (meeting.endTime) fields['结束时间'] = meeting.endTime;
-  if (meeting.organizer) fields['组织者'] = meeting.organizer;
 
   if (existing) {
     await updateMeetingRecordFields(config, existing.recordId, fields);

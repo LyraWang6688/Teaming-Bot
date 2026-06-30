@@ -9,7 +9,6 @@ import {
   updateUserFeishuIntegration,
   writeAuditLog,
 } from './integrationStore';
-import { exec } from 'child_process';
 
 type CheckStatus = 'success' | 'failed' | 'pending' | 'authorized';
 
@@ -30,21 +29,16 @@ type BitableAppInfoResult = {
   };
 };
 
-type BitableTableListResult = {
-  items?: Array<{
-    table_id: string;
-    name?: string;
-  }>;
-};
-
 type BitableCreateTableResult = {
-  table?: {
-    table_id?: string;
-    name?: string;
-  };
+  table_id?: string;
+  default_view_id?: string;
+  field_id_list?: string[];
 };
 
 type BitableFieldListResult = {
+  has_more?: boolean;
+  page_token?: string;
+  total?: number;
   items?: Array<{
     field_id: string;
     field_name: string;
@@ -69,17 +63,10 @@ type BitableCreateAppResult = {
   };
 };
 
-type FeishuUserInfoResult = {
-  open_id?: string;
-  name?: string;
-  en_name?: string;
-  email?: string;
-  user_id?: string;
-};
-
 type RequiredFieldDefinition = {
   fieldName: string;
   type: number;
+  uiType?: string;
   property?: Record<string, unknown>;
 };
 
@@ -89,14 +76,11 @@ type CheckFailure = {
 };
 
 const REQUIRED_MEETING_FIELDS: RequiredFieldDefinition[] = [
-  { fieldName: '会议ID', type: 1 },
-  { fieldName: '会议主题', type: 1 },
-  { fieldName: '开始时间', type: 5 },
-  { fieldName: '结束时间', type: 5 },
-  { fieldName: '组织者', type: 1 },
+  { fieldName: '会议ID', type: 1, uiType: 'Text' },
   {
     fieldName: '处理状态',
     type: 3,
+    uiType: 'SingleSelect',
     property: {
       options: FEISHU_STATUS_OPTIONS.map((option) => ({
         name: option.name,
@@ -104,12 +88,21 @@ const REQUIRED_MEETING_FIELDS: RequiredFieldDefinition[] = [
       })),
     },
   },
-  { fieldName: '会议文字稿', type: 1 },
-  { fieldName: '分析摘要', type: 1 },
-  { fieldName: '报告链接', type: 15 },
-  { fieldName: 'JSON数据', type: 1 },
-  { fieldName: '错误信息', type: 1 },
+  { fieldName: '会议文字稿', type: 1, uiType: 'Text' },
+  { fieldName: '分析摘要', type: 1, uiType: 'Text' },
+  { fieldName: '报告链接', type: 15, uiType: 'Url' },
+  { fieldName: 'JSON数据', type: 1, uiType: 'Text' },
+  { fieldName: '错误信息', type: 1, uiType: 'Text' },
 ];
+
+function toBitableFieldPayload(field: RequiredFieldDefinition) {
+  return {
+    field_name: field.fieldName,
+    type: field.type,
+    ...(field.uiType ? { ui_type: field.uiType } : {}),
+    ...(field.property ? { property: field.property } : {}),
+  };
+}
 
 function isAllChecksPassed(statuses: IntegrationCheckStatuses): boolean {
   return (
@@ -152,6 +145,33 @@ function parseScopeList(value: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+async function listAllBitableFields(
+  integration: NonNullable<Awaited<ReturnType<typeof getUserFeishuIntegrationContext>>>,
+  appToken: string,
+  tableId: string
+): Promise<NonNullable<BitableFieldListResult['items']>> {
+  const fields: NonNullable<BitableFieldListResult['items']> = [];
+  let pageToken: string | undefined;
+
+  do {
+    const query = new URLSearchParams({ page_size: '100' });
+    if (pageToken) {
+      query.set('page_token', pageToken);
+    }
+
+    const fieldList = await callFeishuIntegrationUserOpenApi<BitableFieldListResult>(
+      integration,
+      'GET',
+      `/bitable/v1/apps/${appToken}/tables/${tableId}/fields?${query.toString()}`
+    );
+
+    fields.push(...(fieldList.items || []));
+    pageToken = fieldList.has_more ? fieldList.page_token : undefined;
+  } while (pageToken);
+
+  return fields;
+}
+
 async function ensureMeetingTableFields(
   userId: string,
   integrationId: string,
@@ -167,12 +187,7 @@ async function ensureMeetingTableFields(
     throw new Error('未找到对应的飞书集成配置。');
   }
 
-  const fieldList = await callFeishuIntegrationUserOpenApi<BitableFieldListResult>(
-    integration,
-    'GET',
-    `/bitable/v1/apps/${appToken}/tables/${tableId}/fields?page_size=500`
-  );
-  const existingFields = fieldList.items || [];
+  const existingFields = await listAllBitableFields(integration, appToken, tableId);
   const existingFieldNames = new Set(existingFields.map((field) => field.field_name));
   const createdFields: string[] = [];
 
@@ -185,11 +200,7 @@ async function ensureMeetingTableFields(
       integration,
       'POST',
       `/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
-      {
-        field_name: field.fieldName,
-        type: field.type,
-        ...(field.property ? { property: field.property } : {}),
-      }
+      toBitableFieldPayload(field)
     );
     createdFields.push(field.fieldName);
   }
@@ -231,36 +242,23 @@ export async function runFeishuIntegrationChecks(options: {
     note: '应用凭证已保存，使用用户身份进行 API 调用。',
   };
 
-  try {
-    const oauthUser = await callFeishuIntegrationUserOpenApi<FeishuUserInfoResult>(
-      integration,
-      'GET',
-      '/authen/v1/user_info'
-    );
+  const authorizationContext = await getLatestFeishuAuthorizationContext(integration.id);
+  if (!authorizationContext || authorizationContext.status !== 'authorized') {
+    statuses.oauthStatus = 'pending';
+    details.oauth = {
+      ok: false,
+      pending: true,
+      message: '当前集成尚未完成 CLI 用户授权。',
+    };
+  } else {
     statuses.oauthStatus = 'authorized';
     details.oauth = {
       ok: true,
-      openId: oauthUser.open_id || null,
-      name: oauthUser.name || oauthUser.en_name || null,
-      email: oauthUser.email || null,
+      openId: authorizationContext.authorizedOpenId || null,
+      name: authorizationContext.authorizedUserName || null,
+      scope: authorizationContext.scope,
+      credentialMode: 'cli_profile',
     };
-  } catch (error) {
-    const failure = pickFailure(error, 'OauthCheckFailed');
-    if (failure.message.includes('尚未完成 OAuth 授权')) {
-      statuses.oauthStatus = 'pending';
-      details.oauth = {
-        ok: false,
-        pending: true,
-        message: failure.message,
-      };
-    } else {
-      statuses.oauthStatus = 'failed';
-      failures.push(failure);
-      details.oauth = {
-        ok: false,
-        message: failure.message,
-      };
-    }
   }
 
   if (integration.secrets.baseAppToken && integration.meetingTableId) {
@@ -270,10 +268,10 @@ export async function runFeishuIntegrationChecks(options: {
         'GET',
         `/bitable/v1/apps/${integration.secrets.baseAppToken}`
       );
-      const fieldList = await callFeishuIntegrationUserOpenApi<BitableFieldListResult>(
+      const fields = await listAllBitableFields(
         integration,
-        'GET',
-        `/bitable/v1/apps/${integration.secrets.baseAppToken}/tables/${integration.meetingTableId}/fields?page_size=500`
+        integration.secrets.baseAppToken,
+        integration.meetingTableId
       );
 
       statuses.baseStatus = 'success';
@@ -283,7 +281,7 @@ export async function runFeishuIntegrationChecks(options: {
         tableId: integration.meetingTableId,
         appName: appInfo.app?.name || null,
         defaultTableId: appInfo.app?.default_table_id || null,
-        fieldCount: fieldList.items?.length || 0,
+        fieldCount: fields.length,
       };
     } catch (error) {
       const failure = pickFailure(error, 'BaseCheckFailed');
@@ -314,8 +312,7 @@ export async function runFeishuIntegrationChecks(options: {
         : '尚未配置事件监听，请确认 CLI 事件监听已启动。',
   };
 
-  const authorization = await getLatestFeishuAuthorizationContext(integration.id);
-  const grantedUserScopes = parseScopeList(authorization?.scope);
+  const grantedUserScopes = parseScopeList(authorizationContext?.scope);
   const missingUserScopes = requiredUserScopes.filter((scope) => !grantedUserScopes.includes(scope));
   const hasRecordedAuthorizationScope = requiredUserScopes.length === 0 || grantedUserScopes.length > 0;
 
@@ -361,7 +358,6 @@ export async function runFeishuIntegrationChecks(options: {
       note: '当前 OAuth 授权缺少部分用户权限，请重新发起授权。',
     };
   } else if (
-    statuses.oauthStatus === 'failed' ||
     statuses.baseStatus === 'failed'
   ) {
     statuses.permissionStatus = 'failed';
@@ -447,6 +443,7 @@ export async function initializeFeishuIntegrationBase(options: {
   let tableId = integration.meetingTableId;
   let createdApp = false;
   let createdTable = false;
+  let createdFieldsFromNewTable: string[] = [];
 
   if (!appToken) {
     const createAppResult = await callFeishuIntegrationUserOpenApi<BitableCreateAppResult>(
@@ -459,7 +456,6 @@ export async function initializeFeishuIntegrationBase(options: {
     );
 
     appToken = createAppResult.app?.app_token || null;
-    tableId = createAppResult.app?.default_table_id || tableId;
     createdApp = true;
   }
 
@@ -468,25 +464,21 @@ export async function initializeFeishuIntegrationBase(options: {
   }
 
   if (!tableId) {
-    const tableList = await callFeishuIntegrationUserOpenApi<BitableTableListResult>(
-      integration,
-      'GET',
-      `/bitable/v1/apps/${appToken}/tables?page_size=100`
-    );
-    tableId = tableList.items?.[0]?.table_id || null;
-  }
-
-  if (!tableId) {
+    const initialFields = REQUIRED_MEETING_FIELDS.map(toBitableFieldPayload);
     const createTableResult = await callFeishuIntegrationUserOpenApi<BitableCreateTableResult>(
       integration,
       'POST',
       `/bitable/v1/apps/${appToken}/tables`,
       {
-        table_name: '会议信息',
+        table: {
+          name: '会议信息',
+          fields: initialFields,
+        },
       }
     );
-    tableId = createTableResult.table?.table_id || null;
+    tableId = createTableResult.table_id || null;
     createdTable = true;
+    createdFieldsFromNewTable = REQUIRED_MEETING_FIELDS.map((field) => field.fieldName);
   }
 
   if (!tableId) {
@@ -518,7 +510,7 @@ export async function initializeFeishuIntegrationBase(options: {
       tableId,
       createdApp,
       createdTable,
-      createdFields: ensuredFields.createdFields,
+      createdFields: [...createdFieldsFromNewTable, ...ensuredFields.createdFields],
     },
   });
 
@@ -532,7 +524,7 @@ export async function initializeFeishuIntegrationBase(options: {
     tableId,
     createdApp,
     createdTable,
-    createdFields: ensuredFields.createdFields,
+    createdFields: [...createdFieldsFromNewTable, ...ensuredFields.createdFields],
     fieldCount: ensuredFields.fieldCount,
     checkResult,
   };

@@ -16,11 +16,6 @@ export type MeetingPipelineTaskStatus =
   (typeof MEETING_PIPELINE_TASK_STATUS)[keyof typeof MEETING_PIPELINE_TASK_STATUS];
 
 export type MeetingPipelineTaskPayload = {
-  title?: string;
-  startTime?: number;
-  endTime?: number;
-  organizer?: string;
-  organizerSource?: string;
   reportUrl?: string;
 };
 
@@ -30,11 +25,6 @@ type UpsertMeetingPipelineTaskInput = {
   eventType?: string;
   meetingId: string;
   minuteToken?: string;
-  title: string;
-  startTime?: number;
-  endTime?: number;
-  organizer?: string;
-  organizerSource?: string;
 };
 
 type UpdateTaskFields = {
@@ -132,13 +122,7 @@ export async function upsertMeetingPipelineTaskForMinuteGenerated(
 
   const db = getDb();
   const existing = await getMeetingPipelineTaskByMeeting(input.integration.id, input.meetingId);
-  const payload: MeetingPipelineTaskPayload = {
-    title: input.title,
-    startTime: input.startTime,
-    endTime: input.endTime,
-    organizer: input.organizer,
-    organizerSource: input.organizerSource,
-  };
+  const payload: MeetingPipelineTaskPayload = {};
 
   if (!existing) {
     const [row] = await db

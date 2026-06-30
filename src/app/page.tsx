@@ -9,6 +9,7 @@ import { FileText, Loader2, RefreshCw, FileDown } from 'lucide-react';
 import { toJpeg } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { ZONE_CONFIG } from '@/utils';
+import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
 
 function HomeContent() {
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
@@ -46,7 +47,10 @@ function HomeContent() {
       setBatchItems(prev => prev.map(it => it.id === item.id ? { ...it, status: 'COMPLETE', result } : it));
 
     } catch (error: unknown) {
-      console.error(`Error analyzing ${item.file.name}:`, error);
+      logClientMonitor('error', 'home_page', 'file_analysis_failed', {
+        ...toClientErrorContext(error),
+        fileName: item.file.name,
+      });
       const message = error instanceof Error ? error.message : 'Analysis failed';
       setBatchItems(prev => prev.map(it => it.id === item.id ? { ...it, status: 'ERROR', error: message } : it));
     }
@@ -211,7 +215,10 @@ function HomeContent() {
               } catch (error) {
                 root.unmount();
                 resolve();
-                console.error(`Failed to generate PDF for ${item.file.name}:`, error);
+                logClientMonitor('error', 'home_page', 'batch_pdf_item_failed', {
+                  ...toClientErrorContext(error),
+                  fileName: item.file.name,
+                });
               }
             }, 2000); // 等待 2 秒让 React 组件完全渲染并应用字体
           });
@@ -222,14 +229,17 @@ function HomeContent() {
           // 短暂延迟以避免浏览器阻塞
           await new Promise(resolve => setTimeout(resolve, 500));
         } catch (error) {
-          console.error(`Failed to generate PDF for ${item.file.name}:`, error);
+          logClientMonitor('error', 'home_page', 'batch_pdf_item_failed', {
+            ...toClientErrorContext(error),
+            fileName: item.file.name,
+          });
         }
       }
 
       // 清理容器
       document.body.removeChild(container);
     } catch (error) {
-      console.error('Batch PDF generation failed:', error);
+      logClientMonitor('error', 'home_page', 'batch_pdf_generation_failed', toClientErrorContext(error));
     } finally {
       setIsGeneratingAllPdfs(false);
     }

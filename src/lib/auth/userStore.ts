@@ -71,6 +71,33 @@ export async function updateUserFromFeishu(
   return user;
 }
 
+export async function updateUserIdentityFromFeishu(
+  userId: string,
+  feishuUser: {
+    openId: string;
+    name: string;
+    email?: string;
+    avatarUrl?: string;
+    unionId?: string;
+  }
+) {
+  const db = getDb();
+  const [user] = await db
+    .update(users)
+    .set({
+      feishuOpenId: feishuUser.openId,
+      feishuName: feishuUser.name,
+      feishuEmail: feishuUser.email,
+      feishuAvatarUrl: feishuUser.avatarUrl,
+      feishuUnionId: feishuUser.unionId,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, userId))
+    .returning();
+
+  return user;
+}
+
 export async function findOrCreateUserByFeishu(feishuUser: {
   openId: string;
   name: string;

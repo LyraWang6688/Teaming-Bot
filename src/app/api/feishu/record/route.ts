@@ -9,6 +9,7 @@ import {
   getBitableRecord,
 } from '@/lib/feishu/bitable/bitableOpenApi';
 import { getFeishuIntegrationContextById } from '@/lib/feishu/integration/integrationStore';
+import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 
 export async function GET(request: NextRequest) {
   try {
@@ -46,7 +47,7 @@ export async function GET(request: NextRequest) {
     });
     
   } catch (error: unknown) {
-    console.error('获取记录失败:', error);
+    logRuntimeMonitor('error', 'feishu_record_api', 'record_get_failed', toRuntimeErrorContext(error));
     return NextResponse.json(
       { error: error instanceof Error ? error.message : '获取记录失败' },
       { status: 500 }

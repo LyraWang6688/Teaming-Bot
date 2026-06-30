@@ -2,11 +2,26 @@ import { NextResponse } from 'next/server';
 import { spawn, type ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import { storeProcess, getProcess } from '@/lib/feishu/cliProcessStore';
+import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
+
+function getElapsedMs(startedAt: number) {
+  return Date.now() - startedAt;
+}
 
 export async function POST() {
+  const startedAt = Date.now();
+  let sessionToken = '';
+  let profileName = '';
+
   try {
-    const sessionToken = randomUUID().slice(0, 8);
-    const profileName = `teaming-${sessionToken}`;
+    sessionToken = randomUUID().slice(0, 8);
+    profileName = `teaming-${sessionToken}`;
+
+    logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_started', {
+      stage: 'create_app',
+      sessionToken,
+      profileName,
+    });
 
     const child = spawn('lark-cli', [
       'config', 'init', '--new',
@@ -16,6 +31,10 @@ export async function POST() {
     ], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 300000,
+      env: {
+        ...process.env,
+        LARKSUITE_CLI_CONFIG_DIR: process.env.LARKSUITE_CLI_CONFIG_DIR || '/app/.lark-cli',
+      },
     });
 
     // Store entry first — listeners will update the stored ref
@@ -35,15 +54,29 @@ export async function POST() {
       if (entry) {
         entry.stdoutBuffer += data.toString();
       }
+      logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_stdout_received', {
+        stage: 'create_app',
+        sessionToken,
+        profileName,
+        bytes: data.length,
+      });
     });
 
     child.stderr?.on('data', (data: Buffer) => {
+      const stderrText = data.toString();
       const entry = getProcess(sessionToken);
       if (entry) {
-        entry.stderrBuffer += data.toString();
+        entry.stderrBuffer += stderrText;
       }
+      logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_stderr_received', {
+        stage: 'create_app',
+        sessionToken,
+        profileName,
+        bytes: data.length,
+        hasVerificationUrl: /https:\/\/[^\s]+/.test(stderrText),
+      });
       if (!verificationUrl) {
-        const text = entry ? entry.stderrBuffer : data.toString();
+        const text = entry ? entry.stderrBuffer : stderrText;
         const match = text.match(/https:\/\/[^\s]+/);
         if (match) {
           verificationUrl = match[0];
@@ -52,7 +85,13 @@ export async function POST() {
     });
 
     child.on('error', (err) => {
-      console.error('[feishu:create-app] 子进程错误', err);
+      logRuntimeMonitor('error', 'feishu_cli_setup', 'create_app_process_error', {
+        stage: 'create_app',
+        sessionToken,
+        profileName,
+        durationMs: getElapsedMs(startedAt),
+        ...toRuntimeErrorContext(err),
+      });
     });
 
     // Wait up to 5 seconds for the URL to appear
@@ -71,11 +110,24 @@ export async function POST() {
 
     if (!url) {
       child.kill();
+      logRuntimeMonitor('error', 'feishu_cli_setup', 'create_app_verification_url_missing', {
+        stage: 'create_app',
+        sessionToken,
+        profileName,
+        durationMs: getElapsedMs(startedAt),
+      });
       return NextResponse.json(
         { success: false, error: '无法获取二维码，请重试' },
         { status: 500 }
       );
     }
+
+    logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_verification_url_ready', {
+      stage: 'create_app',
+      sessionToken,
+      profileName,
+      durationMs: getElapsedMs(startedAt),
+    });
 
     return NextResponse.json({
       success: true,
@@ -86,7 +138,13 @@ export async function POST() {
       },
     });
   } catch (error) {
-    console.error('[feishu:create-app] 创建应用失败', error);
+    logRuntimeMonitor('error', 'feishu_cli_setup', 'create_app_failed', {
+      stage: 'create_app',
+      sessionToken,
+      profileName,
+      durationMs: getElapsedMs(startedAt),
+      ...toRuntimeErrorContext(error),
+    });
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : '创建应用失败' },
       { status: 500 }

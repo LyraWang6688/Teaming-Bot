@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
 import {
   AlertCircle,
   ArrowRight,
@@ -447,7 +448,7 @@ export default function FeishuConfigWorkspace() {
           setUser(payload.data ?? null);
         }
       } catch (error) {
-        console.error('[auth:me] 获取用户信息失败', error);
+        logClientMonitor('error', 'feishu_config_workspace', 'auth_me_failed', toClientErrorContext(error));
       } finally {
         setAuthLoading(false);
       }
@@ -606,7 +607,10 @@ export default function FeishuConfigWorkspace() {
             setPageError(pollData?.data?.error || pollData?.error || '创建失败');
           }
         } catch (e) {
-          console.error('[poll]', e);
+          logClientMonitor('warn', 'feishu_config_workspace', 'register_poll_request_failed', {
+            ...toClientErrorContext(e),
+            profileName: result.profileName,
+          });
         }
       };
       
@@ -663,11 +667,17 @@ export default function FeishuConfigWorkspace() {
             }
           }
         } catch (pollErr) {
-          console.error('[feishu:authorize:poll] 轮询失败', pollErr);
+          logClientMonitor('warn', 'feishu_config_workspace', 'authorize_poll_request_failed', {
+            ...toClientErrorContext(pollErr),
+            integrationId: integration.id,
+          });
         }
       }, 3000);
     } catch (error) {
-      console.error('[feishu:authorize] 发起授权失败', error);
+      logClientMonitor('error', 'feishu_config_workspace', 'authorize_start_failed', {
+        ...toClientErrorContext(error),
+        integrationId: integration.id,
+      });
       setPageError(error instanceof Error ? error.message : '发起授权失败。');
     } finally {
       setIsAuthorizing(false);

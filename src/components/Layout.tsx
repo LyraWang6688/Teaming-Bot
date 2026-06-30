@@ -4,6 +4,7 @@ import React, { ReactNode, useEffect, useState } from 'react';
 import { Bot, Upload, Settings, LogOut, User, ChevronDown, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
 
 interface CurrentUser {
   id: string;
@@ -41,7 +42,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           setUser(null);
         }
       } catch (error) {
-        console.error('Error getting user:', error);
+        logClientMonitor('error', 'layout', 'current_user_load_failed', toClientErrorContext(error));
         setUser(null);
       } finally {
         setIsLoading(false);
@@ -60,7 +61,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       router.push('/');
       router.refresh();
     } catch (error) {
-      console.error('Error signing out:', error);
+      logClientMonitor('error', 'layout', 'sign_out_failed', toClientErrorContext(error));
     } finally {
       setIsSigningOut(false);
     }

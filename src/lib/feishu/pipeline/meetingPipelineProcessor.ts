@@ -28,7 +28,6 @@ import {
   getMeetingPipelineTaskById,
   listRecoverableMeetingPipelineTasks,
   markMeetingPipelineTaskRunning,
-  type MeetingPipelineTaskPayload,
   updateMeetingPipelineTask,
   upsertMeetingPipelineTaskForMinuteGenerated,
 } from './meetingPipelineTaskStore';
@@ -69,11 +68,6 @@ type MinuteGeneratedSource = {
   meetingId: string;
   minuteToken: string;
   attempt: number;
-  title: string;
-  startTime?: number;
-  endTime?: number;
-  organizer?: string;
-  organizerSource?: 'owner' | 'host' | 'creator' | 'missing';
   recordId?: string;
 };
 
@@ -107,26 +101,6 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function toTimestamp(value: unknown): number | undefined {
-  if (typeof value === 'number') {
-    return value > 10_000_000_000 ? value : value * 1000;
-  }
-
-  if (typeof value === 'string' && value.trim()) {
-    const numeric = Number(value);
-    if (Number.isFinite(numeric)) {
-      return numeric > 10_000_000_000 ? numeric : numeric * 1000;
-    }
-
-    const parsed = Date.parse(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-
-  return undefined;
-}
-
 function getEventId(envelope: FeishuEventEnvelope): string | undefined {
   return envelope.header?.event_id || (envelope.event?.event_id as string | undefined);
 }
@@ -143,44 +117,23 @@ function scheduleBackgroundTask(task: () => Promise<void>, delayMs = 0) {
   }, delayMs);
 }
 
-function getMeetingUserOpenId(value: unknown): string | undefined {
-  const user = asRecord(value);
-  const id = user.id;
-  if (typeof id === 'string') {
-    return asString(id);
-  }
-
-  return asString(asRecord(id).open_id);
-}
-
-function getOrganizerInfo(minute: Record<string, unknown>) {
-  const owner = getMeetingUserOpenId(minute.owner);
-  if (owner) {
-    return {
-      organizer: owner,
-      organizerSource: 'owner' as const,
-    };
-  }
-
-  const host = getMeetingUserOpenId(minute.host);
-  if (host) {
-    return {
-      organizer: host,
-      organizerSource: 'host' as const,
-    };
-  }
-
-  const creator = getMeetingUserOpenId(minute.creator);
-  if (creator) {
-    return {
-      organizer: creator,
-      organizerSource: 'creator' as const,
-    };
-  }
+function getMinuteGeneratedEventPayload(event: Record<string, unknown>) {
+  const minute = asRecord(event.minute);
+  const minuteSource = asRecord(event.minute_source || minute.minute_source);
+  const sourceType = asString(minuteSource.source_type);
+  const sourceEntityId = asString(minuteSource.source_entity_id);
+  const meetingIdFromSource = sourceType === 'meeting' ? sourceEntityId : undefined;
 
   return {
-    organizer: undefined,
-    organizerSource: 'missing' as const,
+    minuteSource,
+    sourceType,
+    minuteToken: asString(event.minute_token) || asString(minute.minute_token) || asString(minute.id),
+    meetingId:
+      meetingIdFromSource ||
+      asString(event.meeting_id) ||
+      asString(event.video_meeting_id) ||
+      asString(minute.meeting_id) ||
+      asString(minute.video_meeting_id),
   };
 }
 
@@ -224,31 +177,27 @@ export async function enqueueFeishuEvent(
   }
 
   const event = envelope.event || {};
-  const minute = asRecord(event.minute);
-  const minuteToken = asString(minute.minute_token) || asString(minute.id);
-  const title = asString(minute.topic) || asString(minute.title);
-  const startTime = toTimestamp(minute.start_time) || toTimestamp(minute.create_time);
-  const endTime = toTimestamp(minute.end_time);
-  const meetingId = asString(minute.meeting_id) || asString(minute.video_meeting_id);
-  const { organizer, organizerSource } = getOrganizerInfo(minute);
+  const {
+    sourceType,
+    minuteToken,
+    meetingId,
+  } = getMinuteGeneratedEventPayload(event);
 
   logFeishuMonitor('info', 'minute_generated_event_received', {
     integrationId: integration.id,
     eventId,
     eventType,
+    sourceType,
     minuteToken,
     meetingId,
-    title,
-    organizer,
-    organizerSource,
   });
 
   if (!minuteToken) {
     throw new Error('妙记生成事件缺少 minute_token');
   }
 
-  if (!title) {
-    throw new Error('妙记生成事件缺少 topic');
+  if (!meetingId) {
+    throw new Error('妙记生成事件缺少会议来源 source_entity_id');
   }
 
   const taskResult = await upsertMeetingPipelineTaskForMinuteGenerated({
@@ -256,12 +205,7 @@ export async function enqueueFeishuEvent(
     eventId,
     eventType,
     minuteToken,
-    meetingId: meetingId || minuteToken,
-    title,
-    startTime,
-    endTime,
-    organizer,
-    organizerSource,
+    meetingId,
   });
 
   if (taskResult.duplicate) {
@@ -316,13 +260,6 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
   if (context.taskId) {
     await updateMeetingPipelineTask(context.taskId, {
       baseRecordId: record.recordId,
-      payload: {
-        title: context.title,
-        startTime: context.startTime,
-        endTime: context.endTime,
-        organizer: context.organizer,
-        organizerSource: context.organizerSource,
-      },
     });
   }
 
@@ -331,8 +268,6 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
     minuteToken: context.minuteToken,
     recordId: record.recordId,
     attempt: context.attempt,
-    organizer: context.organizer,
-    organizerSource: context.organizerSource,
   });
 
   if (hasActiveProcessingLock(pipelineKey)) {
@@ -403,8 +338,6 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
       minuteToken: context.minuteToken,
       recordId: record.recordId,
       attempt: context.attempt,
-      organizer: context.organizer,
-      organizerSource: context.organizerSource,
       ...toErrorContext(error),
     });
     if (context.taskId) {
@@ -478,7 +411,7 @@ async function completeMeetingAnalysis(
   const reportUrl = new URL('/report', getProjectPublicUrl());
   reportUrl.searchParams.set('recordId', record.recordId);
   reportUrl.searchParams.set('integrationId', context.integration.id);
-  const reportLinkText = context.title.trim() || record.topic || '会议报告';
+  const reportLinkText = `会议报告 ${context.meetingId}`;
 
   await setMeetingProcessStatus(config, record.recordId, FEISHU_PROCESS_STATUS.completed, {
     '会议文字稿': transcript,
@@ -593,49 +526,25 @@ async function getMeetingRecordForContext(
 
 async function ensureMinuteRecord(
   config: FeishuBitableAccess,
-  context: Pick<
-    MinuteGeneratedSource,
-    'meetingId' | 'minuteToken' | 'title' | 'startTime' | 'endTime' | 'organizer' | 'recordId'
-  >,
+  context: Pick<MinuteGeneratedSource, 'meetingId' | 'minuteToken' | 'recordId'>,
   existing: FeishuMeetingRecord | null
 ): Promise<FeishuMeetingRecord> {
   if (!existing) {
     return upsertMeetingWaitingRecord(config, {
       meetingId: context.meetingId,
-      topic: context.title,
-      startTime: context.startTime,
-      endTime: context.endTime,
-      organizer: context.organizer,
     });
   }
 
   const fields: Record<string, unknown> = {
     '会议ID': context.meetingId,
-    '会议主题': context.title,
     '处理状态': FEISHU_PROCESS_STATUS.minuteGenerated,
   };
-
-  if (context.startTime) {
-    fields['开始时间'] = context.startTime;
-  }
-
-  if (context.endTime) {
-    fields['结束时间'] = context.endTime;
-  }
-
-  if (context.organizer) {
-    fields['组织者'] = context.organizer;
-  }
 
   await updateMeetingRecordFields(config, existing.recordId, fields);
 
   return {
     ...existing,
     meetingId: context.meetingId,
-    topic: context.title,
-    startTime: context.startTime ?? existing.startTime,
-    endTime: context.endTime ?? existing.endTime,
-    organizer: context.organizer ?? existing.organizer,
     processStatus: FEISHU_PROCESS_STATUS.minuteGenerated,
   };
 }
@@ -717,12 +626,8 @@ function buildRecoveryContext(
   taskId?: string
 ): MinuteGeneratedSource | null {
   const meetingId = asString(record.meetingId);
-  const title = asString(record.topic);
-  const organizer = asString(record.organizer);
-  const endTime = toTimestamp(record.endTime);
-  const startTime = toTimestamp(record.startTime);
 
-  if (!meetingId || !title) {
+  if (!meetingId) {
     return null;
   }
 
@@ -731,11 +636,6 @@ function buildRecoveryContext(
     taskId,
     meetingId,
     minuteToken: '',
-    title,
-    organizer,
-    organizerSource: organizer ? 'owner' : 'missing',
-    startTime,
-    endTime,
     attempt: 0,
     recordId: record.recordId,
   };
@@ -750,7 +650,7 @@ async function resumeMeetingRecord(
   if (!context) {
     logFeishuMonitor('warn', 'startup_recovery_record_skipped', {
       recordId: record.recordId,
-      reason: '缺少 meetingId/title',
+      reason: '缺少 meetingId',
       processStatus: record.processStatus,
     });
     return;
@@ -775,19 +675,10 @@ async function resumeMeetingRecord(
   await processMinuteGeneratedAttempt(context);
 }
 
-function buildTaskPayload(task: Awaited<ReturnType<typeof getMeetingPipelineTaskById>>) {
-  return (task?.payload || {}) as MeetingPipelineTaskPayload;
-}
-
 function buildRecoveryContextFromTask(
   task: NonNullable<Awaited<ReturnType<typeof getMeetingPipelineTaskById>>>,
   integration: FeishuIntegrationContext
 ): MinuteGeneratedSource | null {
-  const payload = buildTaskPayload(task);
-  if (!payload.title) {
-    return null;
-  }
-
   return {
     integration,
     taskId: task.id,
@@ -795,17 +686,6 @@ function buildRecoveryContextFromTask(
     meetingId: task.feishuMeetingId,
     minuteToken: task.minuteToken || '',
     attempt: task.attemptCount,
-    title: payload.title,
-    startTime: typeof payload.startTime === 'number' ? payload.startTime : undefined,
-    endTime: payload.endTime,
-    organizer: payload.organizer,
-    organizerSource:
-      payload.organizerSource === 'owner' ||
-      payload.organizerSource === 'host' ||
-      payload.organizerSource === 'creator' ||
-      payload.organizerSource === 'missing'
-        ? payload.organizerSource
-        : 'missing',
     recordId: task.baseRecordId || undefined,
   };
 }

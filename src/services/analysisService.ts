@@ -14,6 +14,7 @@ import {
   regenerateAnalysis
 } from '@/constants';
 import type { AnalysisResult, TeamBehaviors, TeamState, MeetingMetadata, LeaderAdvice, CommunicationParticipant } from '@/types';
+import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 
 /**
  * LLM 返回的原始数据结构（不包含 reportTimestamp）
@@ -220,20 +221,26 @@ function parseLLMResponse(content: string): LLMResponse {
         return JSON.parse(jsonMatch[0]);
       } catch {
         // 尝试修复 JSON
-        console.error('Failed to parse extracted JSON, attempting repair...');
+        logRuntimeMonitor('warn', 'analysis_service', 'llm_json_parse_repair_started', {
+          contentLength: content.length,
+        });
         try {
           const repaired = repairJSON(jsonMatch[0]);
           return JSON.parse(repaired);
         } catch (repairError) {
-          console.error('Failed to repair JSON:', repairError);
-          console.error('Content snippet:', content.substring(0, 500));
+          logRuntimeMonitor('error', 'analysis_service', 'llm_json_repair_failed', {
+            ...toRuntimeErrorContext(repairError),
+            contentSnippet: content.substring(0, 500),
+          });
         }
       }
     }
 
     // 如果仍然失败，抛出错误
-    console.error('Failed to parse LLM response completely');
-    console.error('Full content:', content);
+    logRuntimeMonitor('error', 'analysis_service', 'llm_response_parse_failed', {
+      contentSnippet: content.substring(0, 1000),
+      contentLength: content.length,
+    });
     throw new Error('AI返回的格式无法解析，请重新尝试');
   }
 }
@@ -293,7 +300,10 @@ export async function analyzeMeetingText(meetingText: string): Promise<AnalysisR
 
   // 验证响应的完整性
   if (!parsed || !parsed.behaviors || !parsed.teamState) {
-    console.error('Incomplete LLM response:', parsed);
+    logRuntimeMonitor('error', 'analysis_service', 'llm_response_incomplete', {
+      hasBehaviors: Boolean(parsed?.behaviors),
+      hasTeamState: Boolean(parsed?.teamState),
+    });
     throw new Error('AI返回的分析结果不完整，请重新尝试');
   }
 
@@ -330,9 +340,10 @@ export async function analyzeMeetingText(meetingText: string): Promise<AnalysisR
   // 修复4：有效发言过少时强制返回 Difficult to Judge
   const effectiveSentences = parsed.metadata?.effectiveSentences || 0;
   if (effectiveSentences > 0 && effectiveSentences < 10) {
-    console.warn(
-      `⚠️ 有效发言不足10句(${effectiveSentences}句)，强制返回 Difficult to Judge`
-    );
+    logRuntimeMonitor('warn', 'analysis_service', 'effective_sentences_too_few', {
+      effectiveSentences,
+      forcedZone: 'Difficult to Judge',
+    });
     parsed.teamState.zone = 'Difficult to Judge';
     parsed.teamState.analysis = regenerateAnalysis(
       'Difficult to Judge',
@@ -346,16 +357,19 @@ export async function analyzeMeetingText(meetingText: string): Promise<AnalysisR
     if (zoneFromBehavior && zoneFromBehavior !== 'Difficult to Judge') {
       const originalZone = parsed.teamState?.zone;
       if (zoneFromBehavior !== originalZone) {
-        console.warn(
-          `🎯 [最终] Zone 由 Behavior 决定: LLM返回="${originalZone}", ` +
-          `Behavior 分析指向="${zoneFromBehavior}" → 以 Behavior 为准`
-        );
+        logRuntimeMonitor('warn', 'analysis_service', 'zone_overridden_by_behavior', {
+          originalZone,
+          zoneFromBehavior,
+        });
       }
       parsed.teamState.zone = zoneFromBehavior;
 
       // 如果 Zone 被修正，用 LLM 重写 analysis（更自然），硬模板作为兜底
       if (zoneFromBehavior !== originalZone) {
-        console.log(`📝 Zone 修正: ${originalZone} → ${zoneFromBehavior}，尝试 LLM 重写 analysis`);
+        logRuntimeMonitor('info', 'analysis_service', 'zone_rewrite_started', {
+          originalZone,
+          zoneFromBehavior,
+        });
         try {
           const rewrittenAnalysis = await rewriteAnalysisWithLLM(
             client,
@@ -367,9 +381,16 @@ export async function analyzeMeetingText(meetingText: string): Promise<AnalysisR
             meetingText
           );
           parsed.teamState.analysis = rewrittenAnalysis;
-          console.log(`✅ LLM 重写 analysis 成功`);
+          logRuntimeMonitor('info', 'analysis_service', 'zone_rewrite_completed', {
+            originalZone,
+            zoneFromBehavior,
+          });
         } catch (err) {
-          console.warn(`⚠️ LLM 重写 analysis 失败，使用硬模板兜底:`, err);
+          logRuntimeMonitor('warn', 'analysis_service', 'zone_rewrite_failed_using_template', {
+            ...toRuntimeErrorContext(err),
+            originalZone,
+            zoneFromBehavior,
+          });
           parsed.teamState.analysis = regenerateAnalysis(
             zoneFromBehavior,
             originalZone || 'Difficult to Judge',
@@ -409,7 +430,12 @@ export async function analyzeMeetingText(meetingText: string): Promise<AnalysisR
           const warning = `⚠️ 行为级别与Zone可能不一致 [${String(key)}]: ` +
             `Zone="${zone}" 期望 [${validation.expectedLevels.join(', ')}], ` +
             `但LLM分析为 "${validation.currentLevel}"`;
-          console.warn(warning);
+          logRuntimeMonitor('warn', 'analysis_service', 'behavior_level_zone_mismatch', {
+            behavior: String(key),
+            zone,
+            expectedLevels: validation.expectedLevels,
+            currentLevel: validation.currentLevel,
+          });
           behaviorValidationReport.push(warning);
         } else {
           behaviorValidationReport.push(`✅ 行为级别一致 [${String(key)}]: ${behavior.level}`);
@@ -418,9 +444,9 @@ export async function analyzeMeetingText(meetingText: string): Promise<AnalysisR
     });
 
     // 输出一致性报告到日志
-    console.log('\n=== 一致性检查报告 ===');
-    behaviorValidationReport.forEach(line => console.log(line));
-    console.log('======================\n');
+    logRuntimeMonitor('info', 'analysis_service', 'behavior_validation_report', {
+      report: behaviorValidationReport,
+    });
   }
 
   // 添加报告时间戳

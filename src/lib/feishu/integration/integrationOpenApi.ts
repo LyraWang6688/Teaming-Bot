@@ -2,52 +2,15 @@ import {
   getLatestFeishuAuthorizationContext,
   type FeishuAuthorizationContext,
   type FeishuIntegrationContext,
-  upsertFeishuAuthorization,
 } from './integrationStore';
-import { FeishuOpenApiError, type FeishuApiResponse } from '../common/openapi';
+import { FeishuOpenApiError } from '../common/openapi';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
-import { createLarkAppClient, createLarkUserClient } from '../common/larkSdkClient';
+import { execFile } from 'child_process';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
 
-const RETRYABLE_USER_AUTH_ERROR_CODES = new Set([2094011, 2094012]);
-const RETRYABLE_USER_AUTH_MESSAGE_PATTERNS = [
-  'invalid access token',
-  'invalid user access token',
-  'access token expired',
-  'expired access token',
-  'token attached',
-];
-
-function containsRetryableUserAuthMessage(value?: string): boolean {
-  if (!value) {
-    return false;
-  }
-
-  const normalized = value.toLowerCase();
-  return RETRYABLE_USER_AUTH_MESSAGE_PATTERNS.some((pattern) =>
-    normalized.includes(pattern)
-  );
-}
-
-function shouldRetryUserRequest(error: unknown): boolean {
-  if (!(error instanceof FeishuOpenApiError)) {
-    return false;
-  }
-
-  if (error.statusCode === 401 || error.statusCode === 403) {
-    return true;
-  }
-
-  if (error.code && RETRYABLE_USER_AUTH_ERROR_CODES.has(error.code)) {
-    return true;
-  }
-
-  return (
-    containsRetryableUserAuthMessage(error.message) ||
-    containsRetryableUserAuthMessage(error.body)
-  );
-}
+const CLI_OPENAPI_TIMEOUT_MS = 60_000;
+const CLI_OPENAPI_MAX_BUFFER = 10 * 1024 * 1024;
 
 export async function getValidIntegrationUserAuthorization(
   integration: FeishuIntegrationContext
@@ -57,107 +20,202 @@ export async function getValidIntegrationUserAuthorization(
     throw new Error('当前集成尚未完成 OAuth 授权。');
   }
 
-  if (authorization.accessTokenExpiresAt.getTime() > Date.now() + 60_000) {
-    return authorization;
+  if (authorization.status !== 'authorized') {
+    throw new Error('当前集成 OAuth 授权状态不可用。');
   }
 
-  try {
-    return await refreshIntegrationUserAccessToken(integration, authorization);
-  } catch (error) {
-    logRuntimeMonitor('error', 'integration_openapi', 'integration_user_token_refresh_failed', {
-      integrationId: integration.id,
-      ...toRuntimeErrorContext(error),
-    });
-    throw error;
-  }
+  return authorization;
 }
 
-async function refreshIntegrationUserAccessToken(
-  integration: FeishuIntegrationContext,
-  authorization: FeishuAuthorizationContext
-): Promise<FeishuAuthorizationContext> {
-  if (!authorization.refreshToken) {
-    throw new Error('当前集成缺少 refresh token，无法刷新 user_access_token。');
+function splitPathAndParams(path: string): {
+  normalizedPath: string;
+  params: Record<string, string | string[]>;
+} {
+  const [rawPath, query = ''] = path.split('?');
+  const params: Record<string, string | string[]> = {};
+  const searchParams = new URLSearchParams(query);
+
+  for (const [key, value] of searchParams.entries()) {
+    const existing = params[key];
+    if (Array.isArray(existing)) {
+      existing.push(value);
+    } else if (typeof existing === 'string') {
+      params[key] = [existing, value];
+    } else {
+      params[key] = value;
+    }
   }
 
-  const client = await createLarkAppClient({
-    appId: integration.appId,
-    appSecret: integration.secrets.appSecret,
-  });
-
-  const response = await client.request({
-    url: '/authen/v2/oauth/token',
-    method: 'POST',
-    data: {
-      grant_type: 'refresh_token',
-      client_id: integration.appId,
-      client_secret: integration.secrets.appSecret,
-      refresh_token: authorization.refreshToken,
-    },
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-    },
-  });
-
-  const payload = (await response.json().catch(() => ({}))) as {
-    code: number;
-    msg?: string;
-    error?: string;
-    error_description?: string;
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
-    refresh_token_expires_in?: number;
+  return {
+    normalizedPath: rawPath.startsWith('/open-apis/')
+      ? rawPath
+      : `/open-apis/${rawPath.replace(/^\/+/, '')}`,
+    params,
   };
+}
 
-  if (!payload.access_token) {
+function buildCliArgs(
+  integration: FeishuIntegrationContext,
+  method: HttpMethod,
+  path: string,
+  data?: Record<string, unknown>,
+  options?: {
+    outputPath?: string;
+    cwd?: string;
+  }
+): string[] {
+  if (!integration.profileName) {
+    throw new Error('当前集成缺少 CLI profile，无法通过 lark-cli 调用飞书 API。');
+  }
+
+  const { normalizedPath, params } = splitPathAndParams(path);
+  const args = [
+    '--profile',
+    integration.profileName,
+    'api',
+    method,
+    normalizedPath,
+    '--as',
+    'user',
+    '--format',
+    'json',
+  ];
+
+  if (Object.keys(params).length > 0) {
+    args.push('--params', JSON.stringify(params));
+  }
+
+  if (method !== 'GET' && method !== 'DELETE' && data) {
+    args.push('--data', JSON.stringify(data));
+  }
+
+  if (options?.outputPath) {
+    args.push('--output', options.outputPath);
+  }
+
+  return args;
+}
+
+function parseCliJson<T>(stdout: string, method: HttpMethod, path: string): T {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return undefined as T;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
     throw new FeishuOpenApiError({
-      message:
-        payload.error_description ||
-        payload.msg ||
-        payload.error ||
-        '刷新 user_access_token 失败',
-      method: 'POST',
-      path: '/authen/v2/oauth/token',
-      code: payload.code,
+      message: `lark-cli 返回了非 JSON 响应：${method} ${path}`,
+      method,
+      path,
+      body: trimmed.slice(0, 1000),
     });
   }
 
-  const accessTokenExpiresAt = new Date(
-    Date.now() + Math.max(payload.expires_in || 7200, 60) * 1000
-  );
-  const refreshTokenExpiresAt = payload.refresh_token_expires_in
-    ? new Date(Date.now() + Math.max(payload.refresh_token_expires_in, 60) * 1000)
-    : null;
-  const nextRefreshToken = payload.refresh_token || authorization.refreshToken;
-
-  await upsertFeishuAuthorization({
-    integrationId: integration.id,
-    authorizedOpenId: authorization.authorizedOpenId,
-    authorizedUserName: authorization.authorizedUserName,
-    accessToken: payload.access_token,
-    refreshToken: nextRefreshToken,
-    accessTokenExpiresAt,
-    refreshTokenExpiresAt,
-    scope: authorization.scope,
-    status: 'authorized',
-  });
-
-  logRuntimeMonitor('info', 'integration_openapi', 'integration_user_token_refreshed', {
-    integrationId: integration.id,
-    accessTokenExpiresAt: accessTokenExpiresAt.toISOString(),
-    hasRefreshToken: Boolean(nextRefreshToken),
-  });
-
-  return {
-    ...authorization,
-    status: 'authorized',
-    accessToken: payload.access_token,
-    refreshToken: nextRefreshToken,
-    accessTokenExpiresAt,
-    refreshTokenExpiresAt,
-    updatedAt: new Date().toISOString(),
+  const envelope = parsed as {
+    ok?: boolean;
+    code?: number;
+    msg?: string;
+    data?: unknown;
+    error?: { message?: string; code?: number };
   };
+
+  if (envelope.ok === false || (typeof envelope.code === 'number' && envelope.code !== 0)) {
+    throw new FeishuOpenApiError({
+      message: envelope.error?.message || envelope.msg || `lark-cli API 调用失败：${method} ${path}`,
+      method,
+      path,
+      code: envelope.error?.code || envelope.code,
+      body: trimmed.slice(0, 2000),
+    });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(envelope, 'data')) {
+    return envelope.data as T;
+  }
+
+  return parsed as T;
+}
+
+async function callLarkCliOpenApi(
+  integration: FeishuIntegrationContext,
+  method: HttpMethod,
+  path: string,
+  data?: Record<string, unknown>,
+  options?: {
+    outputPath?: string;
+    cwd?: string;
+  }
+): Promise<string> {
+  const startedAt = Date.now();
+  await getValidIntegrationUserAuthorization(integration);
+  const args = buildCliArgs(integration, method, path, data, options);
+
+  logRuntimeMonitor('info', 'integration_openapi', 'integration_user_cli_request_started', {
+    integrationId: integration.id,
+    profileName: integration.profileName,
+    method,
+    path,
+    stage: 'cli_openapi_request',
+  });
+
+  return new Promise((resolve, reject) => {
+    execFile(
+      'lark-cli',
+      args,
+      {
+        timeout: CLI_OPENAPI_TIMEOUT_MS,
+        maxBuffer: CLI_OPENAPI_MAX_BUFFER,
+        cwd: options?.cwd,
+        env: {
+          ...process.env,
+          LARKSUITE_CLI_CONFIG_DIR: process.env.LARKSUITE_CLI_CONFIG_DIR || '/app/.lark-cli',
+        },
+      },
+      (error, stdout, stderr) => {
+        if (!error) {
+          logRuntimeMonitor('info', 'integration_openapi', 'integration_user_cli_request_completed', {
+            integrationId: integration.id,
+            profileName: integration.profileName,
+            method,
+            path,
+            stage: 'cli_openapi_request',
+            durationMs: Date.now() - startedAt,
+            stdoutBytes: Buffer.byteLength(stdout),
+            outputPath: options?.outputPath,
+            cwd: options?.cwd,
+          });
+          resolve(stdout);
+          return;
+        }
+
+        const message = stderr.trim() || error.message;
+        logRuntimeMonitor('error', 'integration_openapi', 'integration_user_cli_request_failed', {
+          integrationId: integration.id,
+          method,
+          path,
+          profileName: integration.profileName,
+          stage: 'cli_openapi_request',
+          durationMs: Date.now() - startedAt,
+          message,
+          outputPath: options?.outputPath,
+          cwd: options?.cwd,
+        });
+
+        reject(
+          new FeishuOpenApiError({
+            message,
+            method,
+            path,
+            statusCode: typeof error.code === 'number' ? error.code : undefined,
+            body: stderr.slice(0, 2000),
+          })
+        );
+      }
+    );
+  });
 }
 
 export async function callFeishuIntegrationUserOpenApi<T = unknown>(
@@ -166,78 +224,8 @@ export async function callFeishuIntegrationUserOpenApi<T = unknown>(
   path: string,
   data?: Record<string, unknown>
 ): Promise<T> {
-  const authorization = await getValidIntegrationUserAuthorization(integration);
-
-  try {
-    const client = await createLarkUserClient({
-      appId: integration.appId,
-      appSecret: integration.secrets.appSecret,
-      userAccessToken: authorization.accessToken,
-    });
-
-    const response = await client.request({
-      url: path,
-      method,
-      data: method === 'GET' || method === 'DELETE' ? undefined : data,
-      headers: {
-        Authorization: `Bearer ${authorization.accessToken}`,
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-    });
-
-    const result = (await response.json().catch(() => ({}))) as FeishuApiResponse<T>;
-    if (result.code !== 0) {
-      throw new FeishuOpenApiError({
-        message: result.msg || `飞书 SDK 调用失败：${method} ${path}`,
-        method,
-        path,
-        code: result.code,
-      });
-    }
-
-    return result.data as T;
-  } catch (error) {
-    if (!shouldRetryUserRequest(error)) {
-      throw error;
-    }
-
-    logRuntimeMonitor('warn', 'integration_openapi', 'integration_user_request_retry_after_auth_error', {
-      integrationId: integration.id,
-      method,
-      path,
-      ...toRuntimeErrorContext(error),
-    });
-
-    const refreshedAuthorization = await refreshIntegrationUserAccessToken(integration, authorization);
-
-    const client = await createLarkUserClient({
-      appId: integration.appId,
-      appSecret: integration.secrets.appSecret,
-      userAccessToken: refreshedAuthorization.accessToken,
-    });
-
-    const response = await client.request({
-      url: path,
-      method,
-      data: method === 'GET' || method === 'DELETE' ? undefined : data,
-      headers: {
-        Authorization: `Bearer ${refreshedAuthorization.accessToken}`,
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-    });
-
-    const result = (await response.json().catch(() => ({}))) as FeishuApiResponse<T>;
-    if (result.code !== 0) {
-      throw new FeishuOpenApiError({
-        message: result.msg || `飞书 SDK 调用失败：${method} ${path}`,
-        method,
-        path,
-        code: result.code,
-      });
-    }
-
-    return result.data as T;
-  }
+  const stdout = await callLarkCliOpenApi(integration, method, path, data);
+  return parseCliJson<T>(stdout, method, path);
 }
 
 export async function callFeishuIntegrationUserOpenApiText(
@@ -246,66 +234,77 @@ export async function callFeishuIntegrationUserOpenApiText(
   path: string,
   data?: Record<string, unknown>
 ): Promise<string> {
-  const authorization = await getValidIntegrationUserAuthorization(integration);
+  const stdout = await callLarkCliOpenApi(integration, method, path, data);
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return '';
+  }
 
   try {
-    const client = await createLarkUserClient({
-      appId: integration.appId,
-      appSecret: integration.secrets.appSecret,
-      userAccessToken: authorization.accessToken,
-    });
+    const parsed = JSON.parse(trimmed) as unknown;
+    const envelope = parsed as {
+      ok?: boolean;
+      code?: number;
+      msg?: string;
+      data?: unknown;
+      error?: { message?: string; code?: number };
+    };
 
-    const response = await client.request({
-      url: path,
-      method,
-      data: method === 'GET' || method === 'DELETE' ? undefined : data,
-      headers: {
-        Authorization: `Bearer ${authorization.accessToken}`,
-        'Content-Type': 'application/json; charset=utf-8',
-      },
-    });
-
-    return response.text();
-  } catch (error) {
-    if (!shouldRetryUserRequest(error)) {
-      throw error;
-    }
-
-    logRuntimeMonitor(
-      'warn',
-      'integration_openapi',
-      'integration_user_text_request_retry_after_auth_error',
-      {
-        integrationId: integration.id,
+    if (envelope.ok === false || (typeof envelope.code === 'number' && envelope.code !== 0)) {
+      throw new FeishuOpenApiError({
+        message: envelope.error?.message || envelope.msg || `lark-cli API 调用失败：${method} ${path}`,
         method,
         path,
-        ...toRuntimeErrorContext(error),
-      }
-    );
+        code: envelope.error?.code || envelope.code,
+        body: trimmed.slice(0, 2000),
+      });
+    }
 
-    const refreshedAuthorization = await refreshIntegrationUserAccessToken(integration, authorization);
+    const payload = Object.prototype.hasOwnProperty.call(envelope, 'data')
+      ? envelope.data
+      : parsed;
 
-    const client = await createLarkUserClient({
-      appId: integration.appId,
-      appSecret: integration.secrets.appSecret,
-      userAccessToken: refreshedAuthorization.accessToken,
-    });
-
-    const response = await client.request({
-      url: path,
+    if (typeof payload === 'string') return payload;
+    if (payload && typeof payload === 'object') {
+      const maybeContent = (payload as { content?: unknown }).content;
+      if (typeof maybeContent === 'string') return maybeContent;
+    }
+    return JSON.stringify(payload);
+  } catch (error) {
+    if (error instanceof FeishuOpenApiError) {
+      throw error;
+    }
+    logRuntimeMonitor('warn', 'integration_openapi', 'integration_user_cli_text_parse_fallback', {
+      integrationId: integration.id,
       method,
-      data: method === 'GET' || method === 'DELETE' ? undefined : data,
-      headers: {
-        Authorization: `Bearer ${refreshedAuthorization.accessToken}`,
-        'Content-Type': 'application/json; charset=utf-8',
-      },
+      path,
+      ...toRuntimeErrorContext(error),
     });
-
-    return response.text();
+    return trimmed;
   }
 }
 
+export async function downloadFeishuIntegrationUserOpenApiFile(
+  integration: FeishuIntegrationContext,
+  method: HttpMethod,
+  path: string,
+  outputPath: string,
+  cwd: string,
+  data?: Record<string, unknown>
+): Promise<void> {
+  if (!outputPath) {
+    throw new Error('下载飞书 OpenAPI 文件时缺少 outputPath。');
+  }
+
+  if (!cwd) {
+    throw new Error('下载飞书 OpenAPI 文件时缺少 cwd。');
+  }
+
+  await callLarkCliOpenApi(integration, method, path, data, { outputPath, cwd });
+}
+
 export {
-  callFeishuIntegrationUserOpenApi as callFeishuIntegrationUserSdk,
-  callFeishuIntegrationUserOpenApiText as callFeishuIntegrationUserSdkText,
+  callFeishuIntegrationUserOpenApi as callFeishuIntegrationUserCliOpenApi,
+  callFeishuIntegrationUserOpenApiText as callFeishuIntegrationUserCliOpenApiText,
+  downloadFeishuIntegrationUserOpenApiFile as downloadFeishuIntegrationUserCliOpenApiFile,
 };

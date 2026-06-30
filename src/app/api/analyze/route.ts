@@ -8,6 +8,7 @@ import mammoth from 'mammoth';
 import { analyzeMeetingText } from '@/services/analysisService';
 import { formatResult } from '@/formatters';
 import { INPUT_CONFIG } from '@/constants/inputConfig';
+import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 
 /**
  * 根据输入源配置解析输入
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(formatted);
 
   } catch (error: unknown) {
-    console.error('Analyze Error:', error);
+    logRuntimeMonitor('error', 'analyze_api', 'analyze_failed', toRuntimeErrorContext(error));
     return NextResponse.json(
       { error: error instanceof Error ? error.message : '分析失败' },
       { status: 500 }

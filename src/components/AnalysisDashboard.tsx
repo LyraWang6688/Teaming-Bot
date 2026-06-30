@@ -12,6 +12,7 @@ import {
 import { toJpeg } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { LEVEL_CONFIG, ZONE_CONFIG, BEHAVIOR_LABELS, cleanEvidence } from '@/utils';
+import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
 
 interface AnalysisDashboardProps {
   result: AnalysisResult;
@@ -179,7 +180,7 @@ const AnalysisDashboard: React.FC<AnalysisDashboardProps> = ({ result, onReset, 
         img.src = dataUrl;
       });
     } catch (error) {
-      console.error('PDF generation failed:', error);
+      logClientMonitor('error', 'analysis_dashboard', 'pdf_generation_failed', toClientErrorContext(error));
     } finally {
       setIsGeneratingPdf(false);
     }
