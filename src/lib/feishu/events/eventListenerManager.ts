@@ -1,10 +1,15 @@
 import { spawn, ChildProcess } from 'child_process';
 import { logFeishuMonitor } from '../common/monitor';
-import { getFeishuIntegrationContextById } from '../integration/integrationStore';
+import {
+  getFeishuIntegrationContextById,
+  listFeishuIntegrationContextsWithBase,
+  upsertFeishuIntegrationCheckStatus,
+} from '../integration/integrationStore';
+import { ensureFeishuCliProfile, FeishuCliProfileRestoreError } from '../integration/cliProfileManager';
 import { enqueueFeishuEvent } from '../pipeline/meetingPipelineProcessor';
 import { getDb } from '@/lib/db/client';
 import { feishuIntegrations } from '@/lib/db/schema';
-import { eq, and, isNull, not } from 'drizzle-orm';
+import { eq, and, isNull } from 'drizzle-orm';
 
 type ListenerState = 'stopped' | 'starting' | 'running' | 'error';
 
@@ -108,11 +113,37 @@ async function handleEventLine(line: string, integrationId: string) {
   }
 }
 
-function startListenerForIntegration(integrationId: string, profileName: string): Promise<ListenerInfo> {
+async function markProfileUnavailable(integrationId: string, error: unknown) {
+  if (!(error instanceof FeishuCliProfileRestoreError)) {
+    return;
+  }
+
+  await upsertFeishuIntegrationCheckStatus({
+    integrationId,
+    eventSubscriptionStatus: 'failed',
+    lastErrorType: error.code,
+    lastErrorMessage: error.message,
+    details: {
+      eventKey: EVENT_TYPE,
+      reason: 'cli_profile_unavailable',
+    },
+  });
+}
+
+async function startListenerForIntegration(integrationId: string, profileName: string): Promise<ListenerInfo> {
   const existing = listeners.get(integrationId);
   if (existing && existing.state === 'running') {
     return Promise.resolve(existing);
   }
+
+  const integration = await getFeishuIntegrationContextById(integrationId);
+  if (!integration) {
+    throw new Error('未找到飞书集成配置');
+  }
+  await ensureFeishuCliProfile(integration).catch(async (error) => {
+    await markProfileUnavailable(integrationId, error);
+    throw error;
+  });
 
   const restartCount = existing?.restartCount ?? 0;
 
@@ -236,6 +267,12 @@ function startListenerForIntegration(integrationId: string, profileName: string)
       }
 
       if (cliError && !ready) {
+        const profileNotConfigured =
+          cliError.type === 'config' && cliError.subtype === 'not_configured';
+        if (profileNotConfigured) {
+          intentionallyStopped = true;
+        }
+
         if (listener) {
           listener.state = 'error';
           listener.lastError = cliError.message || errorMessage;
@@ -251,6 +288,19 @@ function startListenerForIntegration(integrationId: string, profileName: string)
           missingScopes: cliError.missing_scopes,
           hint: cliError.hint,
         });
+
+        if (profileNotConfigured) {
+          void upsertFeishuIntegrationCheckStatus({
+            integrationId,
+            eventSubscriptionStatus: 'failed',
+            lastErrorType: 'cli_profile_not_configured',
+            lastErrorMessage: '容器内飞书 CLI profile 不存在或不可用，请重新初始化该集成。',
+            details: {
+              eventKey: EVENT_TYPE,
+              profileName,
+            },
+          });
+        }
 
         rejectBeforeReady(new Error(cliError.message || `事件监听启动失败：${EVENT_TYPE}`));
       }
@@ -395,11 +445,7 @@ export async function startListener(integrationId: string) {
 
 export async function startAllListeners() {
   try {
-    const db = getDb();
-    const integrations = await db
-      .select({ id: feishuIntegrations.id, profileName: feishuIntegrations.profileName })
-      .from(feishuIntegrations)
-      .where(and(isNull(feishuIntegrations.deletedAt), not(isNull(feishuIntegrations.profileName))));
+    const integrations = await listFeishuIntegrationContextsWithBase();
 
     logFeishuMonitor('info', 'event_listener_start_all', {
       count: integrations.length,
@@ -407,7 +453,10 @@ export async function startAllListeners() {
     });
 
     for (const integration of integrations) {
-      void startListenerForIntegration(integration.id, integration.profileName!).catch((error) => {
+      if (!integration.profileName) {
+        continue;
+      }
+      void startListenerForIntegration(integration.id, integration.profileName).catch((error) => {
         logFeishuMonitor('error', 'event_listener_start_all_ready_failed', {
           integrationId: integration.id,
           profileName: integration.profileName,

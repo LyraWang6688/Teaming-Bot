@@ -4,6 +4,7 @@ import { getUserFeishuIntegrationContext } from '@/lib/feishu/integration/integr
 import { setDeviceCode } from '@/lib/feishu/authDeviceCodeStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { getRequestTraceContext } from '@/lib/platform/requestTrace';
+import { ensureFeishuCliProfile } from '@/lib/feishu/integration/cliProfileManager';
 import { execFile } from 'child_process';
 
 const CLI_TIMEOUT = 15000;
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
     if (!integration.profileName) {
       return NextResponse.json({ success: false, error: '集成配置缺少 profileName' }, { status: 400 });
     }
+    await ensureFeishuCliProfile(integration);
 
     logRuntimeMonitor('info', 'feishu_cli_auth', 'authorize_start_started', {
       ...traceContext,

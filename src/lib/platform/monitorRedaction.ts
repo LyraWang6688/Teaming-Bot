@@ -40,6 +40,7 @@ function isSensitiveKey(key: string): boolean {
 function redactString(value: string): string {
   return value
     .replace(/(access_token|refresh_token|device_code|app_secret|client_secret)=([^&\s]+)/gi, `$1=${REDACTED}`)
+    .replace(/("(?:access_token|refresh_token|device_code|app_secret|appSecret|client_secret|clientSecret|verification_url|verificationUrl)"\s*:\s*")([^"]+)(")/gi, `$1${REDACTED}$3`)
     .replace(/(postgres(?:ql)?:\/\/)[^\s]+/gi, `$1${REDACTED}`)
     .replace(/(APP_ENCRYPTION_KEY=)[^\s]+/g, `$1${REDACTED}`);
 }

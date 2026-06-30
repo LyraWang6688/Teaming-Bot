@@ -88,11 +88,14 @@ export async function POST(request: Request) {
     const stdout = entry.stdoutBuffer;
 
     let appId: string;
+    let appSecret: string;
     try {
       const parsed = JSON.parse(stdout);
       const payload = parsed?.data && typeof parsed.data === 'object' ? parsed.data : parsed;
       appId = payload.appId;
+      appSecret = payload.appSecret || payload.app_secret;
       if (!appId) throw new Error('缺少 appId');
+      if (!appSecret) throw new Error('缺少 appSecret');
     } catch {
       logRuntimeMonitor('error', 'feishu_cli_setup', 'register_poll_parse_failed', {
         ...traceContext,
@@ -135,13 +138,11 @@ export async function POST(request: Request) {
       throw new Error('创建用户会话失败');
     }
 
-    // Save integration to DB
-    // We use a placeholder appSecret since the CLI stores it in keychain
     const integration = await createUserFeishuIntegration({
       userId: user.id,
       name: `Teaming-Bot-${sessionToken}`,
       appId,
-      appSecret: 'PLACEHOLDER', // CLI manages the real secret
+      appSecret,
       profileName,
       oauthScope: 'minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app',
     });

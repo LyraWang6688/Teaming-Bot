@@ -3,6 +3,7 @@ import {
   type FeishuAuthorizationContext,
   type FeishuIntegrationContext,
 } from './integrationStore';
+import { ensureFeishuCliProfile } from './cliProfileManager';
 import { FeishuOpenApiError } from '../common/openapi';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { execFile } from 'child_process';
@@ -151,6 +152,7 @@ async function callLarkCliOpenApi(
 ): Promise<string> {
   const startedAt = Date.now();
   await getValidIntegrationUserAuthorization(integration);
+  await ensureFeishuCliProfile(integration);
   const args = buildCliArgs(integration, method, path, data, options);
 
   logRuntimeMonitor('info', 'integration_openapi', 'integration_user_cli_request_started', {

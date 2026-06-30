@@ -5,6 +5,7 @@ import { getDeviceCode, deleteDeviceCode } from '@/lib/feishu/authDeviceCodeStor
 import { findUserByFeishuOpenId, updateUserIdentityFromFeishu } from '@/lib/auth/userStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { getRequestTraceContext } from '@/lib/platform/requestTrace';
+import { ensureFeishuCliProfile } from '@/lib/feishu/integration/cliProfileManager';
 import { execFile } from 'child_process';
 
 const POLL_TIMEOUT = 12000;
@@ -155,6 +156,7 @@ export async function POST(request: Request) {
     if (!integration || !integration.profileName) {
       return NextResponse.json({ success: false, error: '未找到集成配置' }, { status: 404 });
     }
+    await ensureFeishuCliProfile(integration);
 
     logRuntimeMonitor('info', 'feishu_cli_auth', 'authorize_poll_started', {
       ...traceContext,
