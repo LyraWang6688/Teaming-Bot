@@ -300,7 +300,7 @@ function startListenerForIntegration(integrationId: string, profileName: string)
   });
 }
 
-let restartTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const restartTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 function scheduleRestart(integrationId: string, profileName: string) {
   if (restartTimers.has(integrationId)) {

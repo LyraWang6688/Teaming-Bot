@@ -326,11 +326,13 @@ export async function analyzeMeetingText(meetingText: string): Promise<AnalysisR
     );
 
     if (scoreInferredZone !== parsed.teamState.zone) {
-      console.info(
-        `📊 [参考] 分数指向 "${scoreInferredZone}"，LLM返回 "${parsed.teamState.zone}" ` +
-        `(PS=${parsed.teamState.psychologicalSafetyScore}, WS=${parsed.teamState.workStandardScore}) ` +
-        `→ 分数仅作 analysis 书写参考，Zone 由决策树从行为判定`
-      );
+      logRuntimeMonitor('info', 'analysis_service', 'score_zone_mismatch', {
+        scoreInferredZone,
+        llmReturnedZone: parsed.teamState.zone,
+        psychologicalSafetyScore: parsed.teamState.psychologicalSafetyScore,
+        workStandardScore: parsed.teamState.workStandardScore,
+        note: '分数仅作 analysis 书写参考，Zone 由决策树从行为判定。',
+      });
     }
   }
 

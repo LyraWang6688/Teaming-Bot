@@ -290,6 +290,13 @@ function getSummaryToneClasses(tone: SummaryTone) {
   }
 }
 
+function createSetupTraceId() {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `setup-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function StepHeader(props: {
   step: number;
   status: StepDisplayStatus;
@@ -344,6 +351,7 @@ export default function FeishuConfigWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const autoCheckKeyRef = useRef<string | null>(null);
+  const setupTraceIdRef = useRef<string | null>(null);
 
   const [origin, setOrigin] = useState('');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -370,6 +378,18 @@ export default function FeishuConfigWorkspace() {
   const [authorizePollStatus, setAuthorizePollStatus] = useState<string>('idle');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const authorizePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const getSetupTraceId = useCallback(() => {
+    if (!setupTraceIdRef.current) {
+      setupTraceIdRef.current = createSetupTraceId();
+    }
+    return setupTraceIdRef.current;
+  }, []);
+
+  const setupHeaders = useCallback((extra?: HeadersInit): HeadersInit => ({
+    ...extra,
+    'x-setup-trace-id': getSetupTraceId(),
+  }), [getSetupTraceId]);
 
   const currentStep = useMemo(() => {
     if (!user) return 1;
@@ -477,6 +497,7 @@ export default function FeishuConfigWorkspace() {
     setIsCheckingEvent(true);
     fetch(`/api/feishu/integrations/${integration.id}/event-subscription/check`, {
       method: 'POST',
+      headers: setupHeaders(),
     })
       .then(r => r.json())
       .then(data => {
@@ -488,7 +509,7 @@ export default function FeishuConfigWorkspace() {
       })
       .catch(() => setEventSubscribed(false))
       .finally(() => setIsCheckingEvent(false));
-  }, [integration?.id, detail?.authorization?.status, eventSubscribed]);
+  }, [integration?.id, detail?.authorization?.status, eventSubscribed, setupHeaders]);
 
   const loadIntegrationDetail = useCallback(
     async (integrationId: string | null) => {
@@ -581,7 +602,10 @@ export default function FeishuConfigWorkspace() {
         verificationUrl: string;
         sessionToken: string;
         profileName: string;
-      }>(await fetch('/api/feishu/integrations/create-app', { method: 'POST' }));
+      }>(await fetch('/api/feishu/integrations/create-app', {
+        method: 'POST',
+        headers: setupHeaders(),
+      }));
       
       setVerificationUrl(result.verificationUrl);
       setRegistrationQrUrl(result.verificationUrl);
@@ -592,7 +616,7 @@ export default function FeishuConfigWorkspace() {
         try {
           const pollRes = await fetch('/api/feishu/integrations/register/poll', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: setupHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ sessionToken: result.sessionToken, profileName: result.profileName }),
           });
           const pollData = await pollRes.json();
@@ -609,6 +633,7 @@ export default function FeishuConfigWorkspace() {
         } catch (e) {
           logClientMonitor('warn', 'feishu_config_workspace', 'register_poll_request_failed', {
             ...toClientErrorContext(e),
+            setupTraceId: getSetupTraceId(),
             profileName: result.profileName,
           });
         }
@@ -630,7 +655,7 @@ export default function FeishuConfigWorkspace() {
       const result = await parseJsonResponse<{ verificationUrl: string; deviceCode: string }>(
         await fetch(`/api/feishu/integrations/${integration.id}/authorize/start`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: setupHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ integrationId: integration.id }),
         })
       );
@@ -646,7 +671,7 @@ export default function FeishuConfigWorkspace() {
           const pollResult = await parseJsonResponse<{ status: string; error?: string }>(
             await fetch(`/api/feishu/integrations/${integration.id}/authorize/poll`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: setupHeaders({ 'Content-Type': 'application/json' }),
               body: JSON.stringify({ integrationId: integration.id }),
             })
           );
@@ -669,6 +694,7 @@ export default function FeishuConfigWorkspace() {
         } catch (pollErr) {
           logClientMonitor('warn', 'feishu_config_workspace', 'authorize_poll_request_failed', {
             ...toClientErrorContext(pollErr),
+            setupTraceId: getSetupTraceId(),
             integrationId: integration.id,
           });
         }
@@ -676,6 +702,7 @@ export default function FeishuConfigWorkspace() {
     } catch (error) {
       logClientMonitor('error', 'feishu_config_workspace', 'authorize_start_failed', {
         ...toClientErrorContext(error),
+        setupTraceId: getSetupTraceId(),
         integrationId: integration.id,
       });
       setPageError(error instanceof Error ? error.message : '发起授权失败。');
@@ -698,7 +725,10 @@ export default function FeishuConfigWorkspace() {
       }
       try {
         await parseJsonResponse<{ allPassed: boolean }>(
-          await fetch(`/api/feishu/integrations/${integrationId}/checks`, { method: 'POST' })
+          await fetch(`/api/feishu/integrations/${integrationId}/checks`, {
+            method: 'POST',
+            headers: setupHeaders(),
+          })
         );
         await loadIntegrationDetail(integrationId);
       } catch (error) {
@@ -709,7 +739,7 @@ export default function FeishuConfigWorkspace() {
         setIsRunningChecks(false);
       }
     },
-    [loadIntegrationDetail]
+    [loadIntegrationDetail, setupHeaders]
   );
 
   useEffect(() => {
@@ -738,7 +768,10 @@ export default function FeishuConfigWorkspace() {
           allPassed: boolean;
         };
       }>(
-        await fetch(`/api/feishu/integrations/${integration.id}/base/initialize`, { method: 'POST' })
+        await fetch(`/api/feishu/integrations/${integration.id}/base/initialize`, {
+          method: 'POST',
+          headers: setupHeaders(),
+        })
       );
       await loadIntegrationDetail(integration.id);
     } catch (error) {

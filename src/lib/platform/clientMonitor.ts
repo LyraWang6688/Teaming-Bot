@@ -1,10 +1,12 @@
+import { sanitizeMonitorContext } from './monitorRedaction';
+
 type ClientMonitorLevel = 'info' | 'warn' | 'error';
 
 type ClientMonitorContext = Record<string, unknown>;
 
 function normalizeContext(context: ClientMonitorContext): ClientMonitorContext {
   return Object.fromEntries(
-    Object.entries(context).filter(([, value]) => value !== undefined)
+    Object.entries(sanitizeMonitorContext(context)).filter(([, value]) => value !== undefined)
   );
 }
 
@@ -25,6 +27,17 @@ export function logClientMonitor(
     console[level](`[Client Monitor] ${JSON.stringify(payload)}`);
   } catch {
     console[level]('[Client Monitor]', payload);
+  }
+
+  if (typeof window !== 'undefined' && (level === 'warn' || level === 'error')) {
+    void fetch('/api/client-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level, ...payload }),
+      keepalive: true,
+    }).catch(() => {
+      // Client log reporting must never affect the user workflow.
+    });
   }
 }
 

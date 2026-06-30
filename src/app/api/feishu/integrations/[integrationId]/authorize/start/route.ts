@@ -3,6 +3,7 @@ import { getCurrentUser } from '@/lib/auth/session';
 import { getUserFeishuIntegrationContext } from '@/lib/feishu/integration/integrationStore';
 import { setDeviceCode } from '@/lib/feishu/authDeviceCodeStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
+import { getRequestTraceContext } from '@/lib/platform/requestTrace';
 import { execFile } from 'child_process';
 
 const CLI_TIMEOUT = 15000;
@@ -29,6 +30,7 @@ function parseAuthStartResult(stdout: string): {
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
+  const traceContext = getRequestTraceContext(request);
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ success: false, error: '请先登录' }, { status: 401 });
@@ -52,6 +54,7 @@ export async function POST(request: Request) {
     }
 
     logRuntimeMonitor('info', 'feishu_cli_auth', 'authorize_start_started', {
+      ...traceContext,
       stage: 'authorize_start',
       integrationId,
       profileName: integration.profileName,
@@ -85,6 +88,7 @@ export async function POST(request: Request) {
           if (error) {
             const cliError = new Error(stderr || error.message);
             logRuntimeMonitor('error', 'feishu_cli_auth', 'authorize_start_cli_failed', {
+              ...traceContext,
               stage: 'authorize_start',
               integrationId,
               profileName: integration.profileName,
@@ -107,6 +111,7 @@ export async function POST(request: Request) {
 
     if (!deviceCode || !verificationUrl) {
       logRuntimeMonitor('error', 'feishu_cli_auth', 'authorize_start_parse_failed', {
+        ...traceContext,
         stage: 'authorize_start',
         integrationId,
         profileName: integration.profileName,
@@ -130,6 +135,7 @@ export async function POST(request: Request) {
     });
 
     logRuntimeMonitor('info', 'feishu_cli_auth', 'authorize_start_completed', {
+      ...traceContext,
       stage: 'authorize_start',
       integrationId,
       profileName: integration.profileName,
@@ -147,6 +153,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     logRuntimeMonitor('error', 'feishu_cli_auth', 'authorize_start_failed', {
+      ...traceContext,
       stage: 'authorize_start',
       durationMs: getElapsedMs(startedAt),
       userId: user.id,

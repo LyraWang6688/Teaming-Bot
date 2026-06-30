@@ -5,6 +5,7 @@ import { createSession } from '@/lib/auth/session';
 import { createUserFeishuIntegration } from '@/lib/feishu/integration/integrationStore';
 import { getProcess, deleteProcess } from '@/lib/feishu/cliProcessStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
+import { getRequestTraceContext } from '@/lib/platform/requestTrace';
 
 function getElapsedMs(startedAt: number) {
   return Date.now() - startedAt;
@@ -12,6 +13,7 @@ function getElapsedMs(startedAt: number) {
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
+  const traceContext = getRequestTraceContext(request);
   let sessionToken: string | undefined;
   let profileName: string | undefined;
 
@@ -30,6 +32,7 @@ export async function POST(request: Request) {
     const entry = getProcess(sessionToken);
     if (!entry) {
       logRuntimeMonitor('warn', 'feishu_cli_setup', 'register_poll_expired', {
+        ...traceContext,
         stage: 'register_poll',
         sessionToken,
         durationMs: getElapsedMs(startedAt),
@@ -44,6 +47,7 @@ export async function POST(request: Request) {
     const { child } = entry;
 
     logRuntimeMonitor('info', 'feishu_cli_setup', 'register_poll_started', {
+      ...traceContext,
       stage: 'register_poll',
       sessionToken,
       profileName,
@@ -64,6 +68,7 @@ export async function POST(request: Request) {
     if (child.exitCode !== 0) {
       // TODO: read stderr buffer for error details
       logRuntimeMonitor('error', 'feishu_cli_setup', 'register_poll_cli_failed', {
+        ...traceContext,
         stage: 'register_poll',
         sessionToken,
         profileName,
@@ -90,6 +95,7 @@ export async function POST(request: Request) {
       if (!appId) throw new Error('缺少 appId');
     } catch {
       logRuntimeMonitor('error', 'feishu_cli_setup', 'register_poll_parse_failed', {
+        ...traceContext,
         stage: 'register_poll',
         sessionToken,
         profileName,
@@ -141,6 +147,7 @@ export async function POST(request: Request) {
     });
 
     logRuntimeMonitor('info', 'feishu_cli_setup', 'register_poll_completed', {
+      ...traceContext,
       stage: 'register_poll',
       integrationId: integration.id,
       appId,
@@ -161,6 +168,7 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     logRuntimeMonitor('error', 'feishu_cli_setup', 'register_poll_failed', {
+      ...traceContext,
       stage: 'register_poll',
       sessionToken,
       profileName,

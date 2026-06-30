@@ -1,10 +1,12 @@
+import { sanitizeMonitorContext } from '@/lib/platform/monitorRedaction';
+
 type MonitorLevel = 'info' | 'warn' | 'error';
 
 type MonitorContext = Record<string, unknown>;
 
 function normalizeContext(context: MonitorContext): MonitorContext {
   return Object.fromEntries(
-    Object.entries(context).filter(([, value]) => value !== undefined)
+    Object.entries(sanitizeMonitorContext(context)).filter(([, value]) => value !== undefined)
   );
 }
 

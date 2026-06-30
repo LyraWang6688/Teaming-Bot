@@ -1,10 +1,12 @@
+import { sanitizeMonitorContext } from './monitorRedaction';
+
 type AuthMonitorLevel = 'info' | 'warn' | 'error';
 
 type AuthMonitorContext = Record<string, unknown>;
 
 function normalizeContext(context: AuthMonitorContext): AuthMonitorContext {
   return Object.fromEntries(
-    Object.entries(context).filter(([, value]) => value !== undefined)
+    Object.entries(sanitizeMonitorContext(context)).filter(([, value]) => value !== undefined)
   );
 }
 

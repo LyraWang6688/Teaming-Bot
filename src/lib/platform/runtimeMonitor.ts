@@ -1,10 +1,12 @@
+import { sanitizeMonitorContext } from './monitorRedaction';
+
 type RuntimeMonitorLevel = 'info' | 'warn' | 'error';
 
 type RuntimeMonitorContext = Record<string, unknown>;
 
 function normalizeContext(context: RuntimeMonitorContext): RuntimeMonitorContext {
   return Object.fromEntries(
-    Object.entries(context).filter(([, value]) => value !== undefined)
+    Object.entries(sanitizeMonitorContext(context)).filter(([, value]) => value !== undefined)
   );
 }
 

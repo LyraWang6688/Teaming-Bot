@@ -4,6 +4,7 @@ import { getUserFeishuIntegrationContext, upsertFeishuAuthorization } from '@/li
 import { getDeviceCode, deleteDeviceCode } from '@/lib/feishu/authDeviceCodeStore';
 import { findUserByFeishuOpenId, updateUserIdentityFromFeishu } from '@/lib/auth/userStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
+import { getRequestTraceContext } from '@/lib/platform/requestTrace';
 import { execFile } from 'child_process';
 
 const POLL_TIMEOUT = 12000;
@@ -128,6 +129,7 @@ function parseAuthResult(stdout: string): {
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
+  const traceContext = getRequestTraceContext(request);
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ success: false, error: '请先登录' }, { status: 401 });
@@ -155,6 +157,7 @@ export async function POST(request: Request) {
     }
 
     logRuntimeMonitor('info', 'feishu_cli_auth', 'authorize_poll_started', {
+      ...traceContext,
       stage: 'authorize_poll',
       integrationId,
       profileName: integration.profileName,
@@ -225,6 +228,7 @@ export async function POST(request: Request) {
       if (result.status !== 'completed') {
         const logLevel = result.status === 'pending' ? 'info' : result.status === 'error' ? 'error' : 'warn';
         logRuntimeMonitor(logLevel, 'feishu_cli_auth', `authorize_poll_${result.status}`, {
+          ...traceContext,
           stage: 'authorize_poll',
           integrationId,
           profileName: integration.profileName,
@@ -258,6 +262,7 @@ export async function POST(request: Request) {
         const existingBoundUser = await findUserByFeishuOpenId(openId);
         if (existingBoundUser && existingBoundUser.id !== user.id) {
           logRuntimeMonitor('warn', 'feishu_cli_auth', 'authorize_poll_user_conflict', {
+            ...traceContext,
             stage: 'authorize_poll',
             integrationId,
             profileName: integration.profileName,
@@ -289,6 +294,7 @@ export async function POST(request: Request) {
       deleteDeviceCode(integrationId);
 
       logRuntimeMonitor('info', 'feishu_cli_auth', 'authorize_poll_completed', {
+        ...traceContext,
         stage: 'authorize_poll',
         integrationId,
         profileName: integration.profileName,
@@ -313,6 +319,7 @@ export async function POST(request: Request) {
     }
   } catch (error) {
     logRuntimeMonitor('error', 'feishu_cli_auth', 'authorize_poll_failed', {
+      ...traceContext,
       stage: 'authorize_poll',
       durationMs: getElapsedMs(startedAt),
       userId: user.id,

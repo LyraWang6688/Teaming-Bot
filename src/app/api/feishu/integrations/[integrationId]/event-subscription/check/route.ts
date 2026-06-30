@@ -5,8 +5,9 @@ import {
   getUserFeishuIntegrationContext,
   upsertFeishuIntegrationCheckStatus,
 } from '@/lib/feishu/integration/integrationStore';
-import { getListenerStatus, startListener } from '@/lib/feishu/events/eventListenerManager';
+import { startListener } from '@/lib/feishu/events/eventListenerManager';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
+import { getRequestTraceContext } from '@/lib/platform/requestTrace';
 
 type RouteContext = { params: Promise<{ integrationId: string }> };
 
@@ -14,8 +15,9 @@ function getElapsedMs(startedAt: number) {
   return Date.now() - startedAt;
 }
 
-export async function POST(_request: NextRequest, context: RouteContext) {
+export async function POST(request: NextRequest, context: RouteContext) {
   const startedAt = Date.now();
+  const traceContext = getRequestTraceContext(request);
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ success: false, error: '请先登录' }, { status: 401 });
@@ -29,6 +31,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     }
 
     logRuntimeMonitor('info', 'feishu_event_subscription', 'event_subscription_check_started', {
+      ...traceContext,
       stage: 'event_subscription_check',
       integrationId,
       profileName: integration.profileName,
@@ -45,6 +48,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       });
 
       logRuntimeMonitor('warn', 'feishu_event_subscription', 'event_subscription_check_missing_profile', {
+        ...traceContext,
         stage: 'event_subscription_check',
         integrationId,
         userId: user.id,
@@ -72,6 +76,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       });
 
       logRuntimeMonitor('warn', 'feishu_event_subscription', 'event_subscription_check_authorization_required', {
+        ...traceContext,
         stage: 'event_subscription_check',
         integrationId,
         profileName: integration.profileName,
@@ -105,6 +110,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     });
 
     logRuntimeMonitor('info', 'feishu_event_subscription', 'event_subscription_check_completed', {
+      ...traceContext,
       stage: 'event_subscription_check',
       integrationId,
       profileName: integration.profileName,
@@ -124,6 +130,7 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     });
   } catch (error) {
     logRuntimeMonitor('error', 'feishu_event_subscription', 'event_subscription_check_failed', {
+      ...traceContext,
       stage: 'event_subscription_check',
       userId: user.id,
       durationMs: getElapsedMs(startedAt),

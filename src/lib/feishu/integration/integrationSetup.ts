@@ -2,6 +2,7 @@ import { FEISHU_STATUS_OPTIONS } from '../pipeline/status';
 import {
   callFeishuIntegrationUserOpenApi,
 } from './integrationOpenApi';
+import { logRuntimeMonitor } from '@/lib/platform/runtimeMonitor';
 import {
   getUserFeishuIntegrationContext,
   getLatestFeishuAuthorizationContext,
@@ -196,12 +197,25 @@ async function ensureMeetingTableFields(
       continue;
     }
 
-    await callFeishuIntegrationUserOpenApi<BitableCreateFieldResult>(
-      integration,
-      'POST',
-      `/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
-      toBitableFieldPayload(field)
-    );
+    try {
+      await callFeishuIntegrationUserOpenApi<BitableCreateFieldResult>(
+        integration,
+        'POST',
+        `/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
+        toBitableFieldPayload(field)
+      );
+    } catch (error) {
+      logRuntimeMonitor('error', 'integration_base', 'base_field_create_failed', {
+        userId,
+        integrationId,
+        appToken,
+        tableId,
+        fieldName: field.fieldName,
+        fieldType: field.type,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
     createdFields.push(field.fieldName);
   }
 
@@ -421,6 +435,7 @@ export async function runFeishuIntegrationChecks(options: {
 export async function initializeFeishuIntegrationBase(options: {
   userId: string;
   integrationId: string;
+  setupTraceId?: string;
 }): Promise<{
   appToken: string;
   tableId: string;
@@ -444,8 +459,17 @@ export async function initializeFeishuIntegrationBase(options: {
   let createdApp = false;
   let createdTable = false;
   let createdFieldsFromNewTable: string[] = [];
+  const traceContext = {
+    setupTraceId: options.setupTraceId,
+    userId: options.userId,
+    integrationId: options.integrationId,
+  };
 
   if (!appToken) {
+    logRuntimeMonitor('info', 'integration_base', 'base_app_create_started', {
+      ...traceContext,
+      integrationName: integration.name,
+    });
     const createAppResult = await callFeishuIntegrationUserOpenApi<BitableCreateAppResult>(
       integration,
       'POST',
@@ -457,6 +481,11 @@ export async function initializeFeishuIntegrationBase(options: {
 
     appToken = createAppResult.app?.app_token || null;
     createdApp = true;
+    logRuntimeMonitor('info', 'integration_base', 'base_app_create_completed', {
+      ...traceContext,
+      appToken,
+      createdApp,
+    });
   }
 
   if (!appToken) {
@@ -465,6 +494,12 @@ export async function initializeFeishuIntegrationBase(options: {
 
   if (!tableId) {
     const initialFields = REQUIRED_MEETING_FIELDS.map(toBitableFieldPayload);
+    logRuntimeMonitor('info', 'integration_base', 'base_table_create_started', {
+      ...traceContext,
+      appToken,
+      tableName: '会议信息',
+      initialFieldCount: initialFields.length,
+    });
     const createTableResult = await callFeishuIntegrationUserOpenApi<BitableCreateTableResult>(
       integration,
       'POST',
@@ -479,18 +514,39 @@ export async function initializeFeishuIntegrationBase(options: {
     tableId = createTableResult.table_id || null;
     createdTable = true;
     createdFieldsFromNewTable = REQUIRED_MEETING_FIELDS.map((field) => field.fieldName);
+    logRuntimeMonitor('info', 'integration_base', 'base_table_create_completed', {
+      ...traceContext,
+      appToken,
+      tableId,
+      createdTable,
+      initialFieldCount: createdFieldsFromNewTable.length,
+    });
   }
 
   if (!tableId) {
     throw new Error('Base 初始化失败：未能获取 table_id。');
   }
 
+  logRuntimeMonitor('info', 'integration_base', 'base_field_ensure_started', {
+    ...traceContext,
+    appToken,
+    tableId,
+    requiredFieldCount: REQUIRED_MEETING_FIELDS.length,
+  });
   const ensuredFields = await ensureMeetingTableFields(
     options.userId,
     options.integrationId,
     appToken,
     tableId
   );
+  logRuntimeMonitor('info', 'integration_base', 'base_field_ensure_completed', {
+    ...traceContext,
+    appToken,
+    tableId,
+    fieldCount: ensuredFields.fieldCount,
+    createdFields: [...createdFieldsFromNewTable, ...ensuredFields.createdFields],
+    existingFields: ensuredFields.existingFields,
+  });
 
   await updateUserFeishuIntegration(options.userId, integration.id, {
     baseAppToken: appToken,

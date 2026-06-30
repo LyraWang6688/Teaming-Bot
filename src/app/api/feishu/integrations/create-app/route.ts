@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server';
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { storeProcess, getProcess } from '@/lib/feishu/cliProcessStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
+import { getRequestTraceContext } from '@/lib/platform/requestTrace';
 
 function getElapsedMs(startedAt: number) {
   return Date.now() - startedAt;
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   const startedAt = Date.now();
+  const traceContext = getRequestTraceContext(request);
   let sessionToken = '';
   let profileName = '';
 
@@ -18,6 +20,7 @@ export async function POST() {
     profileName = `teaming-${sessionToken}`;
 
     logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_started', {
+      ...traceContext,
       stage: 'create_app',
       sessionToken,
       profileName,
@@ -55,6 +58,7 @@ export async function POST() {
         entry.stdoutBuffer += data.toString();
       }
       logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_stdout_received', {
+        ...traceContext,
         stage: 'create_app',
         sessionToken,
         profileName,
@@ -69,6 +73,7 @@ export async function POST() {
         entry.stderrBuffer += stderrText;
       }
       logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_stderr_received', {
+        ...traceContext,
         stage: 'create_app',
         sessionToken,
         profileName,
@@ -86,6 +91,7 @@ export async function POST() {
 
     child.on('error', (err) => {
       logRuntimeMonitor('error', 'feishu_cli_setup', 'create_app_process_error', {
+        ...traceContext,
         stage: 'create_app',
         sessionToken,
         profileName,
@@ -111,6 +117,7 @@ export async function POST() {
     if (!url) {
       child.kill();
       logRuntimeMonitor('error', 'feishu_cli_setup', 'create_app_verification_url_missing', {
+        ...traceContext,
         stage: 'create_app',
         sessionToken,
         profileName,
@@ -123,6 +130,7 @@ export async function POST() {
     }
 
     logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_verification_url_ready', {
+      ...traceContext,
       stage: 'create_app',
       sessionToken,
       profileName,
@@ -139,6 +147,7 @@ export async function POST() {
     });
   } catch (error) {
     logRuntimeMonitor('error', 'feishu_cli_setup', 'create_app_failed', {
+      ...traceContext,
       stage: 'create_app',
       sessionToken,
       profileName,
