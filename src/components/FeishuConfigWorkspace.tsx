@@ -201,6 +201,7 @@ function buildSetupSummary(options: {
   authorization: AuthorizationView | null | undefined;
   checks: CheckStatusView | null | undefined;
   isRunningChecks: boolean;
+  setupComplete: boolean;
 }): SetupSummary {
   if (!options.user) {
     return {
@@ -234,7 +235,7 @@ function buildSetupSummary(options: {
     };
   }
 
-  if (options.checks?.allPassed) {
+  if (options.setupComplete) {
     return {
       tone: 'emerald',
       title: '配置完成，可以开始使用',
@@ -255,6 +256,28 @@ function buildSetupSummary(options: {
     title: '等待系统完成校验',
     description: '配置步骤已完成，系统正在确认各项状态。',
   };
+}
+
+function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
+  return Boolean(
+    checks &&
+    checks.appCredentialStatus === 'success' &&
+    checks.oauthStatus === 'authorized' &&
+    checks.baseStatus === 'success' &&
+    checks.permissionStatus === 'success'
+  );
+}
+
+function getCheckStatusTone(passed: boolean) {
+  return passed ? 'text-emerald-600' : 'text-amber-600';
+}
+
+function getCheckStatusDot(passed: boolean) {
+  return passed ? 'bg-emerald-500' : 'bg-amber-500';
+}
+
+function getCheckStatusLabel(passed: boolean) {
+  return passed ? '已通过' : '待确认';
 }
 
 function getSummaryToneClasses(tone: SummaryTone) {
@@ -420,7 +443,7 @@ export default function FeishuConfigWorkspace() {
         anchor: 'step-subscribe',
         title: '事件校验',
         description: '校验事件订阅状态',
-        status: 'pending' as const,
+        status: eventSubscribed === true ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending',
       },
       {
         step: 4,
@@ -431,7 +454,7 @@ export default function FeishuConfigWorkspace() {
       },
     ];
     return steps;
-  }, [user, integration, detail?.authorization?.status]);
+  }, [integration, detail?.authorization?.status, eventSubscribed]);
 
   const effectiveOauthScopes = useMemo(() => {
     const scope = detail?.authorization?.scope || integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
@@ -440,6 +463,21 @@ export default function FeishuConfigWorkspace() {
     return allScopes.filter(s => requestedScopes.has(s));
   }, [detail?.authorization?.scope, integration?.oauthScope]);
 
+  const displayedChecksPassed = useMemo(
+    () => areDisplayedChecksPassed(detail?.checks),
+    [detail?.checks]
+  );
+
+  const setupComplete = useMemo(
+    () => Boolean(
+      integration?.initializedAt &&
+      detail?.authorization?.status === 'authorized' &&
+      eventSubscribed === true &&
+      displayedChecksPassed
+    ),
+    [detail?.authorization?.status, displayedChecksPassed, eventSubscribed, integration?.initializedAt]
+  );
+
   const setupSummary = useMemo(() => {
     return buildSetupSummary({
       user,
@@ -447,8 +485,9 @@ export default function FeishuConfigWorkspace() {
       authorization: detail?.authorization,
       checks: detail?.checks,
       isRunningChecks,
+      setupComplete,
     });
-  }, [user, integration, detail?.authorization, detail?.checks, isRunningChecks]);
+  }, [user, integration, detail?.authorization, detail?.checks, isRunningChecks, setupComplete]);
 
   const summaryToneClasses = useMemo(() => getSummaryToneClasses(setupSummary.tone), [setupSummary.tone]);
 
@@ -802,7 +841,7 @@ export default function FeishuConfigWorkspace() {
                   <ArrowRight className="h-3.5 w-3.5" />
                   <span>第 {currentStep} 步 / 共 4 步</span>
                 </div>
-                {detail?.checks?.allPassed ? (
+                {setupComplete ? (
                   <div className="rounded-lg border border-emerald-200 bg-white/70 p-3 text-sm text-emerald-800">
                     系统内部校验已通过，你可以开始使用系统了。
                   </div>
@@ -1239,22 +1278,22 @@ export default function FeishuConfigWorkspace() {
                                 <Check className="h-4 w-4 text-emerald-600" />
                                 <span className="font-medium text-emerald-900">多维表格已初始化</span>
                               </div>
-                              <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div className="space-y-3 text-sm">
+                                <div>
+                                  <div className="text-xs text-emerald-600 mb-1">初始化时间</div>
+                                  <div className="font-medium text-emerald-900">{formatDateTime(integration.initializedAt)}</div>
+                                </div>
                                 <div>
                                   <div className="text-xs text-emerald-600 mb-1">表格链接</div>
                                   <a
                                     href={integration.links.baseUrl ?? undefined}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="font-medium text-emerald-900 hover:underline flex items-center gap-1"
+                                    className="flex items-start gap-1 break-all font-medium text-emerald-900 hover:underline"
                                   >
-                                    {integration.links.baseUrl || '点击查看'}
-                                    <ExternalLink className="h-3 w-3" />
+                                    <span>{integration.links.baseUrl || '点击查看'}</span>
+                                    <ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
                                   </a>
-                                </div>
-                                <div>
-                                  <div className="text-xs text-emerald-600 mb-1">初始化时间</div>
-                                  <div className="font-medium text-emerald-900">{formatDateTime(integration.initializedAt)}</div>
                                 </div>
                               </div>
                             </div>
@@ -1265,30 +1304,34 @@ export default function FeishuConfigWorkspace() {
                                   <div className="text-sm font-medium text-slate-900">系统校验状态</div>
                                   <Badge
                                     variant="outline"
-                                    className={detail.checks.allPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
+                                    className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
                                   >
-                                    {detail.checks.allPassed ? '全部通过' : '部分失败'}
+                                    {displayedChecksPassed ? '全部通过' : '待确认'}
                                   </Badge>
                                 </div>
                                 <div className="grid grid-cols-2 gap-3 text-sm">
-                                  <div className={`flex items-center gap-2 ${detail.checks.appCredentialStatus === 'success' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                    <div className={`w-2 h-2 rounded-full ${detail.checks.appCredentialStatus === 'success' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                                    应用凭证
+                                  <div className={`flex items-center gap-2 ${getCheckStatusTone(detail.checks.appCredentialStatus === 'success')}`}>
+                                    <div className={`w-2 h-2 rounded-full ${getCheckStatusDot(detail.checks.appCredentialStatus === 'success')}`} />
+                                    <span>应用凭证</span>
+                                    <span className="text-xs text-slate-500">{getCheckStatusLabel(detail.checks.appCredentialStatus === 'success')}</span>
                                   </div>
-                                  <div className={`flex items-center gap-2 ${detail.checks.oauthStatus === 'authorized' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                    <div className={`w-2 h-2 rounded-full ${detail.checks.oauthStatus === 'authorized' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                                    用户授权
+                                  <div className={`flex items-center gap-2 ${getCheckStatusTone(detail.checks.oauthStatus === 'authorized')}`}>
+                                    <div className={`w-2 h-2 rounded-full ${getCheckStatusDot(detail.checks.oauthStatus === 'authorized')}`} />
+                                    <span>用户授权</span>
+                                    <span className="text-xs text-slate-500">{getCheckStatusLabel(detail.checks.oauthStatus === 'authorized')}</span>
                                   </div>
-                                  <div className={`flex items-center gap-2 ${detail.checks.baseStatus === 'success' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                    <div className={`w-2 h-2 rounded-full ${detail.checks.baseStatus === 'success' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                                    多维表格
+                                  <div className={`flex items-center gap-2 ${getCheckStatusTone(detail.checks.baseStatus === 'success')}`}>
+                                    <div className={`w-2 h-2 rounded-full ${getCheckStatusDot(detail.checks.baseStatus === 'success')}`} />
+                                    <span>多维表格</span>
+                                    <span className="text-xs text-slate-500">{getCheckStatusLabel(detail.checks.baseStatus === 'success')}</span>
                                   </div>
-                                  <div className={`flex items-center gap-2 ${detail.checks.permissionStatus === 'success' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                                    <div className={`w-2 h-2 rounded-full ${detail.checks.permissionStatus === 'success' ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-                                    权限检查
+                                  <div className={`flex items-center gap-2 ${getCheckStatusTone(detail.checks.permissionStatus === 'success')}`}>
+                                    <div className={`w-2 h-2 rounded-full ${getCheckStatusDot(detail.checks.permissionStatus === 'success')}`} />
+                                    <span>权限检查</span>
+                                    <span className="text-xs text-slate-500">{getCheckStatusLabel(detail.checks.permissionStatus === 'success')}</span>
                                   </div>
                                 </div>
-                                {!detail.checks.allPassed && detail.checks.lastErrorMessage ? (
+                                {!displayedChecksPassed && detail.checks.lastErrorMessage ? (
                                   <div className="mt-3 text-xs text-red-600">
                                     错误信息：{detail.checks.lastErrorMessage}
                                   </div>
