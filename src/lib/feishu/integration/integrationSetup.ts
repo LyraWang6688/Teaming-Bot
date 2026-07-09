@@ -10,6 +10,11 @@ import {
   updateUserFeishuIntegration,
   writeAuditLog,
 } from './integrationStore';
+import { getListenerStatus, startListener } from '../events/eventListenerManager';
+import {
+  getEnabledOrgTargetContextById,
+  updateOrgTargetFieldCheckStatus,
+} from '../projects/projectConfigStore';
 
 type CheckStatus = 'success' | 'failed' | 'pending' | 'authorized';
 
@@ -76,7 +81,7 @@ type CheckFailure = {
   message: string;
 };
 
-const REQUIRED_MEETING_FIELDS: RequiredFieldDefinition[] = [
+export const REQUIRED_MEETING_FIELDS: RequiredFieldDefinition[] = [
   { fieldName: '会议ID', type: 1, uiType: 'Text' },
   {
     fieldName: '处理状态',
@@ -96,7 +101,7 @@ const REQUIRED_MEETING_FIELDS: RequiredFieldDefinition[] = [
   { fieldName: '错误信息', type: 1, uiType: 'Text' },
 ];
 
-function toBitableFieldPayload(field: RequiredFieldDefinition) {
+export function toBitableFieldPayload(field: RequiredFieldDefinition) {
   return {
     field_name: field.fieldName,
     type: field.type,
@@ -171,6 +176,43 @@ async function listAllBitableFields(
   } while (pageToken);
 
   return fields;
+}
+
+function validateMeetingTableFields(fields: NonNullable<BitableFieldListResult['items']>) {
+  const fieldByName = new Map(fields.map((field) => [field.field_name, field]));
+  const missingFields: string[] = [];
+  const typeMismatches: Array<{
+    fieldName: string;
+    expectedType: number;
+    expectedUiType?: string;
+    actualType: number;
+  }> = [];
+
+  for (const required of REQUIRED_MEETING_FIELDS) {
+    const actual = fieldByName.get(required.fieldName);
+    if (!actual) {
+      missingFields.push(required.fieldName);
+      continue;
+    }
+
+    if (actual.type !== required.type) {
+      typeMismatches.push({
+        fieldName: required.fieldName,
+        expectedType: required.type,
+        expectedUiType: required.uiType,
+        actualType: actual.type,
+      });
+    }
+  }
+
+  return {
+    passed: missingFields.length === 0 && typeMismatches.length === 0,
+    requiredFields: REQUIRED_MEETING_FIELDS.map((field) => field.fieldName),
+    existingFields: fields.map((field) => field.field_name),
+    missingFields,
+    typeMismatches,
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 async function ensureMeetingTableFields(
@@ -275,56 +317,279 @@ export async function runFeishuIntegrationChecks(options: {
     };
   }
 
-  if (integration.secrets.baseAppToken && integration.meetingTableId) {
+  if (!integration.profileName) {
+    const failure = {
+      type: 'missing_profile',
+      message: '当前集成缺少 CLI profile，无法启动事件监听。',
+    };
+    statuses.eventSubscriptionStatus = 'failed';
+    failures.push(failure);
+    details.eventSubscription = {
+      ok: false,
+      eventKey: 'minutes.minute.generated_v1',
+      message: failure.message,
+    };
+  } else if (statuses.oauthStatus !== 'authorized') {
+    statuses.eventSubscriptionStatus = 'pending';
+    details.eventSubscription = {
+      ok: false,
+      pending: true,
+      eventKey: 'minutes.minute.generated_v1',
+      profileName: integration.profileName,
+      message: '请先完成飞书用户授权，系统才能启动事件监听。',
+    };
+  } else {
     try {
+      const existingListener = getListenerStatus(integration.id);
+      const listener =
+        existingListener?.state === 'running' && existingListener.readyAt
+          ? existingListener
+          : await startListener(integration.id);
+
+      statuses.eventSubscriptionStatus = 'success';
+      details.eventSubscription = {
+        ok: true,
+        eventKey: 'minutes.minute.generated_v1',
+        listenerStatus: listener.state,
+        profileName: integration.profileName,
+        readyAt: listener.readyAt?.toISOString() || null,
+        message: '事件监听已启动并可消费。',
+      };
+    } catch (error) {
+      const failure = pickFailure(error, 'EventListenerCheckFailed');
+      statuses.eventSubscriptionStatus = 'failed';
+      failures.push(failure);
+      details.eventSubscription = {
+        ok: false,
+        eventKey: 'minutes.minute.generated_v1',
+        profileName: integration.profileName,
+        message: failure.message,
+      };
+    }
+  }
+
+  const selectedOrgTarget = integration.selectedOrgTargetId
+    ? await getEnabledOrgTargetContextById(integration.selectedOrgTargetId)
+    : null;
+
+  if (!integration.selectedOrgTargetId) {
+    details.organization = {
+      ok: false,
+      pending: true,
+      message: '请先选择所在组织。',
+    };
+    details.base = {
+      ok: false,
+      pending: true,
+      message: '尚未选择组织，无法确定目标多维表格。',
+    };
+  } else if (!selectedOrgTarget) {
+    const failure = {
+      type: 'org_target_unavailable',
+      message: '所选组织对应的多维表格配置不可用，请联系管理员确认当前项目配置。',
+    };
+    statuses.baseStatus = 'failed';
+    failures.push(failure);
+    details.organization = {
+      ok: false,
+      selectedOrgTargetId: integration.selectedOrgTargetId,
+      message: failure.message,
+    };
+    details.base = {
+      ok: false,
+      message: failure.message,
+    };
+  } else if (statuses.oauthStatus !== 'authorized') {
+    details.organization = {
+      ok: true,
+      projectId: selectedOrgTarget.projectId,
+      orgTargetId: selectedOrgTarget.id,
+      orgKey: selectedOrgTarget.orgKey,
+      orgName: selectedOrgTarget.orgName,
+    };
+    details.base = {
+      ok: false,
+      pending: true,
+      appToken: selectedOrgTarget.baseAppToken,
+      tableId: selectedOrgTarget.tableId,
+      baseUrl: selectedOrgTarget.baseUrl,
+      message: '请先完成飞书用户授权，系统才能检查目标多维表格访问权限。',
+    };
+  } else {
+    try {
+      logRuntimeMonitor('info', 'integration_checks', 'org_target_access_check_started', {
+        userId: options.userId,
+        integrationId: integration.id,
+        projectId: selectedOrgTarget.projectId,
+        orgTargetId: selectedOrgTarget.id,
+        orgKey: selectedOrgTarget.orgKey,
+        orgName: selectedOrgTarget.orgName,
+        tableId: selectedOrgTarget.tableId,
+        fieldCheckStatus: selectedOrgTarget.fieldCheckStatus,
+      });
+
       const appInfo = await callFeishuIntegrationUserOpenApi<BitableAppInfoResult>(
         integration,
         'GET',
-        `/bitable/v1/apps/${integration.secrets.baseAppToken}`
+        `/bitable/v1/apps/${selectedOrgTarget.baseAppToken}`
       );
       const fields = await listAllBitableFields(
         integration,
-        integration.secrets.baseAppToken,
-        integration.meetingTableId
+        selectedOrgTarget.baseAppToken,
+        selectedOrgTarget.tableId
       );
+      const fieldCheckDetails =
+        selectedOrgTarget.fieldCheckStatus === 'success'
+          ? selectedOrgTarget.fieldCheckDetails
+          : validateMeetingTableFields(fields);
+
+      if (selectedOrgTarget.fieldCheckStatus === 'success') {
+        logRuntimeMonitor('info', 'integration_checks', 'org_target_field_check_reused', {
+          userId: options.userId,
+          integrationId: integration.id,
+          projectId: selectedOrgTarget.projectId,
+          orgTargetId: selectedOrgTarget.id,
+          orgKey: selectedOrgTarget.orgKey,
+          orgName: selectedOrgTarget.orgName,
+          tableId: selectedOrgTarget.tableId,
+          fieldCount: fields.length,
+        });
+      } else {
+        logRuntimeMonitor('info', 'integration_checks', 'org_target_field_check_started', {
+          userId: options.userId,
+          integrationId: integration.id,
+          projectId: selectedOrgTarget.projectId,
+          orgTargetId: selectedOrgTarget.id,
+          orgKey: selectedOrgTarget.orgKey,
+          orgName: selectedOrgTarget.orgName,
+          tableId: selectedOrgTarget.tableId,
+          fieldCount: fields.length,
+        });
+      }
+
+      if (
+        selectedOrgTarget.fieldCheckStatus !== 'success' &&
+        fieldCheckDetails &&
+        typeof fieldCheckDetails === 'object' &&
+        'passed' in fieldCheckDetails &&
+        fieldCheckDetails.passed !== true
+      ) {
+        logRuntimeMonitor('warn', 'integration_checks', 'org_target_field_check_failed', {
+          userId: options.userId,
+          integrationId: integration.id,
+          projectId: selectedOrgTarget.projectId,
+          orgTargetId: selectedOrgTarget.id,
+          orgKey: selectedOrgTarget.orgKey,
+          orgName: selectedOrgTarget.orgName,
+          tableId: selectedOrgTarget.tableId,
+          fieldCheckDetails,
+        });
+
+        await updateOrgTargetFieldCheckStatus({
+          orgTargetId: selectedOrgTarget.id,
+          status: 'failed',
+          details: fieldCheckDetails as Record<string, unknown>,
+        });
+
+        const missingFields = Array.isArray(fieldCheckDetails.missingFields)
+          ? fieldCheckDetails.missingFields.join('、')
+          : '';
+        const typeMismatches = Array.isArray(fieldCheckDetails.typeMismatches)
+          ? fieldCheckDetails.typeMismatches
+              .map((item) =>
+                item && typeof item === 'object' && 'fieldName' in item
+                  ? String(item.fieldName)
+                  : ''
+              )
+              .filter(Boolean)
+              .join('、')
+          : '';
+
+        throw new Error(
+          [
+            missingFields ? `目标表格缺少字段：${missingFields}` : '',
+            typeMismatches ? `目标表格字段类型不匹配：${typeMismatches}` : '',
+          ]
+            .filter(Boolean)
+            .join('；') || '目标表格模板字段校验未通过。'
+        );
+      }
+
+      if (selectedOrgTarget.fieldCheckStatus !== 'success') {
+        await updateOrgTargetFieldCheckStatus({
+          orgTargetId: selectedOrgTarget.id,
+          status: 'success',
+          details: fieldCheckDetails as Record<string, unknown>,
+        });
+
+        logRuntimeMonitor('info', 'integration_checks', 'org_target_field_check_succeeded', {
+          userId: options.userId,
+          integrationId: integration.id,
+          projectId: selectedOrgTarget.projectId,
+          orgTargetId: selectedOrgTarget.id,
+          orgKey: selectedOrgTarget.orgKey,
+          orgName: selectedOrgTarget.orgName,
+          tableId: selectedOrgTarget.tableId,
+          fieldCheckDetails,
+        });
+      }
 
       statuses.baseStatus = 'success';
+      details.organization = {
+        ok: true,
+        projectId: selectedOrgTarget.projectId,
+        orgTargetId: selectedOrgTarget.id,
+        orgKey: selectedOrgTarget.orgKey,
+        orgName: selectedOrgTarget.orgName,
+      };
       details.base = {
         ok: true,
-        appToken: integration.secrets.baseAppToken,
-        tableId: integration.meetingTableId,
+        appToken: selectedOrgTarget.baseAppToken,
+        tableId: selectedOrgTarget.tableId,
+        baseUrl: selectedOrgTarget.baseUrl,
         appName: appInfo.app?.name || null,
         defaultTableId: appInfo.app?.default_table_id || null,
         fieldCount: fields.length,
+        fieldCheckStatus:
+          selectedOrgTarget.fieldCheckStatus === 'success' ? 'success' : 'checked_and_cached',
+        fieldCheckDetails,
+        message: '当前授权用户可以访问所选组织对应的多维表格。',
       };
+
+      logRuntimeMonitor('info', 'integration_checks', 'org_target_access_check_succeeded', {
+        userId: options.userId,
+        integrationId: integration.id,
+        projectId: selectedOrgTarget.projectId,
+        orgTargetId: selectedOrgTarget.id,
+        orgKey: selectedOrgTarget.orgKey,
+        orgName: selectedOrgTarget.orgName,
+        tableId: selectedOrgTarget.tableId,
+        fieldCount: fields.length,
+        appName: appInfo.app?.name || null,
+      });
     } catch (error) {
       const failure = pickFailure(error, 'BaseCheckFailed');
       statuses.baseStatus = 'failed';
       failures.push(failure);
+      logRuntimeMonitor('error', 'integration_checks', 'org_target_access_check_failed', {
+        userId: options.userId,
+        integrationId: integration.id,
+        projectId: selectedOrgTarget.projectId,
+        orgTargetId: selectedOrgTarget.id,
+        orgKey: selectedOrgTarget.orgKey,
+        orgName: selectedOrgTarget.orgName,
+        tableId: selectedOrgTarget.tableId,
+        ...pickFailure(error, 'BaseCheckFailed'),
+      });
       details.base = {
         ok: false,
-        appToken: integration.secrets.baseAppToken,
-        tableId: integration.meetingTableId,
+        appToken: selectedOrgTarget.baseAppToken,
+        tableId: selectedOrgTarget.tableId,
+        baseUrl: selectedOrgTarget.baseUrl,
         message: failure.message,
       };
     }
-  } else {
-    details.base = {
-      ok: false,
-      pending: true,
-      appTokenSaved: Boolean(integration.secrets.baseAppToken),
-      tableIdSaved: Boolean(integration.meetingTableId),
-      message: '尚未完成 Base 初始化。',
-    };
   }
-
-  details.eventSubscription = {
-    ok: statuses.eventSubscriptionStatus === 'success',
-    message:
-      statuses.eventSubscriptionStatus === 'success'
-        ? '事件监听已配置并生效。'
-        : '尚未配置事件监听，请确认 CLI 事件监听已启动。',
-  };
 
   const grantedUserScopes = parseScopeList(authorizationContext?.scope);
   const missingUserScopes = requiredUserScopes.filter((scope) => !grantedUserScopes.includes(scope));
@@ -343,7 +608,7 @@ export async function runFeishuIntegrationChecks(options: {
       requiredUserScopes,
       grantedUserScopes,
       note:
-        '当前真实检查已验证 Base 访问可用，并确认 OAuth 授权 scope 覆盖会议信息、妙记导出与持续访问权限；会议事件仍会在首次真实链路中继续验证。',
+        '当前真实检查已验证目标多维表格可访问，并确认 OAuth 授权 scope 覆盖会议信息、妙记导出与持续访问权限；会议事件仍会在首次真实链路中继续验证。',
     };
   } else if (
     statuses.oauthStatus === 'authorized' &&
@@ -387,7 +652,7 @@ export async function runFeishuIntegrationChecks(options: {
       requiredUserScopes,
       grantedUserScopes,
       missingUserScopes,
-      note: '需要先完成 OAuth 与 Base 初始化，系统才能验证用户授权 scope 是否完整。',
+      note: '需要先选择组织、完成 OAuth，并确认目标多维表格可访问，系统才能验证用户授权 scope 是否完整。',
     };
   }
 

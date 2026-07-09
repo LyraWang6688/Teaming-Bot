@@ -1,0 +1,19 @@
+{
+  "projectKey": "2026-07-m-project",
+  "projectName": "2026-07 M项目",
+  "status": "active",
+  "organizationTargets": [
+    {
+      "orgKey": "org_a",
+      "orgName": "A组织",
+      "baseUrl": "https://example.feishu.cn/base/base_xxx?table=tbl_xxx",
+      "enabled": true
+    },
+    {
+      "orgKey": "org_b",
+      "orgName": "B组织",
+      "baseUrl": "https://example.feishu.cn/base/base_yyy?table=tbl_yyy",
+      "enabled": true
+    }
+  ]
+}

@@ -33,6 +33,8 @@ export type FeishuIntegrationView = {
   appId: string;
   oauthScope: string;
   meetingTableId: string | null;
+  selectedOrgTargetId: string | null;
+  orgSelectedAt: string | null;
   profileName: string | null;
   initializedAt: string | null;
   createdAt: string;
@@ -104,6 +106,7 @@ type CreateIntegrationInput = {
   profileName?: string;
   baseAppToken?: string | null;
   meetingTableId?: string | null;
+  selectedOrgTargetId?: string | null;
   oauthScope?: string;
 };
 
@@ -114,10 +117,12 @@ type UpdateIntegrationInput = {
   profileName?: string | null;
   baseAppToken?: string | null;
   meetingTableId?: string | null;
+  selectedOrgTargetId?: string | null;
   oauthScope?: string;
   status?: string;
   setupStep?: string;
   initializedAt?: Date | null;
+  orgSelectedAt?: Date | null;
 };
 
 type UpsertAuthorizationInput = {
@@ -183,6 +188,8 @@ function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
     appId: row.appId,
     oauthScope: row.oauthScope,
     meetingTableId: row.meetingTableId,
+    selectedOrgTargetId: row.selectedOrgTargetId,
+    orgSelectedAt: toIsoString(row.orgSelectedAt),
     profileName: row.profileName,
     initializedAt: toIsoString(row.initializedAt),
     createdAt: row.createdAt.toISOString(),
@@ -320,6 +327,8 @@ export async function createUserFeishuIntegration(
       profileName: input.profileName?.trim() || null,
       baseAppTokenEncrypted: input.baseAppToken?.trim() ? encrypt(input.baseAppToken.trim()) : null,
       meetingTableId: input.meetingTableId?.trim() || null,
+      selectedOrgTargetId: input.selectedOrgTargetId || null,
+      orgSelectedAt: input.selectedOrgTargetId ? new Date() : null,
       oauthScope: input.oauthScope?.trim() || getDefaultFeishuOauthScope(),
       updatedAt: new Date(),
     })
@@ -378,6 +387,14 @@ export async function updateUserFeishuIntegration(
   if (input.meetingTableId === null) {
     updateValues.meetingTableId = null;
   }
+  if (typeof input.selectedOrgTargetId === 'string') {
+    updateValues.selectedOrgTargetId = input.selectedOrgTargetId.trim();
+    updateValues.orgSelectedAt = input.orgSelectedAt ?? new Date();
+  }
+  if (input.selectedOrgTargetId === null) {
+    updateValues.selectedOrgTargetId = null;
+    updateValues.orgSelectedAt = null;
+  }
   if (typeof input.oauthScope === 'string') {
     updateValues.oauthScope = input.oauthScope.trim();
   }
@@ -389,6 +406,9 @@ export async function updateUserFeishuIntegration(
   }
   if (Object.prototype.hasOwnProperty.call(input, 'initializedAt')) {
     updateValues.initializedAt = input.initializedAt;
+  }
+  if (Object.prototype.hasOwnProperty.call(input, 'orgSelectedAt')) {
+    updateValues.orgSelectedAt = input.orgSelectedAt;
   }
 
   const [row] = await db
@@ -462,8 +482,7 @@ export async function listFeishuIntegrationContextsWithBase(): Promise<FeishuInt
     .where(
       and(
         isNull(feishuIntegrations.deletedAt),
-        isNotNull(feishuIntegrations.baseAppTokenEncrypted),
-        isNotNull(feishuIntegrations.meetingTableId)
+        isNotNull(feishuIntegrations.selectedOrgTargetId)
       )
     )
     .orderBy(desc(feishuIntegrations.updatedAt));

@@ -6,7 +6,7 @@ import Layout from '@/components/Layout';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
@@ -14,12 +14,10 @@ import {
   AlertCircle,
   ArrowRight,
   Check,
-  ExternalLink,
   LogOut,
   RefreshCw,
   Rocket,
   Shield,
-  Table,
   User,
   QrCode,
 } from 'lucide-react';
@@ -52,6 +50,8 @@ type IntegrationView = {
   appId: string;
   oauthScope: string;
   meetingTableId: string | null;
+  selectedOrgTargetId: string | null;
+  orgSelectedAt: string | null;
   initializedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -103,6 +103,27 @@ type IntegrationDetailResponse = {
   checks: CheckStatusView | null;
 };
 
+type ActiveProjectView = {
+  id: string;
+  projectKey: string;
+  name: string;
+  status: string;
+};
+
+type OrgTargetView = {
+  id: string;
+  projectId: string;
+  orgKey: string;
+  orgName: string;
+  baseUrl: string;
+  enabled: boolean;
+};
+
+type ActiveOrgTargetsResponse = {
+  project: ActiveProjectView | null;
+  targets: OrgTargetView[];
+};
+
 type SetupSummary = {
   tone: SummaryTone;
   title: string;
@@ -138,23 +159,6 @@ function getStatusLabel(status: string | null | undefined) {
   }
 }
 
-function getStatusBadgeClass(status: string | null | undefined) {
-  switch (status) {
-    case 'authorized':
-    case 'oauth_authorized':
-    case 'passed':
-    case 'success':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-    case 'failed':
-      return 'border-red-200 bg-red-50 text-red-700';
-    case 'draft':
-    case 'pending':
-      return 'border-amber-200 bg-amber-50 text-amber-700';
-    default:
-      return 'border-slate-200 bg-slate-50 text-slate-700';
-  }
-}
-
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => null)) as
     | { success?: boolean; data?: T; error?: string }
@@ -172,9 +176,9 @@ function getStepTitle(step: number) {
     case 2:
       return '用户授权';
     case 3:
-      return '事件校验';
+      return '选择组织';
     case 4:
-      return '初始化多维表格';
+      return '系统校验';
     default:
       return '';
   }
@@ -187,9 +191,9 @@ function getStepDescription(step: number) {
     case 2:
       return '授权应用访问妙记、多维表格等权限。';
     case 3:
-      return '校验应用是否已订阅妙记生成事件。';
+      return '选择你所在的组织，系统将写入对应多维表格。';
     case 4:
-      return '初始化多维表格，自动创建会议信息表。';
+      return '系统自动检查应用、授权、表格访问和事件监听状态。';
     default:
       return '';
   }
@@ -202,12 +206,13 @@ function buildSetupSummary(options: {
   checks: CheckStatusView | null | undefined;
   isRunningChecks: boolean;
   setupComplete: boolean;
+  hasSelectedOrganization: boolean;
 }): SetupSummary {
   if (!options.user) {
     return {
       tone: 'indigo',
       title: '创建应用',
-      description: '点击下方按钮创建你的飞书应用。',
+      description: '点击下方按钮，通过飞书 CLI 创建新的飞书应用。',
     };
   }
 
@@ -227,11 +232,11 @@ function buildSetupSummary(options: {
     };
   }
 
-  if (!options.integration.initializedAt) {
+  if (!options.hasSelectedOrganization) {
     return {
       tone: 'indigo',
-      title: '初始化多维表格',
-      description: '点击按钮，系统将自动创建会议信息表。',
+      title: '选择组织',
+      description: '请选择你所在的组织，系统会写入该组织对应的多维表格。',
     };
   }
 
@@ -264,16 +269,35 @@ function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
     checks.appCredentialStatus === 'success' &&
     checks.oauthStatus === 'authorized' &&
     checks.baseStatus === 'success' &&
-    checks.permissionStatus === 'success'
+    checks.permissionStatus === 'success' &&
+    checks.eventSubscriptionStatus === 'success'
   );
+}
+
+type EventSubscriptionDisplayStatus = 'success' | 'checking' | 'failed' | 'pending';
+
+function resolveEventSubscriptionStatus(
+  checks: CheckStatusView | null | undefined,
+  eventSubscribed: boolean | null,
+  isCheckingEvent: boolean
+): EventSubscriptionDisplayStatus {
+  if (checks?.eventSubscriptionStatus === 'success' || eventSubscribed === true) {
+    return 'success';
+  }
+
+  if (isCheckingEvent) {
+    return 'checking';
+  }
+
+  if (checks?.eventSubscriptionStatus === 'failed' || eventSubscribed === false) {
+    return 'failed';
+  }
+
+  return 'pending';
 }
 
 function getCheckStatusTone(passed: boolean) {
   return passed ? 'text-emerald-600' : 'text-amber-600';
-}
-
-function getCheckStatusDot(passed: boolean) {
-  return passed ? 'bg-emerald-500' : 'bg-amber-500';
 }
 
 function getCheckStatusLabel(passed: boolean) {
@@ -376,20 +400,19 @@ export default function FeishuConfigWorkspace() {
   const autoCheckKeyRef = useRef<string | null>(null);
   const setupTraceIdRef = useRef<string | null>(null);
 
-  const [origin, setOrigin] = useState('');
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
 
   const [integration, setIntegration] = useState<IntegrationView | null>(null);
   const [detail, setDetail] = useState<IntegrationDetailResponse | null>(null);
-  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
+  const [, setIsLoadingDetail] = useState(false);
   const [isRunningChecks, setIsRunningChecks] = useState(false);
+  const [activeOrgTargets, setActiveOrgTargets] = useState<ActiveOrgTargetsResponse | null>(null);
+  const [selectedOrgTargetId, setSelectedOrgTargetId] = useState<string | null>(null);
+  const [isSavingOrganization, setIsSavingOrganization] = useState(false);
 
   const [isCreatingApp, setIsCreatingApp] = useState(false);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
-  const [isInitializingBase, setIsInitializingBase] = useState(false);
   const [eventSubscribed, setEventSubscribed] = useState<boolean | null>(null);
   const [isCheckingEvent, setIsCheckingEvent] = useState(false);
 
@@ -416,11 +439,17 @@ export default function FeishuConfigWorkspace() {
 
   const currentStep = useMemo(() => {
     if (!user) return 1;
-    if (!integration) return 2;
-    if (!detail?.authorization || detail.authorization.status !== 'authorized') return 3;
-    if (!integration.initializedAt) return 4;
+    if (!integration) return 1;
+    if (!detail?.authorization || detail.authorization.status !== 'authorized') return 2;
+    if (!selectedOrgTargetId) return 3;
     return 4;
-  }, [user, integration, detail?.authorization?.status]);
+  }, [user, integration, detail?.authorization?.status, selectedOrgTargetId]);
+
+  const eventSubscriptionStatus = useMemo(
+    () => resolveEventSubscriptionStatus(detail?.checks, eventSubscribed, isCheckingEvent),
+    [detail?.checks, eventSubscribed, isCheckingEvent]
+  );
+  const eventSubscriptionPassed = eventSubscriptionStatus === 'success';
 
   const sidebarSteps = useMemo(() => {
     const steps = [
@@ -440,21 +469,21 @@ export default function FeishuConfigWorkspace() {
       },
       {
         step: 3,
-        anchor: 'step-subscribe',
-        title: '事件校验',
-        description: '校验事件订阅状态',
-        status: eventSubscribed === true ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending',
+        anchor: 'step-organization',
+        title: '选择组织',
+        description: '选择所在组织',
+        status: selectedOrgTargetId ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending',
       },
       {
         step: 4,
-        anchor: 'step-base',
-        title: '初始化表格',
-        description: '创建会议信息表',
-        status: integration?.initializedAt ? 'completed' : (eventSubscribed === true) ? 'current' : 'pending',
+        anchor: 'step-checks',
+        title: '系统校验',
+        description: '状态自动检查',
+        status: areDisplayedChecksPassed(detail?.checks) ? 'completed' : selectedOrgTargetId ? 'current' : 'pending',
       },
     ];
     return steps;
-  }, [integration, detail?.authorization?.status, eventSubscribed]);
+  }, [selectedOrgTargetId, integration, detail?.authorization?.status, detail?.checks]);
 
   const effectiveOauthScopes = useMemo(() => {
     const scope = detail?.authorization?.scope || integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
@@ -470,12 +499,12 @@ export default function FeishuConfigWorkspace() {
 
   const setupComplete = useMemo(
     () => Boolean(
-      integration?.initializedAt &&
+      selectedOrgTargetId &&
       detail?.authorization?.status === 'authorized' &&
-      eventSubscribed === true &&
+      eventSubscriptionPassed &&
       displayedChecksPassed
     ),
-    [detail?.authorization?.status, displayedChecksPassed, eventSubscribed, integration?.initializedAt]
+    [selectedOrgTargetId, detail?.authorization?.status, displayedChecksPassed, eventSubscriptionPassed]
   );
 
   const setupSummary = useMemo(() => {
@@ -486,13 +515,30 @@ export default function FeishuConfigWorkspace() {
       checks: detail?.checks,
       isRunningChecks,
       setupComplete,
+      hasSelectedOrganization: Boolean(selectedOrgTargetId),
     });
-  }, [user, integration, detail?.authorization, detail?.checks, isRunningChecks, setupComplete]);
+  }, [user, integration, detail?.authorization, detail?.checks, isRunningChecks, setupComplete, selectedOrgTargetId]);
 
   const summaryToneClasses = useMemo(() => getSummaryToneClasses(setupSummary.tone), [setupSummary.tone]);
+  const selectedOrgTarget = useMemo(
+    () => activeOrgTargets?.targets.find((target) => target.id === selectedOrgTargetId) || null,
+    [activeOrgTargets?.targets, selectedOrgTargetId]
+  );
 
   useEffect(() => {
-    setOrigin(window.location.origin);
+    void (async () => {
+      try {
+        const response = await fetch('/api/project-org-targets/active');
+        const payload = (await response.json().catch(() => null)) as
+          | { success?: boolean; data?: ActiveOrgTargetsResponse; error?: string }
+          | null;
+        if (payload?.success && payload.data) {
+          setActiveOrgTargets(payload.data);
+        }
+      } catch (error) {
+        logClientMonitor('error', 'feishu_config_workspace', 'active_org_targets_load_failed', toClientErrorContext(error));
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -531,6 +577,7 @@ export default function FeishuConfigWorkspace() {
   useEffect(() => {
     if (!integration?.id) return;
     if (detail?.authorization?.status !== 'authorized') return;
+    if (eventSubscriptionPassed) return;
     if (eventSubscribed !== null) return;
 
     setIsCheckingEvent(true);
@@ -541,14 +588,26 @@ export default function FeishuConfigWorkspace() {
       .then(r => r.json())
       .then(data => {
         if (data.success && data.data) {
-          setEventSubscribed(data.data.eventFound === true);
+          const isReady = data.data.eventFound === true;
+          setEventSubscribed(isReady);
+          setDetail((previous) => {
+            if (!previous?.checks) return previous;
+            return {
+              ...previous,
+              checks: {
+                ...previous.checks,
+                eventSubscriptionStatus: isReady ? 'success' : 'failed',
+                lastErrorMessage: isReady ? null : (data.data.error || previous.checks.lastErrorMessage),
+              },
+            };
+          });
         } else {
           setEventSubscribed(false);
         }
       })
       .catch(() => setEventSubscribed(false))
       .finally(() => setIsCheckingEvent(false));
-  }, [integration?.id, detail?.authorization?.status, eventSubscribed, setupHeaders]);
+  }, [integration?.id, detail?.authorization?.status, eventSubscribed, eventSubscriptionPassed, setupHeaders]);
 
   const loadIntegrationDetail = useCallback(
     async (integrationId: string | null) => {
@@ -598,6 +657,11 @@ export default function FeishuConfigWorkspace() {
 
         setIntegration(detailData.integration);
         setDetail(detailData);
+        if (detailData.integration.selectedOrgTargetId) {
+          setSelectedOrgTargetId(detailData.integration.selectedOrgTargetId);
+        } else {
+          setSelectedOrgTargetId(null);
+        }
       } catch (error) {
         setPageError(error instanceof Error ? error.message : '加载配置失败。');
       } finally {
@@ -611,10 +675,10 @@ export default function FeishuConfigWorkspace() {
     if (!integration?.id) return '';
     return [
       integration.id,
-      integration.initializedAt,
+      integration.selectedOrgTargetId || selectedOrgTargetId || 'no-org',
       detail?.authorization?.updatedAt ?? 'no-oauth-update',
     ].join(':');
-  }, [detail?.authorization?.updatedAt, integration?.id, integration?.initializedAt]);
+  }, [detail?.authorization?.updatedAt, integration?.id, integration?.selectedOrgTargetId, selectedOrgTargetId]);
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
@@ -629,6 +693,32 @@ export default function FeishuConfigWorkspace() {
       setPageError(error instanceof Error ? error.message : '退出登录失败。');
     } finally {
       setIsSigningOut(false);
+    }
+  };
+
+  const handleSelectOrganization = async (orgTargetId: string) => {
+    setSelectedOrgTargetId(orgTargetId);
+    setPageError(null);
+
+    if (!integration?.id) {
+      return;
+    }
+
+    setIsSavingOrganization(true);
+    try {
+      await parseJsonResponse<IntegrationView>(
+        await fetch(`/api/feishu/integrations/${integration.id}`, {
+          method: 'PATCH',
+          headers: setupHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ selectedOrgTargetId: orgTargetId }),
+        })
+      );
+      setEventSubscribed(null);
+      await loadIntegrationDetail(integration.id);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '保存组织失败。');
+    } finally {
+      setIsSavingOrganization(false);
     }
   };
 
@@ -751,12 +841,6 @@ export default function FeishuConfigWorkspace() {
     }
   };
 
-  const handleRefreshIntegration = async () => {
-    if (!integration?.id) return;
-    setPageError(null);
-    await loadIntegrationDetail(integration.id);
-  };
-
   const runAutomatedChecks = useCallback(
     async (integrationId: string, options?: { silent?: boolean }) => {
       setIsRunningChecks(true);
@@ -794,32 +878,6 @@ export default function FeishuConfigWorkspace() {
     autoCheckKeyRef.current = autoCheckTriggerKey;
     void runAutomatedChecks(integration.id, { silent: true });
   }, [autoCheckTriggerKey, integration?.id, isRunningChecks, runAutomatedChecks]);
-
-  const handleInitializeBase = async () => {
-    if (!integration?.id) return;
-    setIsInitializingBase(true);
-    setPageError(null);
-    try {
-      await parseJsonResponse<{
-        appToken: string;
-        tableId: string;
-        createdFields: string[];
-        checkResult?: {
-          allPassed: boolean;
-        };
-      }>(
-        await fetch(`/api/feishu/integrations/${integration.id}/base/initialize`, {
-          method: 'POST',
-          headers: setupHeaders(),
-        })
-      );
-      await loadIntegrationDetail(integration.id);
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '初始化失败。');
-    } finally {
-      setIsInitializingBase(false);
-    }
-  };
 
   return (
     <Layout>
@@ -891,6 +949,53 @@ export default function FeishuConfigWorkspace() {
                     );
                   })}
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="space-y-3 pt-6">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium text-slate-900">系统校验结果</div>
+                  <Badge
+                    variant="outline"
+                    className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
+                  >
+                    {displayedChecksPassed ? '全部通过' : '待确认'}
+                  </Badge>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className={`flex items-center justify-between ${getCheckStatusTone(Boolean(selectedOrgTargetId))}`}>
+                    <span>组织配置</span>
+                    <span className="text-xs">{selectedOrgTarget ? selectedOrgTarget.orgName : getCheckStatusLabel(Boolean(selectedOrgTargetId))}</span>
+                  </div>
+                  <div className={`flex items-center justify-between ${getCheckStatusTone(detail?.checks?.appCredentialStatus === 'success')}`}>
+                    <span>应用凭证</span>
+                    <span className="text-xs">{getCheckStatusLabel(detail?.checks?.appCredentialStatus === 'success')}</span>
+                  </div>
+                  <div className={`flex items-center justify-between ${getCheckStatusTone(detail?.checks?.oauthStatus === 'authorized')}`}>
+                    <span>用户授权</span>
+                    <span className="text-xs">{getCheckStatusLabel(detail?.checks?.oauthStatus === 'authorized')}</span>
+                  </div>
+                  <div className={`flex items-center justify-between ${getCheckStatusTone(detail?.checks?.baseStatus === 'success')}`}>
+                    <span>目标表格</span>
+                    <span className="text-xs">{detail?.checks?.baseStatus === 'success' ? '可写入' : getStatusLabel(detail?.checks?.baseStatus)}</span>
+                  </div>
+                  <div className={`flex items-center justify-between ${getCheckStatusTone(eventSubscriptionPassed)}`}>
+                    <span>事件监听</span>
+                    <span className="text-xs">{eventSubscriptionPassed ? '已就绪' : getStatusLabel(detail?.checks?.eventSubscriptionStatus)}</span>
+                  </div>
+                </div>
+                {!displayedChecksPassed && detail?.checks?.lastErrorMessage ? (
+                  <div className="rounded-lg border border-red-100 bg-red-50 p-2 text-xs leading-5 text-red-700">
+                    {detail.checks.lastErrorMessage}
+                  </div>
+                ) : null}
+                {integration?.id ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="w-full">
+                    <RefreshCw className={`mr-2 h-4 w-4 ${isRunningChecks ? 'animate-spin' : ''}`} />
+                    刷新校验
+                  </Button>
+                ) : null}
               </CardContent>
             </Card>
           </aside>
@@ -970,8 +1075,6 @@ export default function FeishuConfigWorkspace() {
                         {isSigningOut ? '退出中...' : '退出'}
                       </Button>
                     </div>
-
-                    <Separator />
 
                     <div id="step-create-app">
                       <StepHeader
@@ -1196,38 +1299,61 @@ export default function FeishuConfigWorkspace() {
 
                     <Separator />
 
-                    <div id="step-subscribe">
+                    <div id="step-organization">
                       <StepHeader
                         step={3}
-                        status={eventSubscribed === true ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
+                        status={selectedOrgTargetId ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
                         description={getStepDescription(3)}
                       />
                       <CardContent>
-                        {!detail?.authorization || detail?.authorization?.status !== 'authorized' ? (
+                        {detail?.authorization?.status !== 'authorized' ? (
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-                            <div className="mb-2 text-sm font-medium text-slate-500">\u8bf7\u5148\u5b8c\u6210\u6388\u6743</div>
-                          </div>
-                        ) : isCheckingEvent ? (
-                          <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
-                            <RefreshCw className="mx-auto mb-2 h-6 w-6 animate-spin text-indigo-600" />
-                            <p className="text-sm text-slate-600">\u6b63\u5728\u6821\u9a8c\u4e8b\u4ef6\u8ba2\u9605\u72b6\u6001...</p>
-                          </div>
-                        ) : eventSubscribed === true ? (
-                          <div className="rounded-lg bg-emerald-50 p-4">
-                            <div className="flex items-center gap-2 mb-2">
-                              <Check className="h-4 w-4 text-emerald-600" />
-                              <span className="font-medium text-emerald-900">\u6821\u9a8c\u901a\u8fc7</span>
-                            </div>
-                            <p className="text-sm text-slate-600">
-                              \u5e94\u7528\u5df2\u8ba2\u9605 minutes.minute.generated_v1 \u4e8b\u4ef6\uff0c\u53ef\u4ee5\u7ee7\u7eed\u4e0b\u4e00\u6b65\u3002
-                            </p>
+                            <div className="mb-2 text-sm font-medium text-slate-500">请先完成飞书用户授权</div>
                           </div>
                         ) : (
-                          <div className="rounded-lg border border-dashed border-amber-200 bg-amber-50 p-6 text-center">
-                            <AlertCircle className="mx-auto mb-2 h-6 w-6 text-amber-600" />
-                            <p className="text-sm text-slate-600">
-                              \u672a\u68c0\u6d4b\u5230\u4e8b\u4ef6\u8ba2\u9605\uff0c\u8bf7\u786e\u8ba4\u5e94\u7528\u914d\u7f6e\u3002
-                            </p>
+                          <div className="space-y-4">
+                            <div className={selectedOrgTarget ? 'rounded-lg bg-emerald-50 p-4' : 'rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-4'}>
+                              <div className="mb-2 flex items-center gap-2">
+                                {selectedOrgTarget ? (
+                                  <Check className="h-4 w-4 text-emerald-600" />
+                                ) : (
+                                  <AlertCircle className="h-4 w-4 text-indigo-600" />
+                                )}
+                                <span className={selectedOrgTarget ? 'font-medium text-emerald-900' : 'font-medium text-indigo-900'}>
+                                  {selectedOrgTarget ? '组织已选择' : '请选择所在组织'}
+                                </span>
+                              </div>
+                              <p className={selectedOrgTarget ? 'text-sm text-emerald-900' : 'text-sm text-slate-600'}>
+                                当前项目：{activeOrgTargets?.project?.name || '尚未导入 active 项目配置'}
+                              </p>
+                              {selectedOrgTarget ? (
+                                <p className="mt-2 text-sm text-emerald-900">
+                                  当前组织：{selectedOrgTarget.orgName}
+                                </p>
+                              ) : null}
+                              <p className="mt-2 text-xs leading-5 text-slate-500">
+                                修改组织只影响后续新产生的会议分析结果，历史报告不会迁移。
+                              </p>
+                            </div>
+                            {activeOrgTargets?.targets.length ? (
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {activeOrgTargets.targets.map((target) => (
+                                  <Button
+                                    key={target.id}
+                                    type="button"
+                                    variant={target.id === selectedOrgTargetId ? 'default' : 'outline'}
+                                    onClick={() => void handleSelectOrganization(target.id)}
+                                    disabled={isSavingOrganization}
+                                  >
+                                    {target.orgName}
+                                  </Button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                                当前没有可选组织，请先在服务器导入项目组织配置。
+                              </div>
+                            )}
                           </div>
                         )}
                       </CardContent>
@@ -1235,116 +1361,25 @@ export default function FeishuConfigWorkspace() {
 
                     <Separator />
 
-                    <div id="step-base">
+                    <div id="step-checks">
                       <StepHeader
                         step={4}
-                        status={integration?.initializedAt ? 'completed' : (eventSubscribed === true) ? 'current' : 'pending'}
+                        status={displayedChecksPassed ? 'completed' : selectedOrgTargetId ? 'current' : 'pending'}
                         description={getStepDescription(4)}
                       />
                       <CardContent>
-                        {!integration || detail?.authorization?.status !== 'authorized' || eventSubscribed !== true ? (
-                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-                            <div className="mb-2 text-sm font-medium text-slate-500">请先完成前面的步骤</div>
-                          </div>
-                        ) : !integration.initializedAt ? (
-                          <div className="space-y-4">
-                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
-                              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
-                                <Table className="h-8 w-8 text-indigo-600" />
-                              </div>
-                              <h3 className="mb-2 text-lg font-semibold text-slate-900">初始化多维表格</h3>
-                              <p className="mb-6 text-sm text-slate-600">
-                                点击下方按钮，系统将自动创建会议信息表并添加所需字段。
-                              </p>
-                              <Button onClick={handleInitializeBase} disabled={isInitializingBase} className="w-full">
-                                {isInitializingBase ? (
-                                  <>
-                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                                    初始化中...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Table className="mr-2 h-4 w-4" />
-                                    初始化多维表格
-                                  </>
-                                )}
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-4">
-                            <div className="rounded-lg bg-emerald-50 p-4">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Check className="h-4 w-4 text-emerald-600" />
-                                <span className="font-medium text-emerald-900">多维表格已初始化</span>
-                              </div>
-                              <div className="space-y-3 text-sm">
-                                <div>
-                                  <div className="text-xs text-emerald-600 mb-1">初始化时间</div>
-                                  <div className="font-medium text-emerald-900">{formatDateTime(integration.initializedAt)}</div>
-                                </div>
-                                <div>
-                                  <div className="text-xs text-emerald-600 mb-1">表格链接</div>
-                                  <a
-                                    href={integration.links.baseUrl ?? undefined}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-start gap-1 break-all font-medium text-emerald-900 hover:underline"
-                                  >
-                                    <span>{integration.links.baseUrl || '点击查看'}</span>
-                                    <ExternalLink className="mt-0.5 h-3 w-3 shrink-0" />
-                                  </a>
-                                </div>
-                              </div>
-                            </div>
-
-                            {detail?.checks && (
-                              <div className="rounded-lg border border-slate-200 p-4">
-                                <div className="mb-3 flex items-center justify-between">
-                                  <div className="text-sm font-medium text-slate-900">系统校验状态</div>
-                                  <Badge
-                                    variant="outline"
-                                    className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
-                                  >
-                                    {displayedChecksPassed ? '全部通过' : '待确认'}
-                                  </Badge>
-                                </div>
-                                <div className="grid grid-cols-2 gap-3 text-sm">
-                                  <div className={`flex items-center gap-2 ${getCheckStatusTone(detail.checks.appCredentialStatus === 'success')}`}>
-                                    <div className={`w-2 h-2 rounded-full ${getCheckStatusDot(detail.checks.appCredentialStatus === 'success')}`} />
-                                    <span>应用凭证</span>
-                                    <span className="text-xs text-slate-500">{getCheckStatusLabel(detail.checks.appCredentialStatus === 'success')}</span>
-                                  </div>
-                                  <div className={`flex items-center gap-2 ${getCheckStatusTone(detail.checks.oauthStatus === 'authorized')}`}>
-                                    <div className={`w-2 h-2 rounded-full ${getCheckStatusDot(detail.checks.oauthStatus === 'authorized')}`} />
-                                    <span>用户授权</span>
-                                    <span className="text-xs text-slate-500">{getCheckStatusLabel(detail.checks.oauthStatus === 'authorized')}</span>
-                                  </div>
-                                  <div className={`flex items-center gap-2 ${getCheckStatusTone(detail.checks.baseStatus === 'success')}`}>
-                                    <div className={`w-2 h-2 rounded-full ${getCheckStatusDot(detail.checks.baseStatus === 'success')}`} />
-                                    <span>多维表格</span>
-                                    <span className="text-xs text-slate-500">{getCheckStatusLabel(detail.checks.baseStatus === 'success')}</span>
-                                  </div>
-                                  <div className={`flex items-center gap-2 ${getCheckStatusTone(detail.checks.permissionStatus === 'success')}`}>
-                                    <div className={`w-2 h-2 rounded-full ${getCheckStatusDot(detail.checks.permissionStatus === 'success')}`} />
-                                    <span>权限检查</span>
-                                    <span className="text-xs text-slate-500">{getCheckStatusLabel(detail.checks.permissionStatus === 'success')}</span>
-                                  </div>
-                                </div>
-                                {!displayedChecksPassed && detail.checks.lastErrorMessage ? (
-                                  <div className="mt-3 text-xs text-red-600">
-                                    错误信息：{detail.checks.lastErrorMessage}
-                                  </div>
-                                ) : null}
-                              </div>
-                            )}
-
-                            <Button type="button" variant="outline" onClick={() => void handleRefreshIntegration()} disabled={isLoadingDetail}>
-                              <RefreshCw className="mr-2 h-4 w-4" />
-                              刷新状态
+                        <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                          <div className="mb-2 text-sm font-medium text-slate-700">系统会自动完成校验</div>
+                          <p className="text-sm text-slate-500">
+                            应用凭证、用户授权、目标表格访问和事件监听状态会显示在左侧“系统校验结果”中。
+                          </p>
+                          {integration?.id ? (
+                            <Button type="button" variant="outline" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="mt-4">
+                              <RefreshCw className={`mr-2 h-4 w-4 ${isRunningChecks ? 'animate-spin' : ''}`} />
+                              刷新系统校验
                             </Button>
-                          </div>
-                        )}
+                          ) : null}
+                        </div>
                       </CardContent>
                     </div>
                   </>

@@ -17,7 +17,16 @@ export type MeetingPipelineTaskStatus =
 
 export type MeetingPipelineTaskPayload = {
   reportUrl?: string;
+  target?: {
+    projectId: string;
+    orgTargetId: string;
+    orgKey: string;
+    orgName: string;
+    tableId: string;
+  };
 };
+
+export type MeetingPipelineTargetSnapshot = NonNullable<MeetingPipelineTaskPayload['target']>;
 
 type UpsertMeetingPipelineTaskInput = {
   integration: FeishuIntegrationContext | null;
@@ -25,6 +34,7 @@ type UpsertMeetingPipelineTaskInput = {
   eventType?: string;
   meetingId: string;
   minuteToken?: string;
+  target?: MeetingPipelineTargetSnapshot;
 };
 
 type UpdateTaskFields = {
@@ -122,7 +132,7 @@ export async function upsertMeetingPipelineTaskForMinuteGenerated(
 
   const db = getDb();
   const existing = await getMeetingPipelineTaskByMeeting(input.integration.id, input.meetingId);
-  const payload: MeetingPipelineTaskPayload = {};
+  const payload: MeetingPipelineTaskPayload = input.target ? { target: input.target } : {};
 
   if (!existing) {
     const [row] = await db
@@ -154,6 +164,9 @@ export async function upsertMeetingPipelineTaskForMinuteGenerated(
     existing.status === MEETING_PIPELINE_TASK_STATUS.pending ||
     existing.status === MEETING_PIPELINE_TASK_STATUS.scheduled ||
     existing.status === MEETING_PIPELINE_TASK_STATUS.running;
+  const shouldResetTask =
+    existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
+    existing.status === MEETING_PIPELINE_TASK_STATUS.failed;
 
   const [row] = await db
     .update(meetingPipelineTasks)
@@ -162,35 +175,30 @@ export async function upsertMeetingPipelineTaskForMinuteGenerated(
       eventType: input.eventType || existing.eventType,
       minuteToken: input.minuteToken || existing.minuteToken,
       status:
-        existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
-        existing.status === MEETING_PIPELINE_TASK_STATUS.failed
+        shouldResetTask
           ? MEETING_PIPELINE_TASK_STATUS.pending
           : existing.status,
       currentStage:
-        existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
-        existing.status === MEETING_PIPELINE_TASK_STATUS.failed
+        shouldResetTask
           ? FEISHU_PROCESS_STATUS.minuteGenerated
           : existing.currentStage,
       attemptCount:
-        existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
-        existing.status === MEETING_PIPELINE_TASK_STATUS.failed
+        shouldResetTask
           ? 0
           : existing.attemptCount,
       nextRunAt:
-        existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
-        existing.status === MEETING_PIPELINE_TASK_STATUS.failed
+        shouldResetTask
           ? new Date()
           : existing.nextRunAt,
       startedAt:
-        existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
-        existing.status === MEETING_PIPELINE_TASK_STATUS.failed
+        shouldResetTask
           ? null
           : existing.startedAt,
       completedAt: null,
       lockedAt: null,
       lastErrorType: null,
       lastErrorMessage: null,
-      payload: mergePayload(existing.payload, payload),
+      payload: shouldResetTask ? mergePayload(existing.payload, payload) : existing.payload,
       updatedAt: new Date(),
     })
     .where(eq(meetingPipelineTasks.id, existing.id))

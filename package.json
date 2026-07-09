@@ -7,6 +7,7 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "dev": "NEXT_DISABLE_TURBOPACK=1 next dev --port 5000",
+    "import:project-config": "node scripts/importProjectConfig.mjs",
     "preinstall": "npx only-allow pnpm",
     "lint": "eslint",
     "start": "next start",

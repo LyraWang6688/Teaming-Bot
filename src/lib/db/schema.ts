@@ -1,4 +1,5 @@
 import {
+  boolean,
   integer,
   index,
   jsonb,
@@ -22,6 +23,8 @@ export const feishuIntegrations = pgTable(
     appSecretEncrypted: text('app_secret_encrypted').notNull(),
     baseAppTokenEncrypted: text('base_app_token_encrypted'),
     meetingTableId: text('meeting_table_id'),
+    selectedOrgTargetId: uuid('selected_org_target_id'),
+    orgSelectedAt: timestamp('org_selected_at', { withTimezone: true }),
     profileName: text('profile_name'),
     cliConfigDir: text('cli_config_dir'),
     oauthScope: text('oauth_scope').notNull(),
@@ -45,6 +48,54 @@ export const feishuIntegrations = pgTable(
   },
   (table) => [
     index('feishu_integrations_user_id_idx').on(table.userId),
+    index('feishu_integrations_selected_org_target_id_idx').on(table.selectedOrgTargetId),
+  ]
+);
+
+export const feishuProjects = pgTable(
+  'feishu_projects',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectKey: text('project_key').notNull(),
+    name: text('name').notNull(),
+    status: text('status').notNull().default('active'),
+    startsAt: timestamp('starts_at', { withTimezone: true }),
+    endsAt: timestamp('ends_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('feishu_projects_project_key_uidx').on(table.projectKey),
+    index('feishu_projects_status_idx').on(table.status),
+  ]
+);
+
+export const feishuProjectOrgTargets = pgTable(
+  'feishu_project_org_targets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull(),
+    orgKey: text('org_key').notNull(),
+    orgName: text('org_name').notNull(),
+    baseAppTokenEncrypted: text('base_app_token_encrypted').notNull(),
+    tableId: text('table_id').notNull(),
+    baseUrl: text('base_url').notNull(),
+    enabled: boolean('enabled').notNull().default(true),
+    fieldCheckStatus: text('field_check_status').notNull().default('pending'),
+    fieldCheckDetails: jsonb('field_check_details')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('feishu_project_org_targets_project_org_key_uidx').on(
+      table.projectId,
+      table.orgKey
+    ),
+    index('feishu_project_org_targets_project_id_idx').on(table.projectId),
+    index('feishu_project_org_targets_enabled_idx').on(table.enabled),
   ]
 );
 
@@ -135,6 +186,8 @@ export const meetingRecords = pgTable(
     id: uuid('id').defaultRandom().primaryKey(),
     userId: uuid('user_id').notNull(),
     integrationId: uuid('integration_id').notNull(),
+    projectId: uuid('project_id'),
+    orgTargetId: uuid('org_target_id'),
     baseRecordId: text('base_record_id'),
     feishuMeetingId: text('feishu_meeting_id').notNull(),
     minuteToken: text('minute_token'),
@@ -156,6 +209,8 @@ export const meetingRecords = pgTable(
       table.feishuMeetingId
     ),
     index('meeting_records_user_id_idx').on(table.userId),
+    index('meeting_records_project_id_idx').on(table.projectId),
+    index('meeting_records_org_target_id_idx').on(table.orgTargetId),
     index('meeting_records_status_idx').on(table.status),
   ]
 );
@@ -260,6 +315,8 @@ export const sessions = pgTable(
 );
 
 export type FeishuIntegrationRow = typeof feishuIntegrations.$inferSelect;
+export type FeishuProjectRow = typeof feishuProjects.$inferSelect;
+export type FeishuProjectOrgTargetRow = typeof feishuProjectOrgTargets.$inferSelect;
 export type FeishuAuthorizationRow = typeof feishuAuthorizations.$inferSelect;
 export type FeishuIntegrationCheckRow = typeof feishuIntegrationChecks.$inferSelect;
 export type FeishuOauthStateRow = typeof feishuOauthStates.$inferSelect;
