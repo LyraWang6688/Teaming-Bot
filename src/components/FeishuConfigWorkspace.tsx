@@ -188,13 +188,13 @@ function getStepTitle(step: number) {
 function getStepDescription(step: number) {
   switch (step) {
     case 1:
-      return '使用飞书 CLI 创建新的飞书应用。';
+      return '创建飞书应用并完成事件配置。';
     case 2:
-      return '授权应用访问妙记、多维表格等权限。';
+      return '授权访问妙记和多维表格。';
     case 3:
-      return '选择你所在的组织，系统将写入对应多维表格。';
+      return '绑定目标组织表格。';
     case 4:
-      return '系统自动检查应用、授权、表格访问和事件监听状态。';
+      return '状态自动检查。';
     default:
       return '';
   }
@@ -259,11 +259,11 @@ function StepHeader(props: {
   const isCurrent = status === 'current';
 
   return (
-    <CardHeader className="px-0 pb-3 pt-0">
+    <CardHeader className="px-0 pb-2 pt-0">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div
-            className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium ${
+            className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium ${
               isCompleted
                 ? 'bg-emerald-500 text-white'
                 : isCurrent
@@ -275,7 +275,7 @@ function StepHeader(props: {
           </div>
           <div>
             <div
-              className={`font-medium ${
+              className={`text-sm font-medium ${
                 isCompleted
                   ? 'text-emerald-700'
                   : isCurrent
@@ -821,17 +821,17 @@ export default function FeishuConfigWorkspace() {
         </div>
       ) : null}
 
-      <div className="mx-auto flex h-auto max-w-6xl flex-col gap-4 lg:h-[calc(100vh-8rem)]">
-        <div className="shrink-0 space-y-1">
-          <h1 className="text-2xl font-bold text-slate-900">飞书集成配置</h1>
+      <div className="mx-auto flex h-auto max-w-6xl flex-col gap-3 lg:h-[calc(100vh-8.5rem)] lg:overflow-hidden">
+        <div className="shrink-0 space-y-0.5">
+          <h1 className="text-xl font-bold text-slate-900">飞书集成配置</h1>
           <p className="text-sm text-slate-600">完成创建应用、用户授权和组织选择，系统会自动校验目标表格与事件监听状态。</p>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <aside className="flex min-h-0 flex-col gap-3">
+        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <aside className="flex min-h-0 flex-col gap-2">
             <Card className="shrink-0">
-              <CardContent className="p-4">
-                <div className="mb-3 flex items-center justify-between">
+              <CardContent className="p-3">
+                <div className="mb-2 flex items-center justify-between">
                   <div className="text-sm font-medium text-slate-900">配置进度</div>
                   <div className="flex items-center gap-1 text-xs text-slate-500">
                     <span>第 {currentStep} 步</span>
@@ -839,15 +839,15 @@ export default function FeishuConfigWorkspace() {
                     <span>共 4 步</span>
                   </div>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {sidebarSteps.map((item, index) => {
                     const isCompleted = item.status === 'completed';
                     const isCurrent = item.status === 'current';
                     return (
-                      <a key={item.step} href={`#${item.anchor}`} className="flex gap-3 rounded-lg p-1 transition hover:bg-slate-50">
+                      <a key={item.step} href={`#${item.anchor}`} className="flex gap-2 rounded-lg p-1 transition hover:bg-slate-50">
                         <div className="flex flex-col items-center">
                           <div
-                            className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium ${
+                            className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium ${
                               isCompleted
                                 ? 'bg-emerald-500 text-white'
                                 : isCurrent
@@ -858,7 +858,7 @@ export default function FeishuConfigWorkspace() {
                             {isCompleted ? <Check className="h-4 w-4" /> : item.step}
                           </div>
                           {index < sidebarSteps.length - 1 ? (
-                            <div className={`mt-1 h-6 w-px ${isCompleted ? 'bg-emerald-300' : 'bg-slate-200'}`} />
+                            <div className={`mt-1 h-4 w-px ${isCompleted ? 'bg-emerald-300' : 'bg-slate-200'}`} />
                           ) : null}
                         </div>
                         <div className="pb-1">
@@ -873,7 +873,7 @@ export default function FeishuConfigWorkspace() {
                           >
                             {item.title}
                           </div>
-                          <div className="mt-0.5 text-xs leading-4 text-slate-500">{item.description}</div>
+                          <div className="mt-0.5 text-[11px] leading-3 text-slate-500">{item.description}</div>
                         </div>
                       </a>
                     );
@@ -883,7 +883,7 @@ export default function FeishuConfigWorkspace() {
             </Card>
 
             <Card className="min-h-0 flex-1">
-              <CardContent className="space-y-2 p-4">
+              <CardContent className="space-y-2 p-3">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-medium text-slate-900">系统校验结果</div>
                   <Badge
@@ -916,7 +916,7 @@ export default function FeishuConfigWorkspace() {
                   </div>
                 </div>
                 {!displayedChecksPassed && detail?.checks?.lastErrorMessage ? (
-                  <div className="rounded-lg border border-red-100 bg-red-50 p-2 text-xs leading-5 text-red-700">
+                  <div className="rounded-lg border border-red-100 bg-red-50 p-2 text-xs leading-4 text-red-700">
                     {detail.checks.lastErrorMessage}
                   </div>
                 ) : null}
@@ -927,7 +927,7 @@ export default function FeishuConfigWorkspace() {
                   </Button>
                 ) : null}
                 {setupComplete ? (
-                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs leading-5 text-emerald-800">
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-xs leading-4 text-emerald-800">
                     配置已完成，后续可以实现飞书会议的自动监听与分析。
                   </div>
                 ) : null}
@@ -937,64 +937,22 @@ export default function FeishuConfigWorkspace() {
 
           <div className="flex min-h-0 flex-col">
             <Card className="min-h-0 flex-1">
-              <CardContent className="h-full min-h-0 space-y-4 overflow-y-auto p-5">
+              <CardContent className="flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3">
                 {authLoading ? (
-                  <div className="space-y-4">
+                  <div className="space-y-3">
                     <Skeleton className="h-8 w-32" />
                     <Skeleton className="h-48 w-full" />
                   </div>
-                ) : !user ? (
-                  <div id="step-login" className="flex flex-col items-center justify-center py-12">
-                    {registrationQrUrl ? (
-                      <>
-                        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
-                          <QrCode className="h-8 w-8 text-indigo-600" />
-                        </div>
-                        <h3 className="mb-2 text-lg font-semibold text-slate-900">请使用飞书扫码</h3>
-                        <p className="mb-4 text-center text-sm text-slate-500">
-                          打开飞书扫描下方二维码创建应用。
-                        </p>
-                        <div className="mb-4 rounded-lg border bg-white p-4 shadow-sm">
-                          <img
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(verificationUrl || registrationQrUrl)}`}
-                            alt="QR Code"
-                            className="mx-auto h-48 w-48"
-                          />
-                        </div>
-                        <p className="text-xs text-slate-400">
-                          二维码有效期 5 分钟，请尽快扫码
-                        </p>
-                        <p className="mt-2 text-xs text-slate-400 break-all text-center max-w-xs">
-                          <a href={verificationUrl || registrationQrUrl} target="_blank" rel="noopener noreferrer" className="underline">
-                            或点击打开链接
-                          </a>
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
-                          <User className="h-8 w-8 text-indigo-600" />
-                        </div>
-                        <h3 className="mb-2 text-lg font-semibold text-slate-900">创建应用</h3>
-                        <p className="mb-6 text-center text-sm text-slate-500">
-                          点击按钮后使用飞书扫码创建应用。
-                        </p>
-                        <Button onClick={handleCreateApp} className="w-full max-w-xs">
-                          <QrCode className="mr-2 h-4 w-4" />
-                          创建应用
-                        </Button>
-                      </>
-                    )}
-                  </div>
                 ) : (
                   <>
-                    <div className="flex items-center justify-between">
+                    {user ? (
+                    <div className="flex shrink-0 items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-100 text-sm font-medium text-indigo-700">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-sm font-medium text-indigo-700">
                           <User className="h-4 w-4" />
                         </div>
                         <div>
-                          <div className="font-medium text-slate-900">已登录</div>
+                          <div className="text-sm font-medium text-slate-900">已登录</div>
                           <div className="text-xs text-slate-500">{user.email || '飞书用户'}</div>
                         </div>
                       </div>
@@ -1003,8 +961,9 @@ export default function FeishuConfigWorkspace() {
                         {isSigningOut ? '退出中...' : '退出'}
                       </Button>
                     </div>
+                    ) : null}
 
-                    <div id="step-create-app" className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div id="step-create-app" className="min-h-0 flex-1 rounded-xl border border-slate-200 bg-white p-3">
                       <StepHeader
                         step={1}
                         status={integration ? 'completed' : 'current'}
@@ -1012,63 +971,61 @@ export default function FeishuConfigWorkspace() {
                       />
                       <CardContent className="px-0 pb-0 pt-0">
                         {!integration ? (
-                          <div>
-                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-5 text-center">
-                              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm">
-                                <Rocket className="h-6 w-6 text-indigo-600" />
+                          <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3">
+                            {registrationQrUrl ? (
+                              <div className="flex items-center gap-4">
+                                <div className="rounded-lg border bg-white p-2 shadow-sm">
+                                  <img
+                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=116x116&data=${encodeURIComponent(verificationUrl || registrationQrUrl)}`}
+                                    alt="创建应用二维码"
+                                    className="h-28 w-28"
+                                  />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-sm font-medium text-slate-900">请使用飞书扫码创建应用</div>
+                                  <p className="mt-1 text-xs leading-4 text-slate-600">二维码有效期 5 分钟。创建完成后，页面会继续进入授权步骤。</p>
+                                  <a href={verificationUrl || registrationQrUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex text-xs text-indigo-600 hover:underline">
+                                    打开授权链接
+                                  </a>
+                                </div>
                               </div>
-                              <h3 className="mb-2 text-lg font-semibold text-slate-900">创建应用</h3>
-                              <p className="mb-4 text-sm text-slate-600">
-                                点击下方按钮，系统将自动完成以下操作：
-                              </p>
-                              <ul className="mb-4 grid gap-2 text-left text-sm text-slate-600 sm:grid-cols-2">
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  创建应用（App ID + App Secret）
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  配置应用权限（多维表格）
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  订阅妙记生成事件（minutes.minute.generated_v1）
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  配置 OAuth 重定向地址
-                                </li>
-                              </ul>
-                              <Button onClick={handleCreateApp} disabled={isCreatingApp} className="w-full">
-                                {isCreatingApp ? (
-                                  <>
-                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                                    创建中...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Rocket className="mr-2 h-4 w-4" />
-                                    创建应用
-                                  </>
-                                )}
-                              </Button>
-                            </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="min-w-0">
+                                  <h3 className="text-sm font-semibold text-slate-900">创建飞书应用</h3>
+                                  <p className="mt-1 text-xs leading-4 text-slate-600">自动创建应用、配置权限、OAuth 回调和妙记事件。</p>
+                                </div>
+                                <Button onClick={handleCreateApp} disabled={isCreatingApp} size="sm" className="shrink-0">
+                                  {isCreatingApp ? (
+                                    <>
+                                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                      创建中
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Rocket className="mr-2 h-4 w-4" />
+                                      创建应用
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <div>
-                            <div className="rounded-lg bg-emerald-50 p-4">
-                              <div className="flex items-center gap-2 mb-2">
+                            <div className="rounded-lg bg-emerald-50 p-3">
+                              <div className="mb-2 flex items-center gap-2">
                                 <Check className="h-4 w-4 text-emerald-600" />
-                                <span className="font-medium text-emerald-900">应用已创建</span>
+                                <span className="text-sm font-medium text-emerald-900">应用已创建</span>
                               </div>
-                              <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div className="grid grid-cols-2 gap-3 text-xs">
                                 <div>
-                                  <div className="text-xs text-emerald-600 mb-1">应用名称</div>
+                                  <div className="mb-1 text-emerald-600">应用名称</div>
                                   <div className="font-medium text-emerald-900">{integration.name}</div>
                                 </div>
                                 <div>
-                                  <div className="text-xs text-emerald-600 mb-1">App ID</div>
-                                  <div className="font-mono text-sm text-emerald-900">{integration.appId}</div>
+                                  <div className="mb-1 text-emerald-600">App ID</div>
+                                  <div className="truncate font-mono text-emerald-900">{integration.appId}</div>
                                 </div>
                               </div>
                             </div>
@@ -1078,7 +1035,7 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <div id="step-authorize" className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div id="step-authorize" className="min-h-0 flex-1 rounded-xl border border-slate-200 bg-white p-3">
                       <StepHeader
                         step={2}
                         status={(detail?.authorization?.status === 'authorized') ? 'completed' : integration ? 'current' : 'pending'}
@@ -1086,127 +1043,93 @@ export default function FeishuConfigWorkspace() {
                       />
                       <CardContent className="px-0 pb-0 pt-0">
                         {!integration ? (
-                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
-                            <div className="mb-2 text-sm font-medium text-slate-500">请先创建应用</div>
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
+                            <div className="text-sm font-medium text-slate-500">请先完成第 1 步创建应用</div>
                           </div>
                         ) : detail?.authorization?.status === 'authorized' ? (
-                          <div className="space-y-4">
-                            <div className="rounded-lg bg-emerald-50 p-4">
-                              <div className="flex items-center gap-2 mb-2">
+                          <div>
+                            <div className="rounded-lg bg-emerald-50 p-3">
+                              <div className="mb-2 flex items-center gap-2">
                                 <Check className="h-4 w-4 text-emerald-600" />
-                                <span className="font-medium text-emerald-900">已完成授权</span>
+                                <span className="text-sm font-medium text-emerald-900">已完成授权</span>
                               </div>
-                              <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div className="grid grid-cols-2 gap-3 text-xs">
                                 <div>
-                                  <div className="text-xs text-emerald-600 mb-1">授权用户</div>
+                                  <div className="mb-1 text-emerald-600">授权用户</div>
                                   <div className="font-medium text-emerald-900">{detail.authorization.authorizedUserName || '未知'}</div>
                                 </div>
                                 <div>
-                                  <div className="text-xs text-emerald-600 mb-1">授权时间</div>
+                                  <div className="mb-1 text-emerald-600">授权时间</div>
                                   <div className="font-medium text-emerald-900">{formatDateTime(detail.authorization.updatedAt)}</div>
                                 </div>
-                              </div>
-                            </div>
-
-                            <div className="rounded-lg border border-slate-200 p-4">
-                              <div className="mb-3 text-sm font-medium text-slate-900">已授权权限</div>
-                              <div className="space-y-2">
-                                {effectiveOauthScopes.map((scope) => (
-                                  <div key={scope} className="flex items-center gap-2 text-sm">
-                                    <Check className="h-4 w-4 text-emerald-500" />
-                                    <code className="text-slate-700">{scope}</code>
-                                    <span className="text-slate-500">
-                                      {OAUTH_SCOPE_DESCRIPTIONS[scope] || '用于飞书用户授权'}
-                                    </span>
-                                  </div>
-                                ))}
                               </div>
                             </div>
                           </div>
                         ) : (
                           <div>
-                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-5 text-center">
-                              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm">
-                                <Shield className="h-6 w-6 text-indigo-600" />
-                              </div>
-                              <h3 className="mb-2 text-lg font-semibold text-slate-900">授权应用</h3>
-                              <p className="mb-4 text-sm text-slate-600">
-                                点击下方按钮，通过飞书 CLI 授权应用访问权限。
-                              </p>
-                              <ul className="mb-4 grid gap-2 text-left text-sm text-slate-600 sm:grid-cols-2">
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  获取妙记基本信息
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  导出妙记转写文字
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  持续访问已授权数据
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  多维表格（查看、评论、编辑）
-                                </li>
-                              </ul>
+                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3">
                               {authorizeUrl ? (
-                                <div className="space-y-3">
-                                  <div className="rounded-lg bg-white p-3 text-center">
-                                    <div className="mb-2 text-sm font-medium text-slate-700">请用飞书扫描下方二维码进行授权</div>
+                                <div className="flex items-center gap-4">
+                                  <div className="rounded-lg bg-white p-2 text-center shadow-sm">
                                     <img
-                                      src={`https://api.qrserver.com/v1/create-qr-code/?size=168x168&data=${encodeURIComponent(authorizeUrl)}`}
+                                      src={`https://api.qrserver.com/v1/create-qr-code/?size=116x116&data=${encodeURIComponent(authorizeUrl)}`}
                                       alt="授权二维码"
-                                      className="mx-auto h-[168px] w-[168px]"
-                                      width={168}
-                                      height={168}
+                                      className="mx-auto h-28 w-28"
+                                      width={116}
+                                      height={116}
                                       onError={(e) => {
                                         // Fallback: show URL as link if QR image fails
                                         (e.target as HTMLImageElement).style.display = 'none';
                                       }}
                                     />
-                                    <p className="mt-2 text-xs text-slate-500">
-                                      或
-                                      <a href={authorizeUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-indigo-600 hover:underline">
-                                        点击此处打开链接
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-medium text-slate-900">请用飞书扫码授权</div>
+                                    <p className="mt-1 text-xs leading-4 text-slate-600">授权妙记和多维表格访问权限。</p>
+                                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                                      <a href={authorizeUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:underline">
+                                        打开链接
                                       </a>
-                                    </p>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          setAuthorizeUrl(null);
+                                          setAuthorizePollStatus('idle');
+                                          if (authorizePollRef.current) {
+                                            clearTimeout(authorizePollRef.current);
+                                            authorizePollRef.current = null;
+                                          }
+                                        }}
+                                      >
+                                        重新发起
+                                      </Button>
+                                    </div>
                                     {authorizePollStatus === 'pending' && (
-                                      <div className="mt-3 flex items-center justify-center gap-2 text-sm text-slate-500">
-                                        <RefreshCw className="h-4 w-4 animate-spin" />
-                                        等待授权确认...
+                                      <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                        等待授权确认
                                       </div>
                                     )}
                                     {authorizePollStatus === 'completed' && (
-                                      <div className="mt-3 flex items-center justify-center gap-2 text-sm text-emerald-600">
-                                        <Check className="h-4 w-4" />
+                                      <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600">
+                                        <Check className="h-3.5 w-3.5" />
                                         授权已完成
                                       </div>
                                     )}
                                   </div>
-                                  <Button
-                                    variant="outline"
-                                    onClick={() => {
-                                      setAuthorizeUrl(null);
-                                      setAuthorizePollStatus('idle');
-                                      if (authorizePollRef.current) {
-                                        clearTimeout(authorizePollRef.current);
-                                        authorizePollRef.current = null;
-                                      }
-                                    }}
-                                    className="w-full"
-                                  >
-                                    重新发起授权
-                                  </Button>
                                 </div>
                               ) : (
-                                <>
-                                  <Button onClick={handleAuthorize} disabled={isAuthorizing} className="w-full">
+                                <div className="flex items-center justify-between gap-4">
+                                  <div className="min-w-0">
+                                    <h3 className="text-sm font-semibold text-slate-900">授权应用</h3>
+                                    <p className="mt-1 text-xs leading-4 text-slate-600">允许系统读取妙记并写入目标多维表格。</p>
+                                  </div>
+                                  <Button onClick={handleAuthorize} disabled={isAuthorizing} size="sm" className="shrink-0">
                                     {isAuthorizing ? (
                                       <>
                                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                                        生成授权二维码中...
+                                        生成中
                                       </>
                                     ) : (
                                       <>
@@ -1215,7 +1138,7 @@ export default function FeishuConfigWorkspace() {
                                       </>
                                     )}
                                   </Button>
-                                </>
+                                </div>
                               )}
                             </div>
                           </div>
@@ -1223,7 +1146,7 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <div id="step-organization" className="rounded-xl border border-slate-200 bg-white p-4">
+                    <div id="step-organization" className="min-h-0 flex-1 rounded-xl border border-slate-200 bg-white p-3">
                       <StepHeader
                         step={3}
                         status={selectedOrgTargetId ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
@@ -1231,33 +1154,32 @@ export default function FeishuConfigWorkspace() {
                       />
                       <CardContent className="px-0 pb-0 pt-0">
                         {detail?.authorization?.status !== 'authorized' ? (
-                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
-                            <div className="mb-2 text-sm font-medium text-slate-500">请先完成飞书用户授权</div>
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
+                            <div className="text-sm font-medium text-slate-500">请先完成第 2 步用户授权</div>
                           </div>
                         ) : (
-                          <div className="space-y-4">
-                            <div className={selectedOrgTarget ? 'rounded-lg bg-emerald-50 p-4' : 'rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-4'}>
-                              <div className="mb-2 flex items-center gap-2">
+                          <div className="space-y-2">
+                            <div className={selectedOrgTarget ? 'rounded-lg bg-emerald-50 p-3' : 'rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3'}>
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="mb-1 flex items-center gap-2">
+                                    {selectedOrgTarget ? (
+                                      <Check className="h-4 w-4 text-emerald-600" />
+                                    ) : (
+                                      <AlertCircle className="h-4 w-4 text-indigo-600" />
+                                    )}
+                                    <span className={selectedOrgTarget ? 'text-sm font-medium text-emerald-900' : 'text-sm font-medium text-indigo-900'}>
+                                      {selectedOrgTarget ? '组织已选择' : '请选择所在组织'}
+                                    </span>
+                                  </div>
+                                  <p className={selectedOrgTarget ? 'text-xs text-emerald-900' : 'text-xs text-slate-600'}>
+                                    当前项目：{activeOrgTargets?.project?.name || '尚未导入 active 项目配置'}
+                                  </p>
+                                </div>
                                 {selectedOrgTarget ? (
-                                  <Check className="h-4 w-4 text-emerald-600" />
-                                ) : (
-                                  <AlertCircle className="h-4 w-4 text-indigo-600" />
-                                )}
-                                <span className={selectedOrgTarget ? 'font-medium text-emerald-900' : 'font-medium text-indigo-900'}>
-                                  {selectedOrgTarget ? '组织已选择' : '请选择所在组织'}
-                                </span>
+                                  <Badge className="shrink-0 bg-emerald-100 text-emerald-700">{selectedOrgTarget.orgName}</Badge>
+                                ) : null}
                               </div>
-                              <p className={selectedOrgTarget ? 'text-sm text-emerald-900' : 'text-sm text-slate-600'}>
-                                当前项目：{activeOrgTargets?.project?.name || '尚未导入 active 项目配置'}
-                              </p>
-                              {selectedOrgTarget ? (
-                                <p className="mt-2 text-sm text-emerald-900">
-                                  当前组织：{selectedOrgTarget.orgName}
-                                </p>
-                              ) : null}
-                              <p className="mt-2 text-xs leading-5 text-slate-500">
-                                修改组织只影响后续新产生的会议分析结果，历史报告不会迁移。
-                              </p>
                             </div>
                             {activeOrgTargets?.targets.length ? (
                               <div className="grid gap-2 sm:grid-cols-2">
