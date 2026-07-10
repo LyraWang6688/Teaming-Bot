@@ -15,7 +15,6 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
 import {
@@ -26,6 +25,7 @@ import {
   RefreshCw,
   Rocket,
   Shield,
+  Sparkles,
   User,
   QrCode,
 } from 'lucide-react';
@@ -42,7 +42,6 @@ const OAUTH_SCOPE_DESCRIPTIONS: Record<string, string> = {
 };
 
 type StepDisplayStatus = 'completed' | 'current' | 'pending';
-type SummaryTone = 'slate' | 'indigo' | 'amber' | 'emerald';
 
 type AuthUser = {
   id: string;
@@ -132,12 +131,6 @@ type ActiveOrgTargetsResponse = {
   targets: OrgTargetView[];
 };
 
-type SetupSummary = {
-  tone: SummaryTone;
-  title: string;
-  description: string;
-};
-
 function formatDateTime(value: string | null) {
   if (!value) return '未设置';
   const date = new Date(value);
@@ -207,70 +200,6 @@ function getStepDescription(step: number) {
   }
 }
 
-function buildSetupSummary(options: {
-  user: AuthUser | null;
-  integration: IntegrationView | null;
-  authorization: AuthorizationView | null | undefined;
-  checks: CheckStatusView | null | undefined;
-  isRunningChecks: boolean;
-  setupComplete: boolean;
-  hasSelectedOrganization: boolean;
-}): SetupSummary {
-  if (!options.user) {
-    return {
-      tone: 'indigo',
-      title: '创建应用',
-      description: '点击下方按钮，通过飞书 CLI 创建新的飞书应用。',
-    };
-  }
-
-  if (!options.integration) {
-    return {
-      tone: 'indigo',
-      title: '创建应用',
-      description: '点击下方按钮，通过飞书 CLI 创建新的飞书应用。',
-    };
-  }
-
-  if (!options.authorization || options.authorization.status !== 'authorized') {
-    return {
-      tone: 'indigo',
-      title: '授权应用',
-      description: '点击按钮，通过飞书 CLI 完成授权。',
-    };
-  }
-
-  if (!options.hasSelectedOrganization) {
-    return {
-      tone: 'indigo',
-      title: '选择组织',
-      description: '请选择你所在的组织，系统会写入该组织对应的多维表格。',
-    };
-  }
-
-  if (options.setupComplete) {
-    return {
-      tone: 'emerald',
-      title: '配置完成，可以开始使用',
-      description: '系统将自动监听并分析后续会议。',
-    };
-  }
-
-  if (options.isRunningChecks) {
-    return {
-      tone: 'amber',
-      title: '系统正在自动校验',
-      description: '正在后台检查各项配置是否正常。',
-    };
-  }
-
-  return {
-    tone: 'amber',
-    title: '等待系统完成校验',
-    description: '配置步骤已完成，系统正在确认各项状态。',
-  };
-}
-
 function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
   return Boolean(
     checks &&
@@ -310,39 +239,6 @@ function getCheckStatusTone(passed: boolean) {
 
 function getCheckStatusLabel(passed: boolean) {
   return passed ? '已通过' : '待确认';
-}
-
-function getSummaryToneClasses(tone: SummaryTone) {
-  switch (tone) {
-    case 'emerald':
-      return {
-        badge: 'bg-emerald-100 text-emerald-700',
-        panel: 'border-emerald-200 bg-emerald-50',
-        title: 'text-emerald-900',
-        text: 'text-emerald-800',
-      };
-    case 'amber':
-      return {
-        badge: 'bg-amber-100 text-amber-700',
-        panel: 'border-amber-200 bg-amber-50',
-        title: 'text-amber-900',
-        text: 'text-amber-800',
-      };
-    case 'indigo':
-      return {
-        badge: 'bg-indigo-100 text-indigo-700',
-        panel: 'border-indigo-200 bg-indigo-50',
-        title: 'text-indigo-900',
-        text: 'text-indigo-800',
-      };
-    default:
-      return {
-        badge: 'bg-slate-100 text-slate-700',
-        panel: 'border-slate-200 bg-slate-50',
-        title: 'text-slate-900',
-        text: 'text-slate-700',
-      };
-  }
 }
 
 function createSetupTraceId() {
@@ -425,6 +321,7 @@ export default function FeishuConfigWorkspace() {
   const [isCheckingEvent, setIsCheckingEvent] = useState(false);
 
   const [pageError, setPageError] = useState<string | null>(null);
+  const [showCelebration, setShowCelebration] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [registrationQrUrl, setRegistrationQrUrl] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
@@ -515,23 +412,17 @@ export default function FeishuConfigWorkspace() {
     [selectedOrgTargetId, detail?.authorization?.status, displayedChecksPassed, eventSubscriptionPassed]
   );
 
-  const setupSummary = useMemo(() => {
-    return buildSetupSummary({
-      user,
-      integration,
-      authorization: detail?.authorization,
-      checks: detail?.checks,
-      isRunningChecks,
-      setupComplete,
-      hasSelectedOrganization: Boolean(selectedOrgTargetId),
-    });
-  }, [user, integration, detail?.authorization, detail?.checks, isRunningChecks, setupComplete, selectedOrgTargetId]);
-
-  const summaryToneClasses = useMemo(() => getSummaryToneClasses(setupSummary.tone), [setupSummary.tone]);
   const selectedOrgTarget = useMemo(
     () => activeOrgTargets?.targets.find((target) => target.id === selectedOrgTargetId) || null,
     [activeOrgTargets?.targets, selectedOrgTargetId]
   );
+
+  useEffect(() => {
+    if (!setupComplete) return;
+    setShowCelebration(true);
+    const timer = window.setTimeout(() => setShowCelebration(false), 4200);
+    return () => window.clearTimeout(timer);
+  }, [setupComplete]);
 
   useEffect(() => {
     void (async () => {
@@ -910,6 +801,26 @@ export default function FeishuConfigWorkspace() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {showCelebration ? (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-slate-950/10 backdrop-blur-[1px]">
+          <div className="relative overflow-hidden rounded-2xl border border-emerald-200 bg-white px-8 py-7 text-center shadow-2xl">
+            {['left-6 top-6 bg-pink-400', 'right-8 top-8 bg-indigo-400', 'left-10 bottom-8 bg-amber-400', 'right-10 bottom-7 bg-emerald-400', 'left-1/2 top-4 bg-sky-400'].map((className) => (
+              <span
+                key={className}
+                className={`absolute h-2.5 w-2.5 rounded-full ${className} animate-ping`}
+              />
+            ))}
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+              <Sparkles className="h-7 w-7" />
+            </div>
+            <div className="text-lg font-semibold text-slate-900">配置完成</div>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-slate-600">
+              系统校验已通过，后续可以自动监听并分析飞书会议。
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       <div className="mx-auto flex h-auto max-w-6xl flex-col gap-4 lg:h-[calc(100vh-8rem)]">
         <div className="shrink-0 space-y-1">
           <h1 className="text-2xl font-bold text-slate-900">飞书集成配置</h1>
@@ -918,26 +829,16 @@ export default function FeishuConfigWorkspace() {
 
         <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col gap-3">
-            <Card className={summaryToneClasses.panel}>
-              <CardContent className="space-y-2 p-4">
-                <Badge className={summaryToneClasses.badge}>当前状态</Badge>
-                <div className={`text-base font-semibold ${summaryToneClasses.title}`}>{setupSummary.title}</div>
-                <p className={`text-sm leading-5 ${summaryToneClasses.text}`}>{setupSummary.description}</p>
-                <div className="flex items-center gap-2 text-xs text-slate-600">
-                  <span>当前进度</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                  <span>第 {currentStep} 步 / 共 4 步</span>
-                </div>
-                {setupComplete ? (
-                  <div className="rounded-lg border border-emerald-200 bg-white/70 p-3 text-sm text-emerald-800">
-                    系统内部校验已通过，你可以开始使用系统了。
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-
             <Card className="shrink-0">
               <CardContent className="p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="text-sm font-medium text-slate-900">配置进度</div>
+                  <div className="flex items-center gap-1 text-xs text-slate-500">
+                    <span>第 {currentStep} 步</span>
+                    <ArrowRight className="h-3 w-3" />
+                    <span>共 4 步</span>
+                  </div>
+                </div>
                 <div className="space-y-2">
                   {sidebarSteps.map((item, index) => {
                     const isCompleted = item.status === 'completed';
@@ -1025,13 +926,18 @@ export default function FeishuConfigWorkspace() {
                     刷新校验
                   </Button>
                 ) : null}
+                {setupComplete ? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs leading-5 text-emerald-800">
+                    配置已完成，后续可以实现飞书会议的自动监听与分析。
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           </aside>
 
           <div className="flex min-h-0 flex-col">
             <Card className="min-h-0 flex-1">
-              <CardContent className="flex h-full min-h-0 flex-col p-5">
+              <CardContent className="h-full min-h-0 space-y-4 overflow-y-auto p-5">
                 {authLoading ? (
                   <div className="space-y-4">
                     <Skeleton className="h-8 w-32" />
@@ -1098,16 +1004,16 @@ export default function FeishuConfigWorkspace() {
                       </Button>
                     </div>
 
-                    <div id="step-create-app" className={currentStep === 1 ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+                    <div id="step-create-app" className="rounded-xl border border-slate-200 bg-white p-4">
                       <StepHeader
                         step={1}
                         status={integration ? 'completed' : 'current'}
                         description={getStepDescription(1)}
                       />
-                      <CardContent className="min-h-0 flex-1 overflow-hidden px-0 pb-0 pt-0">
+                      <CardContent className="px-0 pb-0 pt-0">
                         {!integration ? (
-                          <div className="h-full">
-                            <div className="flex h-full flex-col justify-center rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-5 text-center">
+                          <div>
+                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-5 text-center">
                               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm">
                                 <Rocket className="h-6 w-6 text-indigo-600" />
                               </div>
@@ -1149,7 +1055,7 @@ export default function FeishuConfigWorkspace() {
                             </div>
                           </div>
                         ) : (
-                          <div className="h-full">
+                          <div>
                             <div className="rounded-lg bg-emerald-50 p-4">
                               <div className="flex items-center gap-2 mb-2">
                                 <Check className="h-4 w-4 text-emerald-600" />
@@ -1172,15 +1078,13 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <Separator className="hidden" />
-
-                    <div id="step-authorize" className={currentStep === 2 ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+                    <div id="step-authorize" className="rounded-xl border border-slate-200 bg-white p-4">
                       <StepHeader
                         step={2}
                         status={(detail?.authorization?.status === 'authorized') ? 'completed' : integration ? 'current' : 'pending'}
                         description={getStepDescription(2)}
                       />
-                      <CardContent className="min-h-0 flex-1 overflow-hidden px-0 pb-0 pt-0">
+                      <CardContent className="px-0 pb-0 pt-0">
                         {!integration ? (
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
                             <div className="mb-2 text-sm font-medium text-slate-500">请先创建应用</div>
@@ -1220,8 +1124,8 @@ export default function FeishuConfigWorkspace() {
                             </div>
                           </div>
                         ) : (
-                          <div className="h-full">
-                            <div className="flex h-full flex-col justify-center rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-5 text-center">
+                          <div>
+                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-5 text-center">
                               <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm">
                                 <Shield className="h-6 w-6 text-indigo-600" />
                               </div>
@@ -1319,15 +1223,13 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <Separator className="hidden" />
-
-                    <div id="step-organization" className={currentStep === 3 ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+                    <div id="step-organization" className="rounded-xl border border-slate-200 bg-white p-4">
                       <StepHeader
                         step={3}
                         status={selectedOrgTargetId ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
                         description={getStepDescription(3)}
                       />
-                      <CardContent className="min-h-0 flex-1 overflow-hidden px-0 pb-0 pt-0">
+                      <CardContent className="px-0 pb-0 pt-0">
                         {detail?.authorization?.status !== 'authorized' ? (
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
                             <div className="mb-2 text-sm font-medium text-slate-500">请先完成飞书用户授权</div>
@@ -1381,29 +1283,6 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <Separator className="hidden" />
-
-                    <div id="step-checks" className={currentStep === 4 ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
-                      <StepHeader
-                        step={4}
-                        status={displayedChecksPassed ? 'completed' : selectedOrgTargetId ? 'current' : 'pending'}
-                        description={getStepDescription(4)}
-                      />
-                      <CardContent className="min-h-0 flex-1 overflow-hidden px-0 pb-0 pt-0">
-                        <div className="flex h-full flex-col justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
-                          <div className="mb-2 text-sm font-medium text-slate-700">系统会自动完成校验</div>
-                          <p className="text-sm text-slate-500">
-                            应用凭证、用户授权、目标表格访问和事件监听状态会显示在左侧“系统校验结果”中。
-                          </p>
-                          {integration?.id ? (
-                            <Button type="button" variant="outline" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="mt-4">
-                              <RefreshCw className={`mr-2 h-4 w-4 ${isRunningChecks ? 'animate-spin' : ''}`} />
-                              刷新系统校验
-                            </Button>
-                          ) : null}
-                        </div>
-                      </CardContent>
-                    </div>
                   </>
                 )}
               </CardContent>
