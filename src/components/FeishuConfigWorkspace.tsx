@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
@@ -355,11 +363,11 @@ function StepHeader(props: {
   const isCurrent = status === 'current';
 
   return (
-    <CardHeader className="pb-3">
+    <CardHeader className="px-0 pb-3 pt-0">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div
-            className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-medium ${
+            className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium ${
               isCompleted
                 ? 'bg-emerald-500 text-white'
                 : isCurrent
@@ -381,7 +389,7 @@ function StepHeader(props: {
             >
               {getStepTitle(step)}
             </div>
-            <CardDescription className="pt-1">{description}</CardDescription>
+            <CardDescription className="pt-0.5 text-xs">{description}</CardDescription>
           </div>
         </div>
         {badgeText ? (
@@ -881,19 +889,40 @@ export default function FeishuConfigWorkspace() {
 
   return (
     <Layout>
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="space-y-2">
+      <AlertDialog open={Boolean(pageError)} onOpenChange={(open) => {
+        if (!open) setPageError(null);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-red-100 text-red-600">
+              <AlertCircle className="h-5 w-5" />
+            </div>
+            <AlertDialogTitle>操作未完成</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-6 text-slate-600">
+              {pageError}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setPageError(null)}>
+              我知道了
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <div className="mx-auto flex h-auto max-w-6xl flex-col gap-4 lg:h-[calc(100vh-8rem)]">
+        <div className="shrink-0 space-y-1">
           <h1 className="text-2xl font-bold text-slate-900">飞书集成配置</h1>
-          <p className="text-slate-600">完成以下 4 个步骤，让系统自动监听并分析你的飞书会议。</p>
+          <p className="text-sm text-slate-600">完成创建应用、用户授权和组织选择，系统会自动校验目标表格与事件监听状态。</p>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <aside className="space-y-4 self-start lg:sticky lg:top-24">
+        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+          <aside className="flex min-h-0 flex-col gap-3">
             <Card className={summaryToneClasses.panel}>
-              <CardContent className="space-y-3 pt-6">
+              <CardContent className="space-y-2 p-4">
                 <Badge className={summaryToneClasses.badge}>当前状态</Badge>
                 <div className={`text-base font-semibold ${summaryToneClasses.title}`}>{setupSummary.title}</div>
-                <p className={`text-sm leading-6 ${summaryToneClasses.text}`}>{setupSummary.description}</p>
+                <p className={`text-sm leading-5 ${summaryToneClasses.text}`}>{setupSummary.description}</p>
                 <div className="flex items-center gap-2 text-xs text-slate-600">
                   <span>当前进度</span>
                   <ArrowRight className="h-3.5 w-3.5" />
@@ -907,9 +936,9 @@ export default function FeishuConfigWorkspace() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardContent className="pt-6">
-                <div className="space-y-4">
+            <Card className="shrink-0">
+              <CardContent className="p-4">
+                <div className="space-y-2">
                   {sidebarSteps.map((item, index) => {
                     const isCompleted = item.status === 'completed';
                     const isCurrent = item.status === 'current';
@@ -928,10 +957,10 @@ export default function FeishuConfigWorkspace() {
                             {isCompleted ? <Check className="h-4 w-4" /> : item.step}
                           </div>
                           {index < sidebarSteps.length - 1 ? (
-                            <div className={`mt-2 h-10 w-px ${isCompleted ? 'bg-emerald-300' : 'bg-slate-200'}`} />
+                            <div className={`mt-1 h-6 w-px ${isCompleted ? 'bg-emerald-300' : 'bg-slate-200'}`} />
                           ) : null}
                         </div>
-                        <div className="pb-2">
+                        <div className="pb-1">
                           <div
                             className={`text-sm font-medium ${
                               isCompleted
@@ -943,7 +972,7 @@ export default function FeishuConfigWorkspace() {
                           >
                             {item.title}
                           </div>
-                          <div className="mt-1 text-xs leading-5 text-slate-500">{item.description}</div>
+                          <div className="mt-0.5 text-xs leading-4 text-slate-500">{item.description}</div>
                         </div>
                       </a>
                     );
@@ -952,8 +981,8 @@ export default function FeishuConfigWorkspace() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardContent className="space-y-3 pt-6">
+            <Card className="min-h-0 flex-1">
+              <CardContent className="space-y-2 p-4">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-medium text-slate-900">系统校验结果</div>
                   <Badge
@@ -963,7 +992,7 @@ export default function FeishuConfigWorkspace() {
                     {displayedChecksPassed ? '全部通过' : '待确认'}
                   </Badge>
                 </div>
-                <div className="space-y-2 text-sm">
+                <div className="space-y-1.5 text-sm">
                   <div className={`flex items-center justify-between ${getCheckStatusTone(Boolean(selectedOrgTargetId))}`}>
                     <span>组织配置</span>
                     <span className="text-xs">{selectedOrgTarget ? selectedOrgTarget.orgName : getCheckStatusLabel(Boolean(selectedOrgTargetId))}</span>
@@ -1000,16 +1029,9 @@ export default function FeishuConfigWorkspace() {
             </Card>
           </aside>
 
-          <div className="space-y-6">
-            {pageError ? (
-              <Alert className="border-red-200 bg-red-50">
-                <AlertCircle className="h-4 w-4 text-red-600" />
-                <AlertDescription className="text-red-800">{pageError}</AlertDescription>
-              </Alert>
-            ) : null}
-
-            <Card>
-              <CardContent className="space-y-6">
+          <div className="flex min-h-0 flex-col">
+            <Card className="min-h-0 flex-1">
+              <CardContent className="flex h-full min-h-0 flex-col p-5">
                 {authLoading ? (
                   <div className="space-y-4">
                     <Skeleton className="h-8 w-32" />
@@ -1076,24 +1098,24 @@ export default function FeishuConfigWorkspace() {
                       </Button>
                     </div>
 
-                    <div id="step-create-app">
+                    <div id="step-create-app" className={currentStep === 1 ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
                       <StepHeader
                         step={1}
                         status={integration ? 'completed' : 'current'}
                         description={getStepDescription(1)}
                       />
-                      <CardContent>
+                      <CardContent className="min-h-0 flex-1 overflow-hidden px-0 pb-0 pt-0">
                         {!integration ? (
-                          <div className="space-y-4">
-                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
-                              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
-                                <Rocket className="h-8 w-8 text-indigo-600" />
+                          <div className="h-full">
+                            <div className="flex h-full flex-col justify-center rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-5 text-center">
+                              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm">
+                                <Rocket className="h-6 w-6 text-indigo-600" />
                               </div>
                               <h3 className="mb-2 text-lg font-semibold text-slate-900">创建应用</h3>
-                              <p className="mb-6 text-sm text-slate-600">
+                              <p className="mb-4 text-sm text-slate-600">
                                 点击下方按钮，系统将自动完成以下操作：
                               </p>
-                              <ul className="mb-6 text-left text-sm text-slate-600 space-y-2">
+                              <ul className="mb-4 grid gap-2 text-left text-sm text-slate-600 sm:grid-cols-2">
                                 <li className="flex items-center gap-2">
                                   <Check className="h-4 w-4 text-emerald-500" />
                                   创建应用（App ID + App Secret）
@@ -1127,7 +1149,7 @@ export default function FeishuConfigWorkspace() {
                             </div>
                           </div>
                         ) : (
-                          <div className="space-y-4">
+                          <div className="h-full">
                             <div className="rounded-lg bg-emerald-50 p-4">
                               <div className="flex items-center gap-2 mb-2">
                                 <Check className="h-4 w-4 text-emerald-600" />
@@ -1150,17 +1172,17 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <Separator />
+                    <Separator className="hidden" />
 
-                    <div id="step-authorize">
+                    <div id="step-authorize" className={currentStep === 2 ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
                       <StepHeader
                         step={2}
                         status={(detail?.authorization?.status === 'authorized') ? 'completed' : integration ? 'current' : 'pending'}
                         description={getStepDescription(2)}
                       />
-                      <CardContent>
+                      <CardContent className="min-h-0 flex-1 overflow-hidden px-0 pb-0 pt-0">
                         {!integration ? (
-                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
                             <div className="mb-2 text-sm font-medium text-slate-500">请先创建应用</div>
                           </div>
                         ) : detail?.authorization?.status === 'authorized' ? (
@@ -1198,16 +1220,16 @@ export default function FeishuConfigWorkspace() {
                             </div>
                           </div>
                         ) : (
-                          <div className="space-y-4">
-                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
-                              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
-                                <Shield className="h-8 w-8 text-indigo-600" />
+                          <div className="h-full">
+                            <div className="flex h-full flex-col justify-center rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-5 text-center">
+                              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm">
+                                <Shield className="h-6 w-6 text-indigo-600" />
                               </div>
                               <h3 className="mb-2 text-lg font-semibold text-slate-900">授权应用</h3>
-                              <p className="mb-6 text-sm text-slate-600">
+                              <p className="mb-4 text-sm text-slate-600">
                                 点击下方按钮，通过飞书 CLI 授权应用访问权限。
                               </p>
-                              <ul className="mb-6 text-left text-sm text-slate-600 space-y-2">
+                              <ul className="mb-4 grid gap-2 text-left text-sm text-slate-600 sm:grid-cols-2">
                                 <li className="flex items-center gap-2">
                                   <Check className="h-4 w-4 text-emerald-500" />
                                   获取妙记基本信息
@@ -1226,15 +1248,15 @@ export default function FeishuConfigWorkspace() {
                                 </li>
                               </ul>
                               {authorizeUrl ? (
-                                <div className="space-y-4">
-                                  <div className="rounded-lg bg-white p-4 text-center">
+                                <div className="space-y-3">
+                                  <div className="rounded-lg bg-white p-3 text-center">
                                     <div className="mb-2 text-sm font-medium text-slate-700">请用飞书扫描下方二维码进行授权</div>
                                     <img
-                                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(authorizeUrl)}`}
+                                      src={`https://api.qrserver.com/v1/create-qr-code/?size=168x168&data=${encodeURIComponent(authorizeUrl)}`}
                                       alt="授权二维码"
-                                      className="mx-auto"
-                                      width={200}
-                                      height={200}
+                                      className="mx-auto h-[168px] w-[168px]"
+                                      width={168}
+                                      height={168}
                                       onError={(e) => {
                                         // Fallback: show URL as link if QR image fails
                                         (e.target as HTMLImageElement).style.display = 'none';
@@ -1297,17 +1319,17 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <Separator />
+                    <Separator className="hidden" />
 
-                    <div id="step-organization">
+                    <div id="step-organization" className={currentStep === 3 ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
                       <StepHeader
                         step={3}
                         status={selectedOrgTargetId ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
                         description={getStepDescription(3)}
                       />
-                      <CardContent>
+                      <CardContent className="min-h-0 flex-1 overflow-hidden px-0 pb-0 pt-0">
                         {detail?.authorization?.status !== 'authorized' ? (
-                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
                             <div className="mb-2 text-sm font-medium text-slate-500">请先完成飞书用户授权</div>
                           </div>
                         ) : (
@@ -1359,16 +1381,16 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <Separator />
+                    <Separator className="hidden" />
 
-                    <div id="step-checks">
+                    <div id="step-checks" className={currentStep === 4 ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
                       <StepHeader
                         step={4}
                         status={displayedChecksPassed ? 'completed' : selectedOrgTargetId ? 'current' : 'pending'}
                         description={getStepDescription(4)}
                       />
-                      <CardContent>
-                        <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+                      <CardContent className="min-h-0 flex-1 overflow-hidden px-0 pb-0 pt-0">
+                        <div className="flex h-full flex-col justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 p-5 text-center">
                           <div className="mb-2 text-sm font-medium text-slate-700">系统会自动完成校验</div>
                           <p className="text-sm text-slate-500">
                             应用凭证、用户授权、目标表格访问和事件监听状态会显示在左侧“系统校验结果”中。
