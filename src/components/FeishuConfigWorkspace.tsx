@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
+import { createStepTimer, trackSetupWizardEvent } from '@/lib/platform/analytics';
 import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
 import {
   AlertCircle,
@@ -175,6 +176,20 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
     throw new Error(payload?.error || '请求失败，请稍后重试。');
   }
   return payload.data as T;
+}
+
+function getFailedCheckKeys(checks: CheckStatusView) {
+  const statusEntries = {
+    appCredentialStatus: checks.appCredentialStatus,
+    permissionStatus: checks.permissionStatus,
+    eventSubscriptionStatus: checks.eventSubscriptionStatus,
+    oauthStatus: checks.oauthStatus,
+    baseStatus: checks.baseStatus,
+  };
+
+  return Object.entries(statusEntries)
+    .filter(([, status]) => status !== 'success' && status !== 'authorized')
+    .map(([key]) => key);
 }
 
 function getStepTitle(step: number) {
@@ -407,6 +422,7 @@ export default function FeishuConfigWorkspace() {
   const searchParams = useSearchParams();
   const autoCheckKeyRef = useRef<string | null>(null);
   const setupTraceIdRef = useRef<string | null>(null);
+  const pageViewTrackedRef = useRef(false);
 
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -533,6 +549,36 @@ export default function FeishuConfigWorkspace() {
     [activeOrgTargets?.targets, selectedOrgTargetId]
   );
 
+  const trackSetupEvent = useCallback((event: string, context: Record<string, unknown> = {}) => {
+    trackSetupWizardEvent(event, {
+      setupTraceId: getSetupTraceId(),
+      userId: user?.id || null,
+      integrationId: integration?.id || null,
+      projectId: activeOrgTargets?.project?.id || selectedOrgTarget?.projectId || null,
+      orgTargetId: selectedOrgTargetId || null,
+      orgKey: selectedOrgTarget?.orgKey || null,
+      currentStep,
+      ...context,
+    });
+  }, [
+    activeOrgTargets?.project?.id,
+    currentStep,
+    getSetupTraceId,
+    integration?.id,
+    selectedOrgTarget?.orgKey,
+    selectedOrgTarget?.projectId,
+    selectedOrgTargetId,
+    user?.id,
+  ]);
+
+  useEffect(() => {
+    if (pageViewTrackedRef.current) return;
+    pageViewTrackedRef.current = true;
+    trackSetupEvent('setup_page_view', {
+      status: 'shown',
+    });
+  }, [trackSetupEvent]);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -542,12 +588,25 @@ export default function FeishuConfigWorkspace() {
           | null;
         if (payload?.success && payload.data) {
           setActiveOrgTargets(payload.data);
+          trackSetupWizardEvent('setup_org_targets_loaded', {
+            source: 'setup_wizard',
+            setupTraceId: getSetupTraceId(),
+            projectId: payload.data.project?.id || null,
+            targetCount: payload.data.targets.length,
+            status: 'succeeded',
+          });
         }
       } catch (error) {
         logClientMonitor('error', 'feishu_config_workspace', 'active_org_targets_load_failed', toClientErrorContext(error));
+        trackSetupWizardEvent('setup_org_targets_load_failed', {
+          source: 'setup_wizard',
+          setupTraceId: getSetupTraceId(),
+          status: 'failed',
+          ...toClientErrorContext(error),
+        });
       }
     })();
-  }, []);
+  }, [getSetupTraceId]);
 
   useEffect(() => {
     setAuthLoading(true);
@@ -665,12 +724,31 @@ export default function FeishuConfigWorkspace() {
 
         setIntegration(detailData.integration);
         setDetail(detailData);
+        trackSetupWizardEvent('setup_status_loaded', {
+          source: 'setup_wizard',
+          setupTraceId: getSetupTraceId(),
+          userId: user.id,
+          integrationId: detailData.integration.id,
+          selectedOrgTargetId: detailData.integration.selectedOrgTargetId || null,
+          oauthStatus: detailData.authorization?.status || 'missing',
+          baseStatus: detailData.checks?.baseStatus || null,
+          permissionStatus: detailData.checks?.permissionStatus || null,
+          eventSubscriptionStatus: detailData.checks?.eventSubscriptionStatus || null,
+          status: 'succeeded',
+        });
         if (detailData.integration.selectedOrgTargetId) {
           setSelectedOrgTargetId(detailData.integration.selectedOrgTargetId);
         } else {
           setSelectedOrgTargetId(null);
         }
       } catch (error) {
+        trackSetupWizardEvent('setup_status_load_failed', {
+          source: 'setup_wizard',
+          setupTraceId: getSetupTraceId(),
+          userId: user.id,
+          status: 'failed',
+          ...toClientErrorContext(error),
+        });
         setPageError(error instanceof Error ? error.message : '加载配置失败。');
       } finally {
         setIsLoadingDetail(false);
@@ -705,6 +783,14 @@ export default function FeishuConfigWorkspace() {
   };
 
   const handleSelectOrganization = async (orgTargetId: string) => {
+    const duration = createStepTimer();
+    const target = activeOrgTargets?.targets.find((item) => item.id === orgTargetId);
+    trackSetupEvent('setup_org_target_selected', {
+      status: 'started',
+      projectId: activeOrgTargets?.project?.id || target?.projectId || null,
+      orgTargetId,
+      orgKey: target?.orgKey || null,
+    });
     setSelectedOrgTargetId(orgTargetId);
     setPageError(null);
 
@@ -723,7 +809,22 @@ export default function FeishuConfigWorkspace() {
       );
       setEventSubscribed(null);
       await loadIntegrationDetail(integration.id);
+      trackSetupEvent('setup_org_target_select_succeeded', {
+        status: 'succeeded',
+        projectId: activeOrgTargets?.project?.id || target?.projectId || null,
+        orgTargetId,
+        orgKey: target?.orgKey || null,
+        durationMs: duration(),
+      });
     } catch (error) {
+      trackSetupEvent('setup_org_target_select_failed', {
+        status: 'failed',
+        projectId: activeOrgTargets?.project?.id || target?.projectId || null,
+        orgTargetId,
+        orgKey: target?.orgKey || null,
+        durationMs: duration(),
+        ...toClientErrorContext(error),
+      });
       setPageError(error instanceof Error ? error.message : '保存组织失败。');
     } finally {
       setIsSavingOrganization(false);
@@ -731,6 +832,10 @@ export default function FeishuConfigWorkspace() {
   };
 
   const handleCreateApp = async () => {
+    const duration = createStepTimer();
+    trackSetupEvent('setup_create_app_clicked', {
+      status: 'started',
+    });
     setPageError(null);
     setRegistrationQrUrl(null);
     setVerificationUrl(null);
@@ -746,6 +851,11 @@ export default function FeishuConfigWorkspace() {
       
       setVerificationUrl(result.verificationUrl);
       setRegistrationQrUrl(result.verificationUrl);
+      trackSetupEvent('setup_create_app_qr_shown', {
+        status: 'shown',
+        profileName: result.profileName,
+        durationMs: duration(),
+      });
       
       const intervalMs = 3000;
       
@@ -761,10 +871,22 @@ export default function FeishuConfigWorkspace() {
           
           if (status === 'completed') {
             if (pollRef.current) clearInterval(pollRef.current);
+            trackSetupEvent('setup_create_app_succeeded', {
+              status: 'succeeded',
+              profileName: result.profileName,
+              durationMs: duration(),
+            });
             window.location.reload();
           } else if (status === 'error' || status === 'denied' || status === 'expired') {
             if (pollRef.current) clearInterval(pollRef.current);
             setRegistrationQrUrl(null);
+            trackSetupEvent('setup_create_app_failed', {
+              status: 'failed',
+              profileName: result.profileName,
+              pollStatus: status,
+              durationMs: duration(),
+              errorMessage: pollData?.data?.error || pollData?.error || '创建失败',
+            });
             setPageError(pollData?.data?.error || pollData?.error || '创建失败');
           }
         } catch (e) {
@@ -778,12 +900,21 @@ export default function FeishuConfigWorkspace() {
       
       pollRef.current = setInterval(poll, intervalMs);
     } catch (error) {
+      trackSetupEvent('setup_create_app_failed', {
+        status: 'failed',
+        durationMs: duration(),
+        ...toClientErrorContext(error),
+      });
       setPageError(error instanceof Error ? error.message : '创建应用失败。');
     }
   };
 
   const handleAuthorize = async () => {
     if (!integration?.id) return;
+    const duration = createStepTimer();
+    trackSetupEvent('setup_authorize_clicked', {
+      status: 'started',
+    });
     setIsAuthorizing(true);
     setPageError(null);
     setAuthorizeUrl(null);
@@ -799,6 +930,10 @@ export default function FeishuConfigWorkspace() {
 
       setAuthorizeUrl(result.verificationUrl);
       setAuthorizePollStatus('pending');
+      trackSetupEvent('setup_authorize_qr_shown', {
+        status: 'shown',
+        durationMs: duration(),
+      });
 
       if (authorizePollRef.current) {
         clearTimeout(authorizePollRef.current);
@@ -819,8 +954,18 @@ export default function FeishuConfigWorkspace() {
             if (pollResult.status === 'completed') {
               setAuthorizePollStatus('completed');
               await loadIntegrationDetail(integration.id);
+              trackSetupEvent('setup_authorize_succeeded', {
+                status: 'succeeded',
+                durationMs: duration(),
+              });
             } else if (pollResult.status === 'denied' || pollResult.status === 'expired' || pollResult.status === 'error') {
               setAuthorizePollStatus(pollResult.status);
+              trackSetupEvent(pollResult.status === 'expired' ? 'setup_authorize_expired' : 'setup_authorize_failed', {
+                status: 'failed',
+                pollStatus: pollResult.status,
+                durationMs: duration(),
+                errorMessage: pollResult.error || '授权失败',
+              });
               setPageError(pollResult.error || '授权失败');
             } else {
               scheduleAuthorizePoll();
@@ -843,6 +988,11 @@ export default function FeishuConfigWorkspace() {
         setupTraceId: getSetupTraceId(),
         integrationId: integration.id,
       });
+      trackSetupEvent('setup_authorize_failed', {
+        status: 'failed',
+        durationMs: duration(),
+        ...toClientErrorContext(error),
+      });
       setPageError(error instanceof Error ? error.message : '发起授权失败。');
     } finally {
       setIsAuthorizing(false);
@@ -851,19 +1001,36 @@ export default function FeishuConfigWorkspace() {
 
   const runAutomatedChecks = useCallback(
     async (integrationId: string, options?: { silent?: boolean }) => {
+      const duration = createStepTimer();
       setIsRunningChecks(true);
       if (!options?.silent) {
         setPageError(null);
       }
+      trackSetupEvent('setup_checks_started', {
+        status: 'started',
+        silent: Boolean(options?.silent),
+      });
       try {
-        await parseJsonResponse<{ allPassed: boolean }>(
+        const result = await parseJsonResponse<{ allPassed: boolean; checks?: CheckStatusView }>(
           await fetch(`/api/feishu/integrations/${integrationId}/checks`, {
             method: 'POST',
             headers: setupHeaders(),
           })
         );
         await loadIntegrationDetail(integrationId);
+        trackSetupEvent(result.allPassed ? 'setup_checks_succeeded' : 'setup_checks_failed', {
+          status: result.allPassed ? 'succeeded' : 'failed',
+          silent: Boolean(options?.silent),
+          durationMs: duration(),
+          failedChecks: result.checks ? getFailedCheckKeys(result.checks) : undefined,
+        });
       } catch (error) {
+        trackSetupEvent('setup_checks_failed', {
+          status: 'failed',
+          silent: Boolean(options?.silent),
+          durationMs: duration(),
+          ...toClientErrorContext(error),
+        });
         if (!options?.silent) {
           setPageError(error instanceof Error ? error.message : '系统内部校验失败。');
         }
@@ -871,8 +1038,25 @@ export default function FeishuConfigWorkspace() {
         setIsRunningChecks(false);
       }
     },
-    [loadIntegrationDetail, setupHeaders]
+    [loadIntegrationDetail, setupHeaders, trackSetupEvent]
   );
+
+  useEffect(() => {
+    if (!pageError) return;
+    trackSetupEvent('setup_error_dialog_shown', {
+      status: 'shown',
+      errorMessage: pageError,
+    });
+  }, [pageError, trackSetupEvent]);
+
+  const handleErrorDialogOpenChange = useCallback((open: boolean) => {
+    if (open || !pageError) return;
+    trackSetupEvent('setup_error_dialog_dismissed', {
+      status: 'dismissed',
+      errorMessage: pageError,
+    });
+    setPageError(null);
+  }, [pageError, trackSetupEvent]);
 
   useEffect(() => {
     if (!integration?.id || !autoCheckTriggerKey || isRunningChecks) {
@@ -889,9 +1073,7 @@ export default function FeishuConfigWorkspace() {
 
   return (
     <Layout>
-      <AlertDialog open={Boolean(pageError)} onOpenChange={(open) => {
-        if (!open) setPageError(null);
-      }}>
+      <AlertDialog open={Boolean(pageError)} onOpenChange={handleErrorDialogOpenChange}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-red-100 text-red-600">
@@ -903,9 +1085,7 @@ export default function FeishuConfigWorkspace() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setPageError(null)}>
-              我知道了
-            </AlertDialogAction>
+            <AlertDialogAction>我知道了</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

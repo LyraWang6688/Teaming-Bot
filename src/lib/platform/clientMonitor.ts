@@ -29,7 +29,7 @@ export function logClientMonitor(
     console[level]('[Client Monitor]', payload);
   }
 
-  if (typeof window !== 'undefined' && (level === 'warn' || level === 'error')) {
+  if (typeof window !== 'undefined') {
     void fetch('/api/client-log', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
