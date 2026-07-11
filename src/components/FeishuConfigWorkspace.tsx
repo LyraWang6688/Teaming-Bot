@@ -422,6 +422,12 @@ export default function FeishuConfigWorkspace() {
     [activeOrgTargets?.targets, selectedOrgTargetId]
   );
 
+  const createStepIsActive = !integration;
+  const authorizeStepIsActive = Boolean(integration && detail?.authorization?.status !== 'authorized');
+  const organizationStepIsActive = Boolean(detail?.authorization?.status === 'authorized' && !selectedOrgTargetId);
+  const getStepPanelClassName = (isActive: boolean) =>
+    `min-h-0 rounded-xl border border-slate-200 bg-white p-3 transition-all ${isActive ? 'flex flex-1 flex-col' : 'shrink-0'}`;
+
   useEffect(() => {
     if (!setupComplete) return;
     setShowCelebration(true);
@@ -822,9 +828,9 @@ export default function FeishuConfigWorkspace() {
             <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
               <QrCode className="h-5 w-5" />
             </div>
-            <AlertDialogTitle>扫码创建飞书应用</AlertDialogTitle>
+            <AlertDialogTitle>创建飞书应用</AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-6 text-slate-600">
-              请使用飞书扫码完成应用创建。二维码有效期 5 分钟，创建完成后页面会继续进入用户授权步骤。
+              你可以使用飞书扫码，也可以直接打开链接完成应用创建。二维码有效期 5 分钟，创建完成后页面会继续进入用户授权步骤。
             </AlertDialogDescription>
           </AlertDialogHeader>
           {activeRegistrationQrUrl ? (
@@ -837,21 +843,17 @@ export default function FeishuConfigWorkspace() {
                 />
               </div>
               <div className="space-y-2 text-sm text-slate-700">
-                <div className="font-medium text-slate-900">操作说明</div>
-                <p className="leading-6">扫码后按飞书页面提示完成应用创建和权限配置。系统会在后台轮询创建结果。</p>
+                <div className="font-medium text-slate-900">扫码或打开链接</div>
+                <p className="leading-6">按飞书页面提示完成应用创建和权限配置。系统会在后台轮询创建结果。</p>
+                <a href={activeRegistrationQrUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800">
+                  打开链接
+                </a>
                 <p className="text-xs leading-5 text-slate-500">如果二维码过期，请关闭弹窗后重新点击“创建应用”。</p>
               </div>
             </div>
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setActiveQrDialog(null)}>稍后处理</AlertDialogCancel>
-            {activeRegistrationQrUrl ? (
-              <AlertDialogAction asChild>
-                <a href={activeRegistrationQrUrl} target="_blank" rel="noopener noreferrer">
-                  打开链接
-                </a>
-              </AlertDialogAction>
-            ) : null}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -864,9 +866,9 @@ export default function FeishuConfigWorkspace() {
             <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
               <Shield className="h-5 w-5" />
             </div>
-            <AlertDialogTitle>扫码完成用户授权</AlertDialogTitle>
+            <AlertDialogTitle>完成用户授权</AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-6 text-slate-600">
-              请使用飞书扫码授权妙记和多维表格访问权限。授权完成后系统会自动更新状态。
+              你可以使用飞书扫码，也可以直接打开链接授权妙记和多维表格访问权限。授权完成后系统会自动更新状态。
             </AlertDialogDescription>
           </AlertDialogHeader>
           {authorizeUrl ? (
@@ -879,8 +881,11 @@ export default function FeishuConfigWorkspace() {
                 />
               </div>
               <div className="space-y-2 text-sm text-slate-700">
-                <div className="font-medium text-slate-900">操作说明</div>
-                <p className="leading-6">扫码后确认授权，系统会持续等待飞书返回授权结果。</p>
+                <div className="font-medium text-slate-900">扫码或打开链接</div>
+                <p className="leading-6">确认授权后，系统会持续等待飞书返回授权结果。</p>
+                <a href={authorizeUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800">
+                  打开链接
+                </a>
                 {authorizePollStatus === 'pending' ? (
                   <div className="flex items-center gap-2 text-xs text-slate-500">
                     <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -893,13 +898,6 @@ export default function FeishuConfigWorkspace() {
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setActiveQrDialog(null)}>稍后处理</AlertDialogCancel>
-            {authorizeUrl ? (
-              <AlertDialogAction asChild>
-                <a href={authorizeUrl} target="_blank" rel="noopener noreferrer">
-                  打开链接
-                </a>
-              </AlertDialogAction>
-            ) : null}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -924,7 +922,7 @@ export default function FeishuConfigWorkspace() {
         </div>
       ) : null}
 
-      <div className="mx-auto flex h-auto max-w-6xl flex-col gap-3 lg:h-[calc(100vh-8.5rem)] lg:overflow-hidden">
+      <div className="mx-auto flex h-[calc(100vh-4rem)] max-w-6xl flex-col gap-3 py-5 lg:overflow-hidden">
         <div className="shrink-0 space-y-0.5">
           <h1 className="text-xl font-bold text-slate-900">飞书集成配置</h1>
           <p className="text-sm text-slate-600">完成创建应用、用户授权和组织选择，系统会自动校验目标表格与事件监听状态。</p>
@@ -985,8 +983,8 @@ export default function FeishuConfigWorkspace() {
               </CardContent>
             </Card>
 
-            <Card className="shrink-0">
-              <CardContent className="space-y-1.5 p-2.5">
+            <Card className="min-h-0 flex-1">
+              <CardContent className="flex h-full min-h-0 flex-col space-y-1.5 p-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-medium text-slate-900">系统校验结果</div>
                   <div className="flex items-center gap-1.5">
@@ -1068,13 +1066,13 @@ export default function FeishuConfigWorkspace() {
                     </div>
                     ) : null}
 
-                    <div id="step-create-app" className="min-h-0 flex-1 rounded-xl border border-slate-200 bg-white p-3">
+                    <div id="step-create-app" className={getStepPanelClassName(createStepIsActive)}>
                       <StepHeader
                         step={1}
                         status={integration ? 'completed' : 'current'}
                         description={getStepDescription(1)}
                       />
-                      <CardContent className="px-0 pb-0 pt-0">
+                      <CardContent className="min-h-0 flex-1 px-0 pb-0 pt-0">
                         {!integration ? (
                           <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3">
                             {registrationQrUrl ? (
@@ -1110,57 +1108,40 @@ export default function FeishuConfigWorkspace() {
                             )}
                           </div>
                         ) : (
-                          <div>
-                            <div className="rounded-lg bg-emerald-50 p-3">
-                              <div className="mb-2 flex items-center gap-2">
-                                <Check className="h-4 w-4 text-emerald-600" />
-                                <span className="text-sm font-medium text-emerald-900">应用已创建</span>
+                          <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                                <span className="truncate text-sm font-medium text-emerald-900">应用已创建：{integration.name}</span>
                               </div>
-                              <div className="grid grid-cols-2 gap-3 text-xs">
-                                <div>
-                                  <div className="mb-1 text-emerald-600">应用名称</div>
-                                  <div className="font-medium text-emerald-900">{integration.name}</div>
-                                </div>
-                                <div>
-                                  <div className="mb-1 text-emerald-600">App ID</div>
-                                  <div className="truncate font-mono text-emerald-900">{integration.appId}</div>
-                                </div>
-                              </div>
+                              <span className="shrink-0 font-mono text-[11px] text-emerald-700">{integration.appId}</span>
                             </div>
-
                           </div>
                         )}
                       </CardContent>
                     </div>
 
-                    <div id="step-authorize" className="min-h-0 flex-1 rounded-xl border border-slate-200 bg-white p-3">
+                    <div id="step-authorize" className={getStepPanelClassName(authorizeStepIsActive)}>
                       <StepHeader
                         step={2}
                         status={(detail?.authorization?.status === 'authorized') ? 'completed' : integration ? 'current' : 'pending'}
                         description={getStepDescription(2)}
                       />
-                      <CardContent className="px-0 pb-0 pt-0">
+                      <CardContent className="min-h-0 flex-1 px-0 pb-0 pt-0">
                         {!integration ? (
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
                             <div className="text-sm font-medium text-slate-500">请先完成第 1 步创建应用</div>
                           </div>
                         ) : detail?.authorization?.status === 'authorized' ? (
-                          <div>
-                            <div className="rounded-lg bg-emerald-50 p-3">
-                              <div className="mb-2 flex items-center gap-2">
-                                <Check className="h-4 w-4 text-emerald-600" />
-                                <span className="text-sm font-medium text-emerald-900">已完成授权</span>
+                          <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                                <span className="truncate text-sm font-medium text-emerald-900">
+                                  已完成授权：{detail.authorization.authorizedUserName || '未知用户'}
+                                </span>
                               </div>
-                              <div className="grid grid-cols-2 gap-3 text-xs">
-                                <div>
-                                  <div className="mb-1 text-emerald-600">授权用户</div>
-                                  <div className="font-medium text-emerald-900">{detail.authorization.authorizedUserName || '未知'}</div>
-                                </div>
-                                <div>
-                                  <div className="mb-1 text-emerald-600">授权时间</div>
-                                  <div className="font-medium text-emerald-900">{formatDateTime(detail.authorization.updatedAt)}</div>
-                                </div>
-                              </div>
+                              <span className="shrink-0 text-[11px] text-emerald-700">{formatDateTime(detail.authorization.updatedAt)}</span>
                             </div>
                           </div>
                         ) : (
@@ -1232,13 +1213,13 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <div id="step-organization" className="min-h-0 flex-1 rounded-xl border border-slate-200 bg-white p-3">
+                    <div id="step-organization" className={getStepPanelClassName(organizationStepIsActive)}>
                       <StepHeader
                         step={3}
                         status={selectedOrgTargetId ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
                         description={getStepDescription(3)}
                       />
-                      <CardContent className="px-0 pb-0 pt-0">
+                      <CardContent className="min-h-0 flex-1 px-0 pb-0 pt-0">
                         {detail?.authorization?.status !== 'authorized' ? (
                           <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
                             <div className="text-sm font-medium text-slate-500">请先完成第 2 步用户授权</div>
