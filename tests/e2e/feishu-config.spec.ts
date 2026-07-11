@@ -308,7 +308,7 @@ test.describe('Feishu setup wizard', () => {
     await gotoSetupWizard(page);
     await page.getByRole('button', { name: '开始授权' }).click();
 
-    await expect(page.getByText('扫码完成用户授权')).toBeVisible();
+    await expect(page.getByText('完成用户授权')).toBeVisible();
     await expect(page.getByRole('link', { name: '打开链接' })).toHaveAttribute(
       'href',
       'https://example.feishu.cn/mock-authorize'
