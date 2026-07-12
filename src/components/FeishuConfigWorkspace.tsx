@@ -329,6 +329,7 @@ export default function FeishuConfigWorkspace() {
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const [activeQrDialog, setActiveQrDialog] = useState<ActiveQrDialog>(null);
+  const [showOrgDialog, setShowOrgDialog] = useState(false);
   const [authorizePollStatus, setAuthorizePollStatus] = useState<string>('idle');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const authorizePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -625,6 +626,7 @@ export default function FeishuConfigWorkspace() {
       );
       setEventSubscribed(null);
       await loadIntegrationDetail(integration.id);
+      setShowOrgDialog(false);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '保存组织失败。');
     } finally {
@@ -898,6 +900,54 @@ export default function FeishuConfigWorkspace() {
           ) : null}
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setActiveQrDialog(null)}>稍后处理</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={showOrgDialog} onOpenChange={setShowOrgDialog}>
+        <AlertDialogContent className="sm:max-w-lg">
+          <AlertDialogHeader>
+            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+              <User className="h-5 w-5" />
+            </div>
+            <AlertDialogTitle>选择目标组织</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-6 text-slate-600">
+              请选择本次飞书会议分析要写入的组织表格。系统会将后续会议记录、总结和校验结果绑定到该组织目标。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-xs font-medium text-slate-500">当前项目</div>
+              <div className="mt-1 text-sm font-semibold text-slate-900">
+                {activeOrgTargets?.project?.name || '尚未导入 active 项目配置'}
+              </div>
+            </div>
+            {activeOrgTargets?.targets.length ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {activeOrgTargets.targets.map((target) => (
+                  <Button
+                    key={target.id}
+                    type="button"
+                    variant={target.id === selectedOrgTargetId ? 'default' : 'outline'}
+                    onClick={() => void handleSelectOrganization(target.id)}
+                    disabled={isSavingOrganization}
+                    className="justify-start"
+                  >
+                    {isSavingOrganization && target.id === selectedOrgTargetId ? (
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    {target.orgName}
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800">
+                当前没有可选组织，请先在服务器导入项目组织配置。
+              </div>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSavingOrganization}>稍后选择</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1225,48 +1275,50 @@ export default function FeishuConfigWorkspace() {
                             <div className="text-sm font-medium text-slate-500">请先完成第 2 步用户授权</div>
                           </div>
                         ) : (
-                          <div className="space-y-2">
-                            <div className={selectedOrgTarget ? 'rounded-lg bg-emerald-50 p-3' : 'rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3'}>
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <div className="mb-1 flex items-center gap-2">
-                                    {selectedOrgTarget ? (
-                                      <Check className="h-4 w-4 text-emerald-600" />
-                                    ) : (
-                                      <AlertCircle className="h-4 w-4 text-indigo-600" />
-                                    )}
-                                    <span className={selectedOrgTarget ? 'text-sm font-medium text-emerald-900' : 'text-sm font-medium text-indigo-900'}>
-                                      {selectedOrgTarget ? '组织已选择' : '请选择所在组织'}
-                                    </span>
-                                  </div>
-                                  <p className={selectedOrgTarget ? 'text-xs text-emerald-900' : 'text-xs text-slate-600'}>
-                                    当前项目：{activeOrgTargets?.project?.name || '尚未导入 active 项目配置'}
-                                  </p>
+                          <div className={selectedOrgTarget ? 'rounded-lg bg-emerald-50 p-3' : 'rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3'}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="mb-1 flex items-center gap-2">
+                                  {selectedOrgTarget ? (
+                                    <Check className="h-4 w-4 text-emerald-600" />
+                                  ) : (
+                                    <AlertCircle className="h-4 w-4 text-indigo-600" />
+                                  )}
+                                  <span className={selectedOrgTarget ? 'text-sm font-medium text-emerald-900' : 'text-sm font-medium text-indigo-900'}>
+                                    {selectedOrgTarget ? '组织已选择' : '请选择所在组织'}
+                                  </span>
                                 </div>
+                                <p className={selectedOrgTarget ? 'text-xs text-emerald-900' : 'text-xs text-slate-600'}>
+                                  当前项目：{activeOrgTargets?.project?.name || '尚未导入 active 项目配置'}
+                                </p>
                                 {selectedOrgTarget ? (
-                                  <Badge className="shrink-0 bg-emerald-100 text-emerald-700">{selectedOrgTarget.orgName}</Badge>
-                                ) : null}
+                                  <p className="mt-1 text-xs text-emerald-900">目标组织：{selectedOrgTarget.orgName}</p>
+                                ) : (
+                                  <p className="mt-1 text-xs text-slate-600">
+                                    可选组织：{activeOrgTargets?.targets.length || 0} 个
+                                  </p>
+                                )}
                               </div>
+                              <Button
+                                type="button"
+                                variant={selectedOrgTarget ? 'outline' : 'default'}
+                                size="sm"
+                                onClick={() => setShowOrgDialog(true)}
+                                disabled={isSavingOrganization}
+                                className="shrink-0"
+                              >
+                                {isSavingOrganization ? (
+                                  <>
+                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                    保存中
+                                  </>
+                                ) : selectedOrgTarget ? (
+                                  '更换组织'
+                                ) : (
+                                  '选择组织'
+                                )}
+                              </Button>
                             </div>
-                            {activeOrgTargets?.targets.length ? (
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                {activeOrgTargets.targets.map((target) => (
-                                  <Button
-                                    key={target.id}
-                                    type="button"
-                                    variant={target.id === selectedOrgTargetId ? 'default' : 'outline'}
-                                    onClick={() => void handleSelectOrganization(target.id)}
-                                    disabled={isSavingOrganization}
-                                  >
-                                    {target.orgName}
-                                  </Button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                                当前没有可选组织，请先在服务器导入项目组织配置。
-                              </div>
-                            )}
                           </div>
                         )}
                       </CardContent>
