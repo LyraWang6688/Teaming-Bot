@@ -36,6 +36,7 @@ export const feishuIntegrations = pgTable(
       .$type<string[]>()
       .notNull()
       .default([
+        'auth:user.id:read',
         'minutes:minutes.basic:read',
         'minutes:minutes.transcript:export',
         'offline_access',

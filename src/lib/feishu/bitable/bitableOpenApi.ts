@@ -1,6 +1,6 @@
 import type { AnalysisResult } from '@/types';
 import type { FeishuBitableConfig } from '../common/config';
-import { callFeishuIntegrationUserCliOpenApi } from '../integration/integrationOpenApi';
+import { callFeishuIntegrationUserOpenApi } from '../integration/integrationOpenApi';
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import {
   getEnabledOrgTargetContextById,
@@ -110,7 +110,7 @@ async function callBitableOpenApi<T = unknown>(
   path: string,
   data?: Record<string, unknown>
 ): Promise<T> {
-  return callFeishuIntegrationUserCliOpenApi<T>(config.integration, method, path, data);
+  return callFeishuIntegrationUserOpenApi<T>(config.integration, method, path, data);
 }
 
 function extractBitableText(value: unknown): string | undefined {

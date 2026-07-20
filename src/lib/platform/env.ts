@@ -1,5 +1,4 @@
-const DEFAULT_FEISHU_USER_OAUTH_SCOPE =
-  'minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app';
+import { FEISHU_REQUIRED_USER_SCOPE } from '@/lib/feishu/integration/integrationConstants';
 
 function getRequiredValue(name: string, value: string | undefined): string {
   const normalized = value?.trim();
@@ -38,5 +37,5 @@ export function getAppEncryptionKey(): string {
 }
 
 export function getDefaultFeishuOauthScope(): string {
-  return process.env.FEISHU_USER_OAUTH_SCOPE?.trim() || DEFAULT_FEISHU_USER_OAUTH_SCOPE;
+  return FEISHU_REQUIRED_USER_SCOPE;
 }

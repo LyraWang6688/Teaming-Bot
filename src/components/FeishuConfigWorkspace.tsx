@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import Layout from '@/components/Layout';
 import {
   AlertDialog,
@@ -30,17 +31,6 @@ import {
   User,
   QrCode,
 } from 'lucide-react';
-
-const DEFAULT_USER_OAUTH_SCOPE =
-  'minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app';
-
-const OAUTH_SCOPE_DESCRIPTIONS: Record<string, string> = {
-  'minutes:minutes.basic:read': '获取妙记基本信息',
-  'minutes:minutes.search:read': '搜索妙记',
-  'minutes:minutes.transcript:export': '导出妙记转写文字',
-  offline_access: '持续访问已授权数据',
-  'bitable:app': '多维表格（查看、评论、编辑）',
-};
 
 type StepDisplayStatus = 'completed' | 'current' | 'pending';
 type ActiveQrDialog = 'registration' | 'authorization' | null;
@@ -181,7 +171,9 @@ function getStepTitle(step: number) {
     case 3:
       return '选择组织';
     case 4:
-      return '系统校验';
+      return 'Base 校验';
+    case 5:
+      return '事件长连接';
     default:
       return '';
   }
@@ -196,7 +188,9 @@ function getStepDescription(step: number) {
     case 3:
       return '绑定目标组织表格。';
     case 4:
-      return '状态自动检查。';
+      return '自动校验目标多维表格可访问。';
+    case 5:
+      return '建立消费级事件长连接。';
     default:
       return '';
   }
@@ -211,28 +205,6 @@ function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
     checks.permissionStatus === 'success' &&
     checks.eventSubscriptionStatus === 'success'
   );
-}
-
-type EventSubscriptionDisplayStatus = 'success' | 'checking' | 'failed' | 'pending';
-
-function resolveEventSubscriptionStatus(
-  checks: CheckStatusView | null | undefined,
-  eventSubscribed: boolean | null,
-  isCheckingEvent: boolean
-): EventSubscriptionDisplayStatus {
-  if (checks?.eventSubscriptionStatus === 'success' || eventSubscribed === true) {
-    return 'success';
-  }
-
-  if (isCheckingEvent) {
-    return 'checking';
-  }
-
-  if (checks?.eventSubscriptionStatus === 'failed' || eventSubscribed === false) {
-    return 'failed';
-  }
-
-  return 'pending';
 }
 
 function getCheckStatusTone(passed: boolean) {
@@ -305,6 +277,7 @@ export default function FeishuConfigWorkspace() {
   const searchParams = useSearchParams();
   const autoCheckKeyRef = useRef<string | null>(null);
   const setupTraceIdRef = useRef<string | null>(null);
+  const previousSetupCompleteRef = useRef<boolean | null>(null);
 
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -319,8 +292,6 @@ export default function FeishuConfigWorkspace() {
 
   const [isCreatingApp, setIsCreatingApp] = useState(false);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
-  const [eventSubscribed, setEventSubscribed] = useState<boolean | null>(null);
-  const [isCheckingEvent, setIsCheckingEvent] = useState(false);
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [showCelebration, setShowCelebration] = useState(false);
@@ -349,16 +320,13 @@ export default function FeishuConfigWorkspace() {
   const currentStep = useMemo(() => {
     if (!user) return 1;
     if (!integration) return 1;
-    if (!detail?.authorization || detail.authorization.status !== 'authorized') return 2;
+    if (detail?.authorization?.status !== 'authorized') return 2;
     if (!selectedOrgTargetId) return 3;
-    return 4;
-  }, [user, integration, detail?.authorization?.status, selectedOrgTargetId]);
+    if (detail?.checks?.baseStatus !== 'success') return 4;
+    return 5;
+  }, [user, integration, detail?.authorization?.status, detail?.checks?.baseStatus, selectedOrgTargetId]);
 
-  const eventSubscriptionStatus = useMemo(
-    () => resolveEventSubscriptionStatus(detail?.checks, eventSubscribed, isCheckingEvent),
-    [detail?.checks, eventSubscribed, isCheckingEvent]
-  );
-  const eventSubscriptionPassed = eventSubscriptionStatus === 'success';
+  const eventSubscriptionPassed = detail?.checks?.eventSubscriptionStatus === 'success';
 
   const sidebarSteps = useMemo(() => {
     const steps = [
@@ -366,7 +334,7 @@ export default function FeishuConfigWorkspace() {
         step: 1,
         anchor: 'step-create-app',
         title: '创建应用',
-        description: '使用飞书 CLI 创建应用',
+        description: '使用飞书 SDK 一键创建应用',
         status: integration ? 'completed' : 'current',
       },
       {
@@ -386,35 +354,27 @@ export default function FeishuConfigWorkspace() {
       {
         step: 4,
         anchor: 'step-checks',
-        title: '系统校验',
-        description: '状态自动检查',
-        status: areDisplayedChecksPassed(detail?.checks) ? 'completed' : selectedOrgTargetId ? 'current' : 'pending',
+        title: 'Base 校验',
+        description: '自动校验可访问',
+        status: detail?.checks?.baseStatus === 'success' ? 'completed' : selectedOrgTargetId ? 'current' : 'pending',
+      },
+      {
+        step: 5,
+        anchor: 'step-checks',
+        title: '事件长连接',
+        description: '启动事件消费',
+        status: eventSubscriptionPassed ? 'completed' : detail?.checks?.baseStatus === 'success' ? 'current' : 'pending',
       },
     ];
     return steps;
-  }, [selectedOrgTargetId, integration, detail?.authorization?.status, detail?.checks]);
-
-  const effectiveOauthScopes = useMemo(() => {
-    const scope = detail?.authorization?.scope || integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
-    const allScopes = scope.split(/\s+/).filter(Boolean);
-    const requestedScopes = new Set(DEFAULT_USER_OAUTH_SCOPE.split(/\s+/));
-    return allScopes.filter(s => requestedScopes.has(s));
-  }, [detail?.authorization?.scope, integration?.oauthScope]);
+  }, [selectedOrgTargetId, integration, detail?.authorization?.status, detail?.checks, eventSubscriptionPassed]);
 
   const displayedChecksPassed = useMemo(
     () => areDisplayedChecksPassed(detail?.checks),
     [detail?.checks]
   );
 
-  const setupComplete = useMemo(
-    () => Boolean(
-      selectedOrgTargetId &&
-      detail?.authorization?.status === 'authorized' &&
-      eventSubscriptionPassed &&
-      displayedChecksPassed
-    ),
-    [selectedOrgTargetId, detail?.authorization?.status, displayedChecksPassed, eventSubscriptionPassed]
-  );
+  const setupComplete = eventSubscriptionPassed;
 
   const activeRegistrationQrUrl = verificationUrl || registrationQrUrl;
 
@@ -430,7 +390,13 @@ export default function FeishuConfigWorkspace() {
     `min-h-0 rounded-xl border border-slate-200 bg-white p-3 transition-all ${isActive ? 'flex flex-1 flex-col' : 'shrink-0'}`;
 
   useEffect(() => {
-    if (!setupComplete) return;
+    if (previousSetupCompleteRef.current === null) {
+      previousSetupCompleteRef.current = setupComplete;
+      return;
+    }
+    const becameComplete = !previousSetupCompleteRef.current && setupComplete;
+    previousSetupCompleteRef.current = setupComplete;
+    if (!becameComplete) return;
     setShowCelebration(true);
     const timer = window.setTimeout(() => setShowCelebration(false), 4200);
     return () => window.clearTimeout(timer);
@@ -471,59 +437,8 @@ export default function FeishuConfigWorkspace() {
     })();
   }, []);
 
-  useEffect(() => {
-    if (user) {
-      loadIntegrationDetail(null);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    const authCode = searchParams.get('code');
-    if (authCode && integration?.id) {
-      void runAutomatedChecks(integration.id, { silent: true });
-    }
-  }, [searchParams]);
-
-  // Auto-check event subscription when authorization completes
-  useEffect(() => {
-    if (!integration?.id) return;
-    if (detail?.authorization?.status !== 'authorized') return;
-    if (eventSubscriptionPassed) return;
-    if (eventSubscribed !== null) return;
-
-    setIsCheckingEvent(true);
-    fetch(`/api/feishu/integrations/${integration.id}/event-subscription/check`, {
-      method: 'POST',
-      headers: setupHeaders(),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.success && data.data) {
-          const isReady = data.data.eventFound === true;
-          setEventSubscribed(isReady);
-          setDetail((previous) => {
-            if (!previous?.checks) return previous;
-            return {
-              ...previous,
-              checks: {
-                ...previous.checks,
-                eventSubscriptionStatus: isReady ? 'success' : 'failed',
-                lastErrorMessage: isReady ? null : (data.data.error || previous.checks.lastErrorMessage),
-              },
-            };
-          });
-        } else {
-          setEventSubscribed(false);
-        }
-      })
-      .catch(() => setEventSubscribed(false))
-      .finally(() => setIsCheckingEvent(false));
-  }, [integration?.id, detail?.authorization?.status, eventSubscribed, eventSubscriptionPassed, setupHeaders]);
-
   const loadIntegrationDetail = useCallback(
     async (integrationId: string | null) => {
-      if (!user) return;
-
       setIsLoadingDetail(true);
       setPageError(null);
 
@@ -579,8 +494,14 @@ export default function FeishuConfigWorkspace() {
         setIsLoadingDetail(false);
       }
     },
-    [user]
+    []
   );
+
+  useEffect(() => {
+    if (user) {
+      void loadIntegrationDetail(searchParams.get('integrationId'));
+    }
+  }, [loadIntegrationDetail, searchParams, user]);
 
   const autoCheckTriggerKey = useMemo(() => {
     if (!integration?.id) return '';
@@ -624,7 +545,6 @@ export default function FeishuConfigWorkspace() {
           body: JSON.stringify({ selectedOrgTargetId: orgTargetId }),
         })
       );
-      setEventSubscribed(null);
       await loadIntegrationDetail(integration.id);
       setShowOrgDialog(false);
     } catch (error) {
@@ -635,6 +555,7 @@ export default function FeishuConfigWorkspace() {
   };
 
   const handleCreateApp = async () => {
+    setIsCreatingApp(true);
     setPageError(null);
     setRegistrationQrUrl(null);
     setVerificationUrl(null);
@@ -643,7 +564,8 @@ export default function FeishuConfigWorkspace() {
       const result = await parseJsonResponse<{
         verificationUrl: string;
         sessionToken: string;
-        profileName: string;
+        expiresAt: string;
+        user: AuthUser;
       }>(await fetch('/api/feishu/integrations/create-app', {
         method: 'POST',
         headers: setupHeaders(),
@@ -652,6 +574,7 @@ export default function FeishuConfigWorkspace() {
       setVerificationUrl(result.verificationUrl);
       setRegistrationQrUrl(result.verificationUrl);
       setActiveQrDialog('registration');
+      setUser(result.user);
       
       const intervalMs = 3000;
       
@@ -660,17 +583,32 @@ export default function FeishuConfigWorkspace() {
           const pollRes = await fetch('/api/feishu/integrations/register/poll', {
             method: 'POST',
             headers: setupHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ sessionToken: result.sessionToken, profileName: result.profileName }),
+            body: JSON.stringify({ sessionToken: result.sessionToken }),
           });
           const pollData = await pollRes.json();
           const status = pollData?.data?.status || pollData?.status;
           
           if (status === 'completed') {
-            if (pollRef.current) clearInterval(pollRef.current);
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
             setActiveQrDialog(null);
-            window.location.reload();
+            setRegistrationQrUrl(null);
+            setVerificationUrl(null);
+            const completedIntegration = pollData?.data?.integration as IntegrationView | undefined;
+            const completedIntegrationId = pollData?.data?.integrationId as string | undefined;
+            if (completedIntegration) {
+              setIntegration(completedIntegration);
+            }
+            if (completedIntegrationId) {
+              await loadIntegrationDetail(completedIntegrationId);
+            }
           } else if (status === 'error' || status === 'denied' || status === 'expired') {
-            if (pollRef.current) clearInterval(pollRef.current);
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
             setRegistrationQrUrl(null);
             setActiveQrDialog(null);
             setPageError(pollData?.data?.error || pollData?.error || '创建失败');
@@ -679,7 +617,6 @@ export default function FeishuConfigWorkspace() {
           logClientMonitor('warn', 'feishu_config_workspace', 'register_poll_request_failed', {
             ...toClientErrorContext(e),
             setupTraceId: getSetupTraceId(),
-            profileName: result.profileName,
           });
         }
       };
@@ -687,6 +624,8 @@ export default function FeishuConfigWorkspace() {
       pollRef.current = setInterval(poll, intervalMs);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '创建应用失败。');
+    } finally {
+      setIsCreatingApp(false);
     }
   };
 
@@ -698,7 +637,7 @@ export default function FeishuConfigWorkspace() {
     setActiveQrDialog(null);
     setAuthorizePollStatus('idle');
     try {
-      const result = await parseJsonResponse<{ verificationUrl: string; deviceCode: string }>(
+      const result = await parseJsonResponse<{ authorizationUrl: string; expiresIn: number }>(
         await fetch(`/api/feishu/integrations/${integration.id}/authorize/start`, {
           method: 'POST',
           headers: setupHeaders({ 'Content-Type': 'application/json' }),
@@ -706,7 +645,7 @@ export default function FeishuConfigWorkspace() {
         })
       );
 
-      setAuthorizeUrl(result.verificationUrl);
+      setAuthorizeUrl(result.authorizationUrl);
       setActiveQrDialog('authorization');
       setAuthorizePollStatus('pending');
 
@@ -832,15 +771,18 @@ export default function FeishuConfigWorkspace() {
             </div>
             <AlertDialogTitle>创建飞书应用</AlertDialogTitle>
             <AlertDialogDescription className="text-sm leading-6 text-slate-600">
-              你可以使用飞书扫码，也可以直接打开链接完成应用创建。二维码有效期 5 分钟，创建完成后页面会继续进入用户授权步骤。
+              你可以使用飞书扫码，也可以直接打开链接完成应用创建。请在飞书页面显示的有效期内完成确认，创建成功后本页会自动进入用户授权步骤。
             </AlertDialogDescription>
           </AlertDialogHeader>
           {activeRegistrationQrUrl ? (
             <div className="grid gap-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 sm:grid-cols-[160px_minmax(0,1fr)]">
               <div className="mx-auto rounded-xl border bg-white p-3 shadow-sm">
-                <img
+                <Image
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=${encodeURIComponent(activeRegistrationQrUrl)}`}
                   alt="创建应用二维码"
+                  width={144}
+                  height={144}
+                  unoptimized
                   className="h-36 w-36"
                 />
               </div>
@@ -876,9 +818,12 @@ export default function FeishuConfigWorkspace() {
           {authorizeUrl ? (
             <div className="grid gap-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 sm:grid-cols-[160px_minmax(0,1fr)]">
               <div className="mx-auto rounded-xl border bg-white p-3 shadow-sm">
-                <img
+                <Image
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=${encodeURIComponent(authorizeUrl)}`}
                   alt="授权二维码"
+                  width={144}
+                  height={144}
+                  unoptimized
                   className="h-36 w-36"
                 />
               </div>
@@ -1067,7 +1012,7 @@ export default function FeishuConfigWorkspace() {
                   </div>
                   <div className={`flex items-center justify-between ${getCheckStatusTone(detail?.checks?.baseStatus === 'success')}`}>
                     <span>目标表格</span>
-                    <span className="text-xs">{detail?.checks?.baseStatus === 'success' ? '可写入' : getStatusLabel(detail?.checks?.baseStatus)}</span>
+                    <span className="text-xs">{detail?.checks?.baseStatus === 'success' ? '可访问' : getStatusLabel(detail?.checks?.baseStatus)}</span>
                   </div>
                   <div className={`flex items-center justify-between ${getCheckStatusTone(eventSubscriptionPassed)}`}>
                     <span>事件监听</span>

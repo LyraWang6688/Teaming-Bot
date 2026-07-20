@@ -6,8 +6,6 @@ ENV PNPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add --no-cache curl
 RUN corepack enable
-RUN npm install -g @larksuite/cli
-ENV LARKSUITE_CLI_CONFIG_DIR=/app/.lark-cli
 
 FROM base AS deps
 COPY package.json pnpm-lock.yaml ./
@@ -30,9 +28,7 @@ FROM base AS runner
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-ENV LARKSUITE_CLI_CONFIG_DIR=/app/.lark-cli
 RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
-RUN mkdir -p /app/.lark-cli && chown nextjs:nextjs /app/.lark-cli
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules

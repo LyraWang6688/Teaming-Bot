@@ -2,18 +2,21 @@ import { FEISHU_STATUS_OPTIONS } from '../pipeline/status';
 import {
   callFeishuIntegrationUserOpenApi,
 } from './integrationOpenApi';
+import { createFeishuSdkClient } from './sdkClient';
+import { getValidIntegrationUserAuthorization } from './tokenService';
+import { configureFeishuApplication } from './applicationConfigService';
 import { logRuntimeMonitor } from '@/lib/platform/runtimeMonitor';
 import {
   getUserFeishuIntegrationContext,
+  getFeishuIntegrationCheckStatus,
   getLatestFeishuAuthorizationContext,
   upsertFeishuIntegrationCheckStatus,
   updateUserFeishuIntegration,
   writeAuditLog,
 } from './integrationStore';
-import { getListenerStatus, startListener } from '../events/eventListenerManager';
+import { getListenerStatus, startListener, stopListener } from '../events/eventListenerManager';
 import {
   getEnabledOrgTargetContextById,
-  updateOrgTargetFieldCheckStatus,
 } from '../projects/projectConfigStore';
 
 type CheckStatus = 'success' | 'failed' | 'pending' | 'authorized';
@@ -78,6 +81,13 @@ type RequiredFieldDefinition = {
 
 type CheckFailure = {
   type: string;
+  message: string;
+};
+
+type ListenerPrerequisiteFailure = {
+  code: string;
+  gate: string;
+  status?: CheckStatus;
   message: string;
 };
 
@@ -151,6 +161,65 @@ function parseScopeList(value: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+function getListenerPrerequisiteFailures(
+  statuses: IntegrationCheckStatuses,
+  hasSelectedOrgTarget: boolean
+): ListenerPrerequisiteFailure[] {
+  const failures: ListenerPrerequisiteFailure[] = [];
+
+  if (statuses.appCredentialStatus !== 'success') {
+    failures.push({
+      code:
+        statuses.appCredentialStatus === 'failed'
+          ? 'app_credential_failed'
+          : 'app_credential_pending',
+      gate: 'app_credential',
+      status: statuses.appCredentialStatus,
+      message: '飞书应用凭证尚未通过校验。',
+    });
+  }
+
+  if (statuses.oauthStatus !== 'authorized') {
+    failures.push({
+      code: statuses.oauthStatus === 'failed' ? 'oauth_failed' : 'oauth_pending',
+      gate: 'oauth',
+      status: statuses.oauthStatus,
+      message: '飞书用户授权尚未完成或已失效。',
+    });
+  }
+
+  if (!hasSelectedOrgTarget) {
+    failures.push({
+      code: 'organization_not_selected',
+      gate: 'organization',
+      message: '尚未选择组织。',
+    });
+  }
+
+  if (statuses.baseStatus !== 'success') {
+    failures.push({
+      code: statuses.baseStatus === 'failed' ? 'base_access_failed' : 'base_access_pending',
+      gate: 'base',
+      status: statuses.baseStatus,
+      message: '目标多维表格尚未通过可访问校验。',
+    });
+  }
+
+  if (statuses.permissionStatus !== 'success') {
+    failures.push({
+      code:
+        statuses.permissionStatus === 'failed'
+          ? 'permission_scope_failed'
+          : 'permission_scope_pending',
+      gate: 'permission',
+      status: statuses.permissionStatus,
+      message: '飞书用户权限尚未通过校验。',
+    });
+  }
+
+  return failures;
+}
+
 async function listAllBitableFields(
   integration: NonNullable<Awaited<ReturnType<typeof getUserFeishuIntegrationContext>>>,
   appToken: string,
@@ -176,43 +245,6 @@ async function listAllBitableFields(
   } while (pageToken);
 
   return fields;
-}
-
-function validateMeetingTableFields(fields: NonNullable<BitableFieldListResult['items']>) {
-  const fieldByName = new Map(fields.map((field) => [field.field_name, field]));
-  const missingFields: string[] = [];
-  const typeMismatches: Array<{
-    fieldName: string;
-    expectedType: number;
-    expectedUiType?: string;
-    actualType: number;
-  }> = [];
-
-  for (const required of REQUIRED_MEETING_FIELDS) {
-    const actual = fieldByName.get(required.fieldName);
-    if (!actual) {
-      missingFields.push(required.fieldName);
-      continue;
-    }
-
-    if (actual.type !== required.type) {
-      typeMismatches.push({
-        fieldName: required.fieldName,
-        expectedType: required.type,
-        expectedUiType: required.uiType,
-        actualType: actual.type,
-      });
-    }
-  }
-
-  return {
-    passed: missingFields.length === 0 && typeMismatches.length === 0,
-    requiredFields: REQUIRED_MEETING_FIELDS.map((field) => field.fieldName),
-    existingFields: fields.map((field) => field.field_name),
-    missingFields,
-    typeMismatches,
-    checkedAt: new Date().toISOString(),
-  };
 }
 
 async function ensureMeetingTableFields(
@@ -291,82 +323,91 @@ export async function runFeishuIntegrationChecks(options: {
   };
   const failures: CheckFailure[] = [];
 
-  statuses.appCredentialStatus = 'success';
-  details.appCredential = {
-    ok: true,
-    appId: integration.appId,
-    note: '应用凭证已保存，使用用户身份进行 API 调用。',
-  };
+  try {
+    const persistedChecks = await getFeishuIntegrationCheckStatus(integration.id);
+    const registrationDetails =
+      persistedChecks?.details?.appRegistration &&
+      typeof persistedChecks.details.appRegistration === 'object'
+        ? persistedChecks.details.appRegistration as Record<string, unknown>
+        : null;
+    if (registrationDetails?.applicationConfigured !== true) {
+      await configureFeishuApplication({
+        userId: integration.userId,
+        integrationId: integration.id,
+        appId: integration.appId,
+        appSecret: integration.secrets.appSecret,
+      });
+    }
+    details.appRegistration = {
+      provider: 'node_sdk',
+      applicationConfigured: true,
+    };
+    const client = createFeishuSdkClient(integration);
+    const appResponse = await client.application.v6.application.get({
+      path: { app_id: integration.appId },
+      params: { lang: 'zh_cn' },
+    });
+    if (typeof appResponse.code === 'number' && appResponse.code !== 0) {
+      throw new Error(appResponse.msg || '读取飞书应用信息失败。');
+    }
+    statuses.appCredentialStatus = 'success';
+    details.appCredential = {
+      ok: true,
+      appId: integration.appId,
+      appName: appResponse.data?.app?.app_name || integration.name,
+      credentialMode: 'database_encrypted',
+      note: '已使用数据库中的加密应用凭证完成飞书真实接口校验。',
+    };
+  } catch (error) {
+    const failure = pickFailure(error, 'AppCredentialCheckFailed');
+    statuses.appCredentialStatus = 'failed';
+    failures.push(failure);
+    details.appCredential = {
+      ok: false,
+      appId: integration.appId,
+      message: failure.message,
+    };
+  }
 
-  const authorizationContext = await getLatestFeishuAuthorizationContext(integration.id);
+  let authorizationContext = await getLatestFeishuAuthorizationContext(integration.id);
   if (!authorizationContext || authorizationContext.status !== 'authorized') {
     statuses.oauthStatus = 'pending';
     details.oauth = {
       ok: false,
       pending: true,
-      message: '当前集成尚未完成 CLI 用户授权。',
-    };
-  } else {
-    statuses.oauthStatus = 'authorized';
-    details.oauth = {
-      ok: true,
-      openId: authorizationContext.authorizedOpenId || null,
-      name: authorizationContext.authorizedUserName || null,
-      scope: authorizationContext.scope,
-      credentialMode: 'cli_profile',
-    };
-  }
-
-  if (!integration.profileName) {
-    const failure = {
-      type: 'missing_profile',
-      message: '当前集成缺少 CLI profile，无法启动事件监听。',
-    };
-    statuses.eventSubscriptionStatus = 'failed';
-    failures.push(failure);
-    details.eventSubscription = {
-      ok: false,
-      eventKey: 'minutes.minute.generated_v1',
-      message: failure.message,
-    };
-  } else if (statuses.oauthStatus !== 'authorized') {
-    statuses.eventSubscriptionStatus = 'pending';
-    details.eventSubscription = {
-      ok: false,
-      pending: true,
-      eventKey: 'minutes.minute.generated_v1',
-      profileName: integration.profileName,
-      message: '请先完成飞书用户授权，系统才能启动事件监听。',
+      message: '当前集成尚未完成有效的飞书用户授权。',
     };
   } else {
     try {
-      const existingListener = getListenerStatus(integration.id);
-      const listener =
-        existingListener?.state === 'running' && existingListener.readyAt
-          ? existingListener
-          : await startListener(integration.id);
-
-      statuses.eventSubscriptionStatus = 'success';
-      details.eventSubscription = {
+      authorizationContext = await getValidIntegrationUserAuthorization(integration);
+      statuses.oauthStatus = 'authorized';
+      details.oauth = {
         ok: true,
-        eventKey: 'minutes.minute.generated_v1',
-        listenerStatus: listener.state,
-        profileName: integration.profileName,
-        readyAt: listener.readyAt?.toISOString() || null,
-        message: '事件监听已启动并可消费。',
+        openId: authorizationContext.authorizedOpenId || null,
+        name: authorizationContext.authorizedUserName || null,
+        scope: authorizationContext.scope,
+        accessTokenExpiresAt: authorizationContext.accessTokenExpiresAt.toISOString(),
+        refreshTokenExpiresAt: authorizationContext.refreshTokenExpiresAt?.toISOString() || null,
+        credentialMode: 'database_token_service',
       };
     } catch (error) {
-      const failure = pickFailure(error, 'EventListenerCheckFailed');
-      statuses.eventSubscriptionStatus = 'failed';
+      const failure = pickFailure(error, 'OAuthTokenCheckFailed');
+      statuses.oauthStatus = 'failed';
       failures.push(failure);
-      details.eventSubscription = {
+      details.oauth = {
         ok: false,
-        eventKey: 'minutes.minute.generated_v1',
-        profileName: integration.profileName,
         message: failure.message,
       };
     }
   }
+
+  statuses.eventSubscriptionStatus = 'pending';
+  details.eventSubscription = {
+    ok: false,
+    pending: true,
+    eventKey: 'minutes.minute.generated_v1',
+    message: '事件长连接会在组织、Base 与用户权限全部通过后启动。',
+  };
 
   const selectedOrgTarget = integration.selectedOrgTargetId
     ? await getEnabledOrgTargetContextById(integration.selectedOrgTargetId)
@@ -438,102 +479,6 @@ export async function runFeishuIntegrationChecks(options: {
         selectedOrgTarget.baseAppToken,
         selectedOrgTarget.tableId
       );
-      const fieldCheckDetails =
-        selectedOrgTarget.fieldCheckStatus === 'success'
-          ? selectedOrgTarget.fieldCheckDetails
-          : validateMeetingTableFields(fields);
-
-      if (selectedOrgTarget.fieldCheckStatus === 'success') {
-        logRuntimeMonitor('info', 'integration_checks', 'org_target_field_check_reused', {
-          userId: options.userId,
-          integrationId: integration.id,
-          projectId: selectedOrgTarget.projectId,
-          orgTargetId: selectedOrgTarget.id,
-          orgKey: selectedOrgTarget.orgKey,
-          orgName: selectedOrgTarget.orgName,
-          tableId: selectedOrgTarget.tableId,
-          fieldCount: fields.length,
-        });
-      } else {
-        logRuntimeMonitor('info', 'integration_checks', 'org_target_field_check_started', {
-          userId: options.userId,
-          integrationId: integration.id,
-          projectId: selectedOrgTarget.projectId,
-          orgTargetId: selectedOrgTarget.id,
-          orgKey: selectedOrgTarget.orgKey,
-          orgName: selectedOrgTarget.orgName,
-          tableId: selectedOrgTarget.tableId,
-          fieldCount: fields.length,
-        });
-      }
-
-      if (
-        selectedOrgTarget.fieldCheckStatus !== 'success' &&
-        fieldCheckDetails &&
-        typeof fieldCheckDetails === 'object' &&
-        'passed' in fieldCheckDetails &&
-        fieldCheckDetails.passed !== true
-      ) {
-        logRuntimeMonitor('warn', 'integration_checks', 'org_target_field_check_failed', {
-          userId: options.userId,
-          integrationId: integration.id,
-          projectId: selectedOrgTarget.projectId,
-          orgTargetId: selectedOrgTarget.id,
-          orgKey: selectedOrgTarget.orgKey,
-          orgName: selectedOrgTarget.orgName,
-          tableId: selectedOrgTarget.tableId,
-          fieldCheckDetails,
-        });
-
-        await updateOrgTargetFieldCheckStatus({
-          orgTargetId: selectedOrgTarget.id,
-          status: 'failed',
-          details: fieldCheckDetails as Record<string, unknown>,
-        });
-
-        const missingFields = Array.isArray(fieldCheckDetails.missingFields)
-          ? fieldCheckDetails.missingFields.join('、')
-          : '';
-        const typeMismatches = Array.isArray(fieldCheckDetails.typeMismatches)
-          ? fieldCheckDetails.typeMismatches
-              .map((item) =>
-                item && typeof item === 'object' && 'fieldName' in item
-                  ? String(item.fieldName)
-                  : ''
-              )
-              .filter(Boolean)
-              .join('、')
-          : '';
-
-        throw new Error(
-          [
-            missingFields ? `目标表格缺少字段：${missingFields}` : '',
-            typeMismatches ? `目标表格字段类型不匹配：${typeMismatches}` : '',
-          ]
-            .filter(Boolean)
-            .join('；') || '目标表格模板字段校验未通过。'
-        );
-      }
-
-      if (selectedOrgTarget.fieldCheckStatus !== 'success') {
-        await updateOrgTargetFieldCheckStatus({
-          orgTargetId: selectedOrgTarget.id,
-          status: 'success',
-          details: fieldCheckDetails as Record<string, unknown>,
-        });
-
-        logRuntimeMonitor('info', 'integration_checks', 'org_target_field_check_succeeded', {
-          userId: options.userId,
-          integrationId: integration.id,
-          projectId: selectedOrgTarget.projectId,
-          orgTargetId: selectedOrgTarget.id,
-          orgKey: selectedOrgTarget.orgKey,
-          orgName: selectedOrgTarget.orgName,
-          tableId: selectedOrgTarget.tableId,
-          fieldCheckDetails,
-        });
-      }
-
       statuses.baseStatus = 'success';
       details.organization = {
         ok: true,
@@ -550,9 +495,7 @@ export async function runFeishuIntegrationChecks(options: {
         appName: appInfo.app?.name || null,
         defaultTableId: appInfo.app?.default_table_id || null,
         fieldCount: fields.length,
-        fieldCheckStatus:
-          selectedOrgTarget.fieldCheckStatus === 'success' ? 'success' : 'checked_and_cached',
-        fieldCheckDetails,
+        validationMode: 'read_access_only',
         message: '当前授权用户可以访问所选组织对应的多维表格。',
       };
 
@@ -656,6 +599,108 @@ export async function runFeishuIntegrationChecks(options: {
     };
   }
 
+  const listenerPrerequisiteFailures = getListenerPrerequisiteFailures(
+    statuses,
+    Boolean(integration.selectedOrgTargetId)
+  );
+  const primaryListenerBlocker = listenerPrerequisiteFailures[0] || null;
+
+  // Persist the first four gates before asking the listener manager to start.
+  // The listener manager deliberately re-reads these database states so a
+  // manual route or process restart cannot bypass the onboarding sequence.
+  const prerequisiteFailure = failures[0] || null;
+  await upsertFeishuIntegrationCheckStatus({
+    integrationId: integration.id,
+    appCredentialStatus: statuses.appCredentialStatus,
+    permissionStatus: statuses.permissionStatus,
+    eventSubscriptionStatus: 'pending',
+    oauthStatus: statuses.oauthStatus,
+    baseStatus: statuses.baseStatus,
+    lastCheckedAt: checkedAt,
+    lastErrorType: prerequisiteFailure?.type || null,
+    lastErrorMessage: prerequisiteFailure?.message || null,
+    details,
+  });
+
+  const listenerPrerequisitesPassed =
+    statuses.appCredentialStatus === 'success' &&
+    statuses.oauthStatus === 'authorized' &&
+    statuses.baseStatus === 'success' &&
+    statuses.permissionStatus === 'success' &&
+    Boolean(integration.selectedOrgTargetId);
+
+  if (listenerPrerequisitesPassed) {
+    try {
+      const existingListener = getListenerStatus(integration.id);
+      const listener =
+        existingListener?.state === 'running' && existingListener.readyAt
+          ? existingListener
+          : await startListener(integration.id);
+      statuses.eventSubscriptionStatus = 'success';
+      details.eventSubscription = {
+        ok: true,
+        eventKey: 'minutes.minute.generated_v1',
+        provider: 'node_sdk_ws',
+        listenerStatus: listener.state,
+        readyAt: listener.readyAt?.toISOString() || null,
+        message: '消费级事件长连接已建立。',
+      };
+      logRuntimeMonitor('info', 'integration_checks', 'event_listener_gate_passed', {
+        userId: options.userId,
+        integrationId: integration.id,
+        eventKey: 'minutes.minute.generated_v1',
+        provider: 'node_sdk_ws',
+        listenerStatus: listener.state,
+        readyAt: listener.readyAt?.toISOString() || null,
+      });
+    } catch (error) {
+      const failure = pickFailure(error, 'EventListenerCheckFailed');
+      statuses.eventSubscriptionStatus = 'failed';
+      failures.push(failure);
+      details.eventSubscription = {
+        ok: false,
+        eventKey: 'minutes.minute.generated_v1',
+        provider: 'node_sdk_ws',
+        reasonCode: failure.type,
+        blockedGate: 'event_listener',
+        message: failure.message,
+      };
+      logRuntimeMonitor('error', 'integration_checks', 'event_listener_gate_failed', {
+        userId: options.userId,
+        integrationId: integration.id,
+        eventKey: 'minutes.minute.generated_v1',
+        provider: 'node_sdk_ws',
+        reasonCode: failure.type,
+        blockedGate: 'event_listener',
+        message: failure.message,
+      });
+    }
+  } else {
+    stopListener(integration.id);
+    statuses.eventSubscriptionStatus = 'pending';
+    details.eventSubscription = {
+      ok: false,
+      pending: true,
+      eventKey: 'minutes.minute.generated_v1',
+      provider: 'node_sdk_ws',
+      reasonCode: primaryListenerBlocker?.code || 'listener_prerequisites_pending',
+      blockedGate: primaryListenerBlocker?.gate || 'unknown',
+      prerequisiteFailures: listenerPrerequisiteFailures,
+      message: '需依次完成应用、授权、组织选择、Base 可访问与权限校验后，才会建立事件长连接。',
+    };
+    logRuntimeMonitor('info', 'integration_checks', 'event_listener_gate_blocked', {
+      userId: options.userId,
+      integrationId: integration.id,
+      eventKey: 'minutes.minute.generated_v1',
+      provider: 'node_sdk_ws',
+      reasonCode: primaryListenerBlocker?.code || 'listener_prerequisites_pending',
+      blockedGate: primaryListenerBlocker?.gate || 'unknown',
+      statuses,
+      prerequisiteFailures: listenerPrerequisiteFailures,
+      selectedOrgTargetId: integration.selectedOrgTargetId || null,
+    });
+  }
+
   const firstFailure = failures[0] || null;
   await upsertFeishuIntegrationCheckStatus({
     integrationId: integration.id,
@@ -674,7 +719,13 @@ export async function runFeishuIntegrationChecks(options: {
   if (allPassed) {
     await updateUserFeishuIntegration(options.userId, integration.id, {
       status: 'success',
-      setupStep: 'check',
+      setupStep: 'event_listener',
+      initializedAt: new Date(),
+    });
+  } else {
+    await updateUserFeishuIntegration(options.userId, integration.id, {
+      status: 'draft',
+      initializedAt: null,
     });
   }
 
@@ -687,6 +738,23 @@ export async function runFeishuIntegrationChecks(options: {
     metadata: {
       statuses,
       allPassed,
+      listener: {
+        reasonCode:
+          statuses.eventSubscriptionStatus === 'success'
+            ? 'ready'
+            : details.eventSubscription &&
+                typeof details.eventSubscription === 'object' &&
+                'reasonCode' in details.eventSubscription
+              ? (details.eventSubscription as { reasonCode?: string }).reasonCode
+              : null,
+        blockedGate:
+          details.eventSubscription &&
+          typeof details.eventSubscription === 'object' &&
+          'blockedGate' in details.eventSubscription
+            ? (details.eventSubscription as { blockedGate?: string }).blockedGate
+            : null,
+        prerequisiteFailures: listenerPrerequisiteFailures,
+      },
     },
   });
 

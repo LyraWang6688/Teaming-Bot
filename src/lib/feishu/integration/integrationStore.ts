@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db/client';
 import {
   feishuAuditLogs,
@@ -11,6 +11,10 @@ import {
   type FeishuIntegrationRow,
 } from '@/lib/db/schema';
 import { getDefaultFeishuOauthScope } from '@/lib/platform/env';
+import {
+  FEISHU_REQUIRED_USER_EVENTS,
+  FEISHU_REQUIRED_USER_SCOPES,
+} from './integrationConstants';
 import {
   createOpaqueToken,
   decrypt,
@@ -330,6 +334,8 @@ export async function createUserFeishuIntegration(
       selectedOrgTargetId: input.selectedOrgTargetId || null,
       orgSelectedAt: input.selectedOrgTargetId ? new Date() : null,
       oauthScope: input.oauthScope?.trim() || getDefaultFeishuOauthScope(),
+      requiredEvents: [...FEISHU_REQUIRED_USER_EVENTS],
+      requiredPermissions: [...FEISHU_REQUIRED_USER_SCOPES],
       updatedAt: new Date(),
     })
     .returning();
@@ -555,6 +561,20 @@ export async function upsertFeishuAuthorization(
   return mapAuthorizationView(row);
 }
 
+export async function markFeishuAuthorizationStatus(
+  integrationId: string,
+  status: string
+): Promise<void> {
+  const db = getDb();
+  await db
+    .update(feishuAuthorizations)
+    .set({
+      status,
+      updatedAt: new Date(),
+    })
+    .where(eq(feishuAuthorizations.integrationId, integrationId));
+}
+
 export async function upsertFeishuIntegrationCheckStatus(
   input: UpsertCheckStatusInput
 ): Promise<FeishuCheckStatusView> {
@@ -653,12 +673,13 @@ export async function consumeOauthState(rawState: string): Promise<{
     .where(
       and(
         eq(feishuOauthStates.stateHash, stateHash),
-        eq(feishuOauthStates.status, 'pending')
+        eq(feishuOauthStates.status, 'pending'),
+        gt(feishuOauthStates.expiresAt, now)
       )
     )
     .returning();
 
-  if (!row || row.expiresAt <= now) {
+  if (!row) {
     return null;
   }
 
