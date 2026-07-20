@@ -5,12 +5,11 @@ ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 ENV PNPM_CONFIG_REGISTRY=https://registry.npmmirror.com
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 RUN apk add --no-cache curl
-RUN corepack enable
+RUN npm install -g pnpm@9.0.0
 
 FROM base AS deps
 COPY package.json pnpm-lock.yaml ./
-RUN corepack prepare pnpm@9.0.0 --activate \
-  && pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 FROM base AS builder
 ARG NEXT_PUBLIC_SUPABASE_URL
@@ -21,8 +20,7 @@ ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV PROJECT_PUBLIC_URL=$PROJECT_PUBLIC_URL
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN corepack prepare pnpm@9.0.0 --activate \
-  && pnpm build
+RUN pnpm build
 
 FROM base AS runner
 ENV NODE_ENV=production
