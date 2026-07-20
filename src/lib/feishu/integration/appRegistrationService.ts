@@ -13,7 +13,10 @@ import {
   writeAuditLog,
   type FeishuIntegrationDetail,
 } from './integrationStore';
-import { FEISHU_REQUIRED_USER_SCOPE } from './integrationConstants';
+import {
+  FEISHU_APPLICATION_SETUP_SCOPES,
+  FEISHU_REQUIRED_USER_SCOPE,
+} from './integrationConstants';
 
 export async function finalizeAppRegistration(
   sessionToken: string
@@ -74,6 +77,7 @@ export async function finalizeAppRegistration(
       metadata: {
         appId: task.result.appId,
         creatorOpenId: task.result.creatorOpenId,
+        applicationSetupScopes: [...FEISHU_APPLICATION_SETUP_SCOPES],
       },
     });
 

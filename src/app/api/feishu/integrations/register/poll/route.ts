@@ -70,6 +70,18 @@ export async function POST(request: Request) {
       durationMs: Date.now() - startedAt,
       ...toRuntimeErrorContext(error),
     });
+
+    const failedTask = sessionToken ? getAppRegistrationTask(sessionToken) : null;
+    if (failedTask?.status === 'failed') {
+      return NextResponse.json({
+        success: true,
+        data: {
+          status: 'failed',
+          error: failedTask.error || '飞书应用自动配置失败，请重新创建。',
+        },
+      });
+    }
+
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : '读取创建状态失败' },
       { status: 500 }

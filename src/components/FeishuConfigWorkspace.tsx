@@ -604,7 +604,12 @@ export default function FeishuConfigWorkspace() {
             if (completedIntegrationId) {
               await loadIntegrationDetail(completedIntegrationId);
             }
-          } else if (status === 'error' || status === 'denied' || status === 'expired') {
+          } else if (
+            status === 'failed' ||
+            status === 'error' ||
+            status === 'denied' ||
+            status === 'expired'
+          ) {
             if (pollRef.current) {
               clearInterval(pollRef.current);
               pollRef.current = null;

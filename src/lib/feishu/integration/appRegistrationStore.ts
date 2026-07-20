@@ -43,11 +43,26 @@ function getStore(): Map<string, AppRegistrationTask> {
 
 function toSafeError(error: unknown): string {
   if (error && typeof error === 'object') {
-    const sdkError = error as { code?: unknown; description?: unknown };
+    const sdkError = error as {
+      code?: unknown;
+      description?: unknown;
+      response?: {
+        data?: {
+          code?: unknown;
+          msg?: unknown;
+        };
+      };
+    };
     if (typeof sdkError.description === 'string' && sdkError.description) {
       return sdkError.code === 'access_denied'
         ? '用户取消了应用创建，请重新发起。'
         : sdkError.description;
+    }
+    if (sdkError.response?.data?.code === 99991672) {
+      return '飞书应用自动配置权限未生效，请删除未完成应用后重新创建。';
+    }
+    if (typeof sdkError.response?.data?.msg === 'string') {
+      return '飞书应用自动配置失败，请重新创建；若仍失败，请联系管理员查看服务日志。';
     }
   }
   const message = error instanceof Error ? error.message : String(error);
@@ -180,6 +195,9 @@ export function recordAppRegistrationIntegration(
 export function failAppRegistrationFinalization(sessionToken: string, error: unknown): void {
   const task = getStore().get(sessionToken);
   if (!task) return;
-  task.status = 'completed';
+  // Finalization failures are terminal for this registration task. Keeping
+  // the task as `completed` causes every frontend poll to retry the same
+  // application configuration request and flood production logs.
+  task.status = 'failed';
   task.error = toSafeError(error);
 }

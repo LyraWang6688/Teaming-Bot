@@ -3,6 +3,30 @@ import { getFeishuOauthCallbackUrl } from './integrationConfig';
 import { logRuntimeMonitor } from '@/lib/platform/runtimeMonitor';
 import { writeAuditLog } from './integrationStore';
 
+type FeishuSdkHttpError = Error & {
+  response?: {
+    status?: number;
+    data?: {
+      code?: number;
+      msg?: string;
+      log_id?: string;
+    };
+  };
+};
+
+function getApplicationConfigErrorContext(error: unknown) {
+  const sdkError = error as FeishuSdkHttpError;
+  const responseData = sdkError.response?.data;
+  return {
+    errorType: error instanceof Error ? error.name : 'UnknownError',
+    errorMessage:
+      responseData?.msg || (error instanceof Error ? error.message : String(error)),
+    errorCode: responseData?.code,
+    statusCode: sdkError.response?.status,
+    feishuLogId: responseData?.log_id,
+  };
+}
+
 export async function configureFeishuApplication(options: {
   userId: string;
   integrationId: string;
@@ -74,6 +98,7 @@ export async function configureFeishuApplication(options: {
       publishedVersion: publishResponse.data?.version || null,
     });
   } catch (error) {
+    const errorContext = getApplicationConfigErrorContext(error);
     await writeAuditLog({
       userId: options.userId,
       integrationId: options.integrationId,
@@ -82,9 +107,14 @@ export async function configureFeishuApplication(options: {
       summary: 'SDK 自动配置或发布飞书应用失败',
       metadata: {
         appId: options.appId,
-        errorType: error instanceof Error ? error.name : 'UnknownError',
-        errorMessage: error instanceof Error ? error.message : String(error),
+        ...errorContext,
       },
+    });
+    logRuntimeMonitor('error', 'feishu_sdk_setup', 'application_config_failed', {
+      integrationId: options.integrationId,
+      appId: options.appId,
+      durationMs: Date.now() - startedAt,
+      ...errorContext,
     });
     throw error;
   }

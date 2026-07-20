@@ -15,6 +15,9 @@ export const FEISHU_REQUIRED_USER_EVENTS = [
 // the end user during OAuth.
 export const FEISHU_APPLICATION_SETUP_SCOPES = [
   'application:application:self_manage',
+  // Required by application.v7.applicationConfig.patch to configure the
+  // OAuth redirect, refresh-token switch, and WebSocket subscription mode.
+  'application:application:patch',
 ] as const;
 
 export const FEISHU_REQUIRED_USER_SCOPE = FEISHU_REQUIRED_USER_SCOPES.join(' ');
