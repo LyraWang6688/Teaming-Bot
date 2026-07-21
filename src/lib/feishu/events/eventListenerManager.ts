@@ -1,4 +1,5 @@
 import * as lark from '@larksuiteoapi/node-sdk';
+import { readFile } from 'node:fs/promises';
 import { logFeishuMonitor } from '../common/monitor';
 import {
   getFeishuIntegrationCheckStatus,
@@ -48,6 +49,34 @@ class ListenerPrerequisiteError extends Error {
 const listeners = new Map<string, ListenerInfo>();
 const EVENT_TYPE = FEISHU_REQUIRED_USER_EVENTS[0];
 const READY_TIMEOUT_MS = 20_000;
+const DEBUG_ENV_PATH = '.dbg/feishu-event-missing.env';
+
+// #region debug-point E:report-helper
+async function reportFeishuEventDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>) {
+  let debugServerUrl = 'http://127.0.0.1:7777/event';
+  let debugSessionId = 'feishu-event-missing';
+  try {
+    const envContent = await readFile(DEBUG_ENV_PATH, 'utf8');
+    debugServerUrl =
+      envContent.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || debugServerUrl;
+    debugSessionId =
+      envContent.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || debugSessionId;
+  } catch {}
+  void fetch(debugServerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: debugSessionId,
+      runId: 'pre-fix',
+      hypothesisId,
+      location,
+      msg: `[DEBUG] ${msg}`,
+      data,
+      ts: Date.now(),
+    }),
+  }).catch(() => {});
+}
+// #endregion
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -103,6 +132,29 @@ async function enqueueSdkEvent(integrationId: string, rawEvent: unknown): Promis
     typeof event.create_time === 'string' || typeof event.create_time === 'number'
       ? String(event.create_time)
       : undefined;
+
+  // #region debug-point B:sdk-event-arrived
+  void reportFeishuEventDebug('B', 'eventListenerManager.ts:enqueueSdkEvent', 'SDK event callback reached listener manager', {
+    integrationId,
+    eventId: eventId || null,
+    eventType,
+    createTime: createTime || null,
+    topLevelKeys: Object.keys(event).slice(0, 20),
+    hasMinuteToken: Boolean(
+      typeof event.minute_token === 'string' ||
+      (typeof event.minute === 'object' &&
+        event.minute &&
+        typeof (event.minute as Record<string, unknown>).minute_token === 'string')
+    ),
+  });
+  logFeishuMonitor('info', 'debug_sdk_event_callback', {
+    integrationId,
+    eventId: eventId || null,
+    eventType,
+    createTime: createTime || null,
+    topLevelKeys: Object.keys(event).slice(0, 20),
+  });
+  // #endregion
 
   await enqueueFeishuEvent(
     {
@@ -311,6 +363,13 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
     handshakeTimeoutMs: READY_TIMEOUT_MS,
     wsConfig: { pingTimeout: 15 },
     onReady: () => {
+      // #region debug-point D:listener-ready
+      void reportFeishuEventDebug('D', 'eventListenerManager.ts:onReady', 'WS listener reported ready', {
+        integrationId,
+        reconnectCount: listener.reconnectCount,
+        startedAt: listener.startedAt?.toISOString() || null,
+      });
+      // #endregion
       void markListenerReady(integrationId)
         .then(() => {
           if (!settled) {
@@ -326,6 +385,13 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
         });
     },
     onError: (error) => {
+      // #region debug-point D:listener-error
+      void reportFeishuEventDebug('D', 'eventListenerManager.ts:onError', 'WS listener reported error', {
+        integrationId,
+        errorName: error.name,
+        errorMessage: error.message,
+      });
+      // #endregion
       persistListenerFailure(integrationId, error);
       if (!settled) {
         settled = true;
@@ -338,6 +404,12 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
         current.state = 'reconnecting';
         current.reconnectCount += 1;
       }
+      // #region debug-point D:listener-reconnecting
+      void reportFeishuEventDebug('D', 'eventListenerManager.ts:onReconnecting', 'WS listener is reconnecting', {
+        integrationId,
+        reconnectCount: current?.reconnectCount || 0,
+      });
+      // #endregion
       void getFeishuIntegrationCheckStatus(integrationId)
         .then((checks) =>
           upsertFeishuIntegrationCheckStatus({
@@ -361,6 +433,12 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
         });
     },
     onReconnected: () => {
+      // #region debug-point D:listener-reconnected
+      void reportFeishuEventDebug('D', 'eventListenerManager.ts:onReconnected', 'WS listener reconnected', {
+        integrationId,
+        reconnectCount: listeners.get(integrationId)?.reconnectCount || 0,
+      });
+      // #endregion
       void markListenerReady(integrationId);
     },
   });
@@ -369,7 +447,30 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
   const dispatcher = new lark.EventDispatcher({
     loggerLevel: lark.LoggerLevel.error,
   }).register<Record<string, (data: unknown) => Promise<void>>>({
-    [EVENT_TYPE]: async (data: unknown) => enqueueSdkEvent(integrationId, data),
+    [EVENT_TYPE]: async (data: unknown) => {
+      const event = asRecord(data);
+      // #region debug-point B:dispatcher-handler
+      void reportFeishuEventDebug('B', 'eventListenerManager.ts:dispatcher', 'EventDispatcher matched subscribed event', {
+        integrationId,
+        eventType: typeof event.event_type === 'string' ? event.event_type : EVENT_TYPE,
+        eventId: typeof event.event_id === 'string' ? event.event_id : null,
+        createTime:
+          typeof event.create_time === 'string' || typeof event.create_time === 'number'
+            ? String(event.create_time)
+            : null,
+      });
+      logFeishuMonitor('info', 'debug_event_dispatcher_matched', {
+        integrationId,
+        eventType: typeof event.event_type === 'string' ? event.event_type : EVENT_TYPE,
+        eventId: typeof event.event_id === 'string' ? event.event_id : null,
+        createTime:
+          typeof event.create_time === 'string' || typeof event.create_time === 'number'
+            ? String(event.create_time)
+            : null,
+      });
+      // #endregion
+      await enqueueSdkEvent(integrationId, data);
+    },
   });
 
   logFeishuMonitor('info', 'event_listener_starting', {

@@ -5,6 +5,7 @@
  * 事件接收后快速入队，耗时工作在后台异步执行。
  */
 
+import { readFile } from 'node:fs/promises';
 import { analyzeMeetingText } from '@/services/analysisService';
 import { getProjectPublicUrl } from '../common/config';
 import {
@@ -87,6 +88,34 @@ const ENABLE_STARTUP_RECOVERY =
 const STARTUP_RECOVERY_LIMIT = 50;
 
 let hasStartedRecoveryScan = false;
+const DEBUG_ENV_PATH = '.dbg/feishu-event-missing.env';
+
+// #region debug-point E:report-helper
+async function reportFeishuPipelineDebug(hypothesisId: string, location: string, msg: string, data: Record<string, unknown>) {
+  let debugServerUrl = 'http://127.0.0.1:7777/event';
+  let debugSessionId = 'feishu-event-missing';
+  try {
+    const envContent = await readFile(DEBUG_ENV_PATH, 'utf8');
+    debugServerUrl =
+      envContent.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || debugServerUrl;
+    debugSessionId =
+      envContent.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || debugSessionId;
+  } catch {}
+  void fetch(debugServerUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: debugSessionId,
+      runId: 'pre-fix',
+      hypothesisId,
+      location,
+      msg: `[DEBUG] ${msg}`,
+      data,
+      ts: Date.now(),
+    }),
+  }).catch(() => {});
+}
+// #endregion
 
 function getMeetingPipelineKey(context: Pick<MinuteGeneratedSource, 'meetingId' | 'integration'>): string {
   return `${context.integration.id}:${context.meetingId}`;
@@ -163,11 +192,56 @@ export async function enqueueFeishuEvent(
   const eventId = getEventId(envelope);
   const eventType = getEventType(envelope);
 
+  // #region debug-point C:enqueue-entry
+  void reportFeishuPipelineDebug('C', 'meetingPipelineProcessor.ts:enqueueFeishuEvent', 'Pipeline enqueue received normalized envelope', {
+    integrationId: integration.id,
+    eventId: eventId || null,
+    eventType: eventType || null,
+    schema: envelope.schema || null,
+    headerEventType: envelope.header?.event_type || null,
+    hasEventPayload: Boolean(envelope.event),
+  });
+  logFeishuMonitor('info', 'debug_pipeline_enqueue_received', {
+    integrationId: integration.id,
+    eventId: eventId || null,
+    eventType: eventType || null,
+    schema: envelope.schema || null,
+    headerEventType: envelope.header?.event_type || null,
+    hasEventPayload: Boolean(envelope.event),
+  });
+  // #endregion
+
   if (!eventId) {
+    // #region debug-point C:missing-event-id
+    void reportFeishuPipelineDebug('C', 'meetingPipelineProcessor.ts:missingEventId', 'Normalized event missing event_id', {
+      integrationId: integration.id,
+      eventType: eventType || null,
+      envelopeKeys: Object.keys(envelope),
+      payloadKeys: Object.keys(envelope.event || {}).slice(0, 20),
+    });
+    logFeishuMonitor('warn', 'debug_pipeline_missing_event_id', {
+      integrationId: integration.id,
+      eventType: eventType || null,
+      envelopeKeys: Object.keys(envelope),
+      payloadKeys: Object.keys(envelope.event || {}).slice(0, 20),
+    });
+    // #endregion
     return { accepted: false, duplicate: false, eventType };
   }
 
   if (eventType !== 'minutes.minute.generated_v1') {
+    // #region debug-point C:ignored-event-type
+    void reportFeishuPipelineDebug('C', 'meetingPipelineProcessor.ts:ignoredEventType', 'Normalized event type was ignored by pipeline', {
+      integrationId: integration.id,
+      eventId,
+      eventType: eventType || null,
+    });
+    logFeishuMonitor('info', 'debug_pipeline_ignored_event_type', {
+      integrationId: integration.id,
+      eventId,
+      eventType: eventType || null,
+    });
+    // #endregion
     logFeishuMonitor('info', 'event_type_ignored', {
       integrationId: integration.id,
       eventId,
@@ -201,6 +275,25 @@ export async function enqueueFeishuEvent(
     minuteToken,
     meetingId,
   } = getMinuteGeneratedEventPayload(event);
+
+  // #region debug-point C:minute-generated-normalized
+  void reportFeishuPipelineDebug('C', 'meetingPipelineProcessor.ts:minuteGeneratedNormalized', 'Minute-generated event normalized', {
+    integrationId: integration.id,
+    eventId,
+    eventType: eventType || null,
+    sourceType: sourceType || null,
+    meetingId: meetingId || null,
+    minuteTokenPresent: Boolean(minuteToken),
+  });
+  logFeishuMonitor('info', 'debug_minute_generated_normalized', {
+    integrationId: integration.id,
+    eventId,
+    eventType: eventType || null,
+    sourceType: sourceType || null,
+    meetingId: meetingId || null,
+    minuteTokenPresent: Boolean(minuteToken),
+  });
+  // #endregion
 
   logFeishuMonitor('info', 'minute_generated_event_received', {
     integrationId: integration.id,
