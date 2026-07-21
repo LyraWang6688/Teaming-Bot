@@ -10,20 +10,36 @@ type FeishuSdkHttpError = Error & {
       code?: number;
       msg?: string;
       log_id?: string;
+      error?: {
+        field_violations?: Array<{
+          field?: string;
+          description?: string;
+        }>;
+      };
     };
   };
 };
 
-function getApplicationConfigErrorContext(error: unknown) {
+type ApplicationSetupStage = 'application_config_patch' | 'application_publish';
+
+function getApplicationConfigErrorContext(
+  error: unknown,
+  operationStage: ApplicationSetupStage
+) {
   const sdkError = error as FeishuSdkHttpError;
   const responseData = sdkError.response?.data;
   return {
+    operationStage,
     errorType: error instanceof Error ? error.name : 'UnknownError',
     errorMessage:
       responseData?.msg || (error instanceof Error ? error.message : String(error)),
     errorCode: responseData?.code,
     statusCode: sdkError.response?.status,
     feishuLogId: responseData?.log_id,
+    fieldViolations: responseData?.error?.field_violations?.map((violation) => ({
+      field: violation.field,
+      description: violation.description,
+    })),
   };
 }
 
@@ -42,6 +58,8 @@ export async function configureFeishuApplication(options: {
     loggerLevel: lark.LoggerLevel.error,
     source: 'teaming-meeting-analysis',
   });
+
+  let operationStage: ApplicationSetupStage = 'application_config_patch';
 
   try {
     const response = await client.application.v7.applicationConfig.patch({
@@ -62,10 +80,18 @@ export async function configureFeishuApplication(options: {
     if (typeof response.code === 'number' && response.code !== 0) {
       throw new Error(response.msg || '自动配置飞书 OAuth 回调和长连接方式失败。');
     }
+    logRuntimeMonitor('info', 'feishu_sdk_setup', 'application_config_patch_succeeded', {
+      integrationId: options.integrationId,
+      appId: options.appId,
+      durationMs: Date.now() - startedAt,
+    });
 
+    operationStage = 'application_publish';
     const publishResponse = await client.application.v7.applicationPublish.create({
       path: { app_id: options.appId },
       data: {
+        mobile_default_ability: 'bot',
+        pc_default_ability: 'bot',
         remark: 'Teaming 会议分析自动配置',
         changelog: '配置 OAuth 回调、Refresh Token 与事件长连接。',
       },
@@ -94,11 +120,16 @@ export async function configureFeishuApplication(options: {
       durationMs: Date.now() - startedAt,
       redirectUrlConfigured: true,
       eventSubscriptionType: 'websocket',
+      mobileDefaultAbility: 'bot',
+      pcDefaultAbility: 'bot',
       publishedVersionId: publishResponse.data?.version_id || null,
       publishedVersion: publishResponse.data?.version || null,
     });
   } catch (error) {
-    const errorContext = getApplicationConfigErrorContext(error);
+    const errorContext = getApplicationConfigErrorContext(error, operationStage);
+    const failedEvent = operationStage === 'application_publish'
+      ? 'application_publish_failed'
+      : 'application_config_patch_failed';
     await writeAuditLog({
       userId: options.userId,
       integrationId: options.integrationId,
@@ -110,7 +141,7 @@ export async function configureFeishuApplication(options: {
         ...errorContext,
       },
     });
-    logRuntimeMonitor('error', 'feishu_sdk_setup', 'application_config_failed', {
+    logRuntimeMonitor('error', 'feishu_sdk_setup', failedEvent, {
       integrationId: options.integrationId,
       appId: options.appId,
       durationMs: Date.now() - startedAt,

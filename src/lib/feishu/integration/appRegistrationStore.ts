@@ -130,7 +130,10 @@ export async function startAppRegistration(
         try {
           await onCompleted(sessionToken);
         } catch (error) {
-          task.status = 'completed';
+          // The finalizer has failed terminally. Do not put the task back into
+          // `completed`, otherwise the next frontend poll claims and repeats
+          // the same application configuration/publish request.
+          task.status = 'failed';
           task.error = toSafeError(error);
         }
       }
