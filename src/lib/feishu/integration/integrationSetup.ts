@@ -16,6 +16,7 @@ import { getListenerStatus, startListener, stopListener } from '../events/eventL
 import {
   getEnabledOrgTargetContextById,
 } from '../projects/projectConfigStore';
+import { FEISHU_REQUIRED_USER_EVENTS } from './integrationConstants';
 
 type CheckStatus = 'success' | 'failed' | 'pending' | 'authorized';
 
@@ -34,6 +35,7 @@ type IntegrationCheckResult = {
 };
 
 const CHECK_FLIGHTS_KEY = '__feishu_integration_check_flights';
+const MINUTE_GENERATED_EVENT = FEISHU_REQUIRED_USER_EVENTS[0];
 
 function getIntegrationCheckFlights(): Map<string, Promise<IntegrationCheckResult>> {
   const globalStore = globalThis as Record<string, unknown>;
@@ -177,7 +179,8 @@ function parseScopeList(value: string | null | undefined): string[] {
 
 function getListenerPrerequisiteFailures(
   statuses: IntegrationCheckStatuses,
-  hasSelectedOrgTarget: boolean
+  hasSelectedOrgTarget: boolean,
+  minuteChangeSubscriptionStatus: CheckStatus
 ): ListenerPrerequisiteFailure[] {
   const failures: ListenerPrerequisiteFailure[] = [];
 
@@ -231,7 +234,63 @@ function getListenerPrerequisiteFailures(
     });
   }
 
+  if (
+    statuses.appCredentialStatus === 'success' &&
+    statuses.oauthStatus === 'authorized' &&
+    hasSelectedOrgTarget &&
+    statuses.baseStatus === 'success' &&
+    statuses.permissionStatus === 'success' &&
+    minuteChangeSubscriptionStatus !== 'success'
+  ) {
+    failures.push({
+      code:
+        minuteChangeSubscriptionStatus === 'failed'
+          ? 'minute_change_subscription_failed'
+          : 'minute_change_subscription_pending',
+      gate: 'minute_subscription',
+      status: minuteChangeSubscriptionStatus,
+      message: '当前授权用户尚未完成妙记生成事件订阅。',
+    });
+  }
+
   return failures;
+}
+
+async function subscribeMinuteGeneratedEvent(options: {
+  userId: string;
+  integration: NonNullable<Awaited<ReturnType<typeof getUserFeishuIntegrationContext>>>;
+}): Promise<void> {
+  logRuntimeMonitor('info', 'integration_checks', 'minute_change_subscription_started', {
+    userId: options.userId,
+    integrationId: options.integration.id,
+    eventType: MINUTE_GENERATED_EVENT,
+    mode: 'user_openapi',
+  });
+
+  try {
+    await callFeishuIntegrationUserOpenApi<Record<string, never>>(
+      options.integration,
+      'POST',
+      '/minutes/v1/minutes/subscription',
+      { event_type: MINUTE_GENERATED_EVENT }
+    );
+    logRuntimeMonitor('info', 'integration_checks', 'minute_change_subscription_succeeded', {
+      userId: options.userId,
+      integrationId: options.integration.id,
+      eventType: MINUTE_GENERATED_EVENT,
+      mode: 'user_openapi',
+    });
+  } catch (error) {
+    const failure = pickFailure(error, 'MinuteChangeSubscriptionFailed');
+    logRuntimeMonitor('error', 'integration_checks', 'minute_change_subscription_failed', {
+      userId: options.userId,
+      integrationId: options.integration.id,
+      eventType: MINUTE_GENERATED_EVENT,
+      mode: 'user_openapi',
+      ...failure,
+    });
+    throw error;
+  }
 }
 
 async function listAllBitableFields(
@@ -403,8 +462,16 @@ async function executeFeishuIntegrationChecks(options: {
   details.eventSubscription = {
     ok: false,
     pending: true,
-    eventKey: 'minutes.minute.generated_v1',
-    message: '事件长连接会在组织、Base 与用户权限全部通过后启动。',
+    eventKey: MINUTE_GENERATED_EVENT,
+    provider: 'node_sdk_ws',
+    minuteChangeSubscription: {
+      ok: false,
+      pending: true,
+      provider: 'user_openapi',
+      eventKey: MINUTE_GENERATED_EVENT,
+      message: '妙记生成事件会在用户授权、Base 与权限校验通过后订阅。',
+    },
+    message: '事件长连接会在妙记事件订阅、组织、Base 与用户权限全部通过后启动。',
   };
 
   const selectedOrgTarget = integration.selectedOrgTargetId
@@ -597,13 +664,63 @@ async function executeFeishuIntegrationChecks(options: {
     };
   }
 
+  let minuteChangeSubscriptionStatus: CheckStatus = 'pending';
+  if (
+    statuses.appCredentialStatus === 'success' &&
+    statuses.oauthStatus === 'authorized' &&
+    statuses.baseStatus === 'success' &&
+    statuses.permissionStatus === 'success' &&
+    Boolean(integration.selectedOrgTargetId)
+  ) {
+    try {
+      await subscribeMinuteGeneratedEvent({
+        userId: options.userId,
+        integration,
+      });
+      minuteChangeSubscriptionStatus = 'success';
+      details.eventSubscription = {
+        ok: false,
+        pending: true,
+        eventKey: MINUTE_GENERATED_EVENT,
+        provider: 'node_sdk_ws',
+        minuteChangeSubscription: {
+          ok: true,
+          provider: 'user_openapi',
+          eventKey: MINUTE_GENERATED_EVENT,
+          message: '当前授权用户已完成妙记生成事件订阅。',
+        },
+        message: '当前授权用户已完成妙记事件订阅，正在建立消费级事件长连接。',
+      };
+    } catch (error) {
+      const failure = pickFailure(error, 'MinuteChangeSubscriptionFailed');
+      minuteChangeSubscriptionStatus = 'failed';
+      failures.push(failure);
+      details.eventSubscription = {
+        ok: false,
+        eventKey: MINUTE_GENERATED_EVENT,
+        provider: 'node_sdk_ws',
+        reasonCode: failure.type,
+        blockedGate: 'minute_subscription',
+        minuteChangeSubscription: {
+          ok: false,
+          provider: 'user_openapi',
+          eventKey: MINUTE_GENERATED_EVENT,
+          reasonCode: failure.type,
+          message: failure.message,
+        },
+        message: '当前授权用户的妙记生成事件订阅失败，暂时不能建立事件长连接。',
+      };
+    }
+  }
+
   const listenerPrerequisiteFailures = getListenerPrerequisiteFailures(
     statuses,
-    Boolean(integration.selectedOrgTargetId)
+    Boolean(integration.selectedOrgTargetId),
+    minuteChangeSubscriptionStatus
   );
   const primaryListenerBlocker = listenerPrerequisiteFailures[0] || null;
 
-  // Persist the first four gates before asking the listener manager to start.
+  // Persist prerequisite gates before asking the listener manager to start.
   // The listener manager deliberately re-reads these database states so a
   // manual route or process restart cannot bypass the onboarding sequence.
   const prerequisiteFailure = failures[0] || null;
@@ -625,6 +742,7 @@ async function executeFeishuIntegrationChecks(options: {
     statuses.oauthStatus === 'authorized' &&
     statuses.baseStatus === 'success' &&
     statuses.permissionStatus === 'success' &&
+    minuteChangeSubscriptionStatus === 'success' &&
     Boolean(integration.selectedOrgTargetId);
 
   if (listenerPrerequisitesPassed) {
@@ -637,16 +755,22 @@ async function executeFeishuIntegrationChecks(options: {
       statuses.eventSubscriptionStatus = 'success';
       details.eventSubscription = {
         ok: true,
-        eventKey: 'minutes.minute.generated_v1',
+        eventKey: MINUTE_GENERATED_EVENT,
         provider: 'node_sdk_ws',
+        minuteChangeSubscription: {
+          ok: true,
+          provider: 'user_openapi',
+          eventKey: MINUTE_GENERATED_EVENT,
+          message: '当前授权用户已完成妙记生成事件订阅。',
+        },
         listenerStatus: listener.state,
         readyAt: listener.readyAt?.toISOString() || null,
-        message: '消费级事件长连接已建立。',
+        message: '当前授权用户已完成妙记事件订阅，消费级事件长连接已建立。',
       };
       logRuntimeMonitor('info', 'integration_checks', 'event_listener_gate_passed', {
         userId: options.userId,
         integrationId: integration.id,
-        eventKey: 'minutes.minute.generated_v1',
+        eventKey: MINUTE_GENERATED_EVENT,
         provider: 'node_sdk_ws',
         listenerStatus: listener.state,
         readyAt: listener.readyAt?.toISOString() || null,
@@ -657,16 +781,22 @@ async function executeFeishuIntegrationChecks(options: {
       failures.push(failure);
       details.eventSubscription = {
         ok: false,
-        eventKey: 'minutes.minute.generated_v1',
+        eventKey: MINUTE_GENERATED_EVENT,
         provider: 'node_sdk_ws',
         reasonCode: failure.type,
         blockedGate: 'event_listener',
+        minuteChangeSubscription: {
+          ok: true,
+          provider: 'user_openapi',
+          eventKey: MINUTE_GENERATED_EVENT,
+          message: '当前授权用户已完成妙记生成事件订阅。',
+        },
         message: failure.message,
       };
       logRuntimeMonitor('error', 'integration_checks', 'event_listener_gate_failed', {
         userId: options.userId,
         integrationId: integration.id,
-        eventKey: 'minutes.minute.generated_v1',
+        eventKey: MINUTE_GENERATED_EVENT,
         provider: 'node_sdk_ws',
         reasonCode: failure.type,
         blockedGate: 'event_listener',
@@ -675,25 +805,45 @@ async function executeFeishuIntegrationChecks(options: {
     }
   } else {
     stopListener(integration.id);
-    statuses.eventSubscriptionStatus = 'pending';
-    details.eventSubscription = {
-      ok: false,
-      pending: true,
-      eventKey: 'minutes.minute.generated_v1',
-      provider: 'node_sdk_ws',
-      reasonCode: primaryListenerBlocker?.code || 'listener_prerequisites_pending',
-      blockedGate: primaryListenerBlocker?.gate || 'unknown',
-      prerequisiteFailures: listenerPrerequisiteFailures,
-      message: '需依次完成应用、授权、组织选择、Base 可访问与权限校验后，才会建立事件长连接。',
-    };
+    if (minuteChangeSubscriptionStatus === 'failed') {
+      statuses.eventSubscriptionStatus = 'failed';
+    } else {
+      statuses.eventSubscriptionStatus = 'pending';
+      details.eventSubscription = {
+        ok: false,
+        pending: true,
+        eventKey: MINUTE_GENERATED_EVENT,
+        provider: 'node_sdk_ws',
+        reasonCode: primaryListenerBlocker?.code || 'listener_prerequisites_pending',
+        blockedGate: primaryListenerBlocker?.gate || 'unknown',
+        prerequisiteFailures: listenerPrerequisiteFailures,
+        minuteChangeSubscription:
+          minuteChangeSubscriptionStatus === 'success'
+            ? {
+                ok: true,
+                provider: 'user_openapi',
+                eventKey: MINUTE_GENERATED_EVENT,
+                message: '当前授权用户已完成妙记生成事件订阅。',
+              }
+            : {
+                ok: false,
+                pending: true,
+                provider: 'user_openapi',
+                eventKey: MINUTE_GENERATED_EVENT,
+                message: '需先完成前置校验，系统才会为当前授权用户订阅妙记生成事件。',
+              },
+        message: '需依次完成应用、授权、组织选择、Base 可访问、权限校验与妙记事件订阅后，才会建立事件长连接。',
+      };
+    }
     logRuntimeMonitor('info', 'integration_checks', 'event_listener_gate_blocked', {
       userId: options.userId,
       integrationId: integration.id,
-      eventKey: 'minutes.minute.generated_v1',
+      eventKey: MINUTE_GENERATED_EVENT,
       provider: 'node_sdk_ws',
       reasonCode: primaryListenerBlocker?.code || 'listener_prerequisites_pending',
       blockedGate: primaryListenerBlocker?.gate || 'unknown',
       statuses,
+      minuteChangeSubscriptionStatus,
       prerequisiteFailures: listenerPrerequisiteFailures,
       selectedOrgTargetId: integration.selectedOrgTargetId || null,
     });
