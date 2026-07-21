@@ -32,6 +32,11 @@ type IntegrationCheckResult = {
   statuses: IntegrationCheckStatuses;
   allPassed: boolean;
   details: Record<string, unknown>;
+  metadata?: {
+    staleSnapshot?: boolean;
+    snapshot?: IntegrationCheckSnapshot;
+    currentSnapshot?: IntegrationCheckSnapshot;
+  };
 };
 
 const CHECK_FLIGHTS_KEY = '__feishu_integration_check_flights';
@@ -106,6 +111,52 @@ type ListenerPrerequisiteFailure = {
   status?: CheckStatus;
   message: string;
 };
+
+type IntegrationCheckSnapshot = {
+  integrationUpdatedAt: string;
+  selectedOrgTargetId: string | null;
+  authorizationStatus: string | null;
+  authorizationUpdatedAt: string | null;
+};
+
+function buildIntegrationCheckSnapshot(options: {
+  integration: NonNullable<Awaited<ReturnType<typeof getUserFeishuIntegrationContext>>>;
+  authorization: Awaited<ReturnType<typeof getLatestFeishuAuthorizationContext>> | null;
+}): IntegrationCheckSnapshot {
+  return {
+    integrationUpdatedAt: options.integration.updatedAt,
+    selectedOrgTargetId: options.integration.selectedOrgTargetId || null,
+    authorizationStatus: options.authorization?.status || null,
+    authorizationUpdatedAt: options.authorization?.updatedAt || null,
+  };
+}
+
+function createIntegrationCheckFlightKey(options: {
+  userId: string;
+  integrationId: string;
+  snapshot: IntegrationCheckSnapshot;
+}): string {
+  return [
+    options.userId,
+    options.integrationId,
+    options.snapshot.integrationUpdatedAt,
+    options.snapshot.selectedOrgTargetId || 'no-org-target',
+    options.snapshot.authorizationStatus || 'no-auth',
+    options.snapshot.authorizationUpdatedAt || 'no-auth-updated-at',
+  ].join(':');
+}
+
+function isIntegrationCheckSnapshotStale(
+  snapshot: IntegrationCheckSnapshot,
+  currentSnapshot: IntegrationCheckSnapshot
+): boolean {
+  return (
+    snapshot.integrationUpdatedAt !== currentSnapshot.integrationUpdatedAt ||
+    snapshot.selectedOrgTargetId !== currentSnapshot.selectedOrgTargetId ||
+    snapshot.authorizationStatus !== currentSnapshot.authorizationStatus ||
+    snapshot.authorizationUpdatedAt !== currentSnapshot.authorizationUpdatedAt
+  );
+}
 
 export const REQUIRED_MEETING_FIELDS: RequiredFieldDefinition[] = [
   { fieldName: '会议ID', type: 1, uiType: 'Text' },
@@ -427,6 +478,10 @@ async function executeFeishuIntegrationChecks(options: {
   }
 
   let authorizationContext = await getLatestFeishuAuthorizationContext(integration.id);
+  const initialSnapshot = buildIntegrationCheckSnapshot({
+    integration,
+    authorization: authorizationContext,
+  });
   if (!authorizationContext || authorizationContext.status !== 'authorized') {
     statuses.oauthStatus = 'pending';
     details.oauth = {
@@ -720,6 +775,39 @@ async function executeFeishuIntegrationChecks(options: {
   );
   const primaryListenerBlocker = listenerPrerequisiteFailures[0] || null;
 
+  const latestIntegration = await getUserFeishuIntegrationContext(options.userId, options.integrationId);
+  const latestAuthorization = latestIntegration
+    ? await getLatestFeishuAuthorizationContext(latestIntegration.id)
+    : null;
+  const currentSnapshot =
+    latestIntegration
+      ? buildIntegrationCheckSnapshot({
+          integration: latestIntegration,
+          authorization: latestAuthorization,
+        })
+      : initialSnapshot;
+  const snapshotStale = isIntegrationCheckSnapshotStale(initialSnapshot, currentSnapshot);
+
+  if (snapshotStale) {
+    logRuntimeMonitor('info', 'integration_checks', 'integration_checks_snapshot_stale', {
+      userId: options.userId,
+      integrationId: options.integrationId,
+      snapshot: initialSnapshot,
+      currentSnapshot,
+    });
+
+    return {
+      statuses,
+      allPassed: false,
+      details,
+      metadata: {
+        staleSnapshot: true,
+        snapshot: initialSnapshot,
+        currentSnapshot,
+      },
+    };
+  }
+
   // Persist prerequisite gates before asking the listener manager to start.
   // The listener manager deliberately re-reads these database states so a
   // manual route or process restart cannot bypass the onboarding sequence.
@@ -910,20 +998,39 @@ async function executeFeishuIntegrationChecks(options: {
     statuses,
     allPassed,
     details,
+    metadata: {
+      staleSnapshot: false,
+      snapshot: initialSnapshot,
+      currentSnapshot,
+    },
   };
 }
 
-export function runFeishuIntegrationChecks(options: {
+export async function runFeishuIntegrationChecks(options: {
   userId: string;
   integrationId: string;
 }): Promise<IntegrationCheckResult> {
-  const flightKey = `${options.userId}:${options.integrationId}`;
+  const integration = await getUserFeishuIntegrationContext(options.userId, options.integrationId);
+  if (!integration) {
+    throw new Error('未找到对应的飞书集成配置。');
+  }
+  const authorization = await getLatestFeishuAuthorizationContext(integration.id);
+  const snapshot = buildIntegrationCheckSnapshot({
+    integration,
+    authorization,
+  });
+  const flightKey = createIntegrationCheckFlightKey({
+    userId: options.userId,
+    integrationId: options.integrationId,
+    snapshot,
+  });
   const flights = getIntegrationCheckFlights();
   const existingFlight = flights.get(flightKey);
   if (existingFlight) {
     logRuntimeMonitor('info', 'integration_checks', 'integration_checks_joined_inflight', {
       userId: options.userId,
       integrationId: options.integrationId,
+      snapshot,
     });
     return existingFlight;
   }
