@@ -4,11 +4,9 @@ import {
 } from './integrationOpenApi';
 import { createFeishuSdkClient } from './sdkClient';
 import { getValidIntegrationUserAuthorization } from './tokenService';
-import { configureFeishuApplication } from './applicationConfigService';
 import { logRuntimeMonitor } from '@/lib/platform/runtimeMonitor';
 import {
   getUserFeishuIntegrationContext,
-  getFeishuIntegrationCheckStatus,
   getLatestFeishuAuthorizationContext,
   upsertFeishuIntegrationCheckStatus,
   updateUserFeishuIntegration,
@@ -28,6 +26,22 @@ type IntegrationCheckStatuses = {
   oauthStatus: CheckStatus;
   baseStatus: CheckStatus;
 };
+
+type IntegrationCheckResult = {
+  statuses: IntegrationCheckStatuses;
+  allPassed: boolean;
+  details: Record<string, unknown>;
+};
+
+const CHECK_FLIGHTS_KEY = '__feishu_integration_check_flights';
+
+function getIntegrationCheckFlights(): Map<string, Promise<IntegrationCheckResult>> {
+  const globalStore = globalThis as Record<string, unknown>;
+  if (!globalStore[CHECK_FLIGHTS_KEY]) {
+    globalStore[CHECK_FLIGHTS_KEY] = new Map<string, Promise<IntegrationCheckResult>>();
+  }
+  return globalStore[CHECK_FLIGHTS_KEY] as Map<string, Promise<IntegrationCheckResult>>;
+}
 
 type BitableAppInfoResult = {
   app?: {
@@ -300,14 +314,10 @@ async function ensureMeetingTableFields(
   };
 }
 
-export async function runFeishuIntegrationChecks(options: {
+async function executeFeishuIntegrationChecks(options: {
   userId: string;
   integrationId: string;
-}): Promise<{
-  statuses: IntegrationCheckStatuses;
-  allPassed: boolean;
-  details: Record<string, unknown>;
-}> {
+}): Promise<IntegrationCheckResult> {
   const integration = await getUserFeishuIntegrationContext(options.userId, options.integrationId);
   if (!integration) {
     throw new Error('未找到对应的飞书集成配置。');
@@ -324,23 +334,11 @@ export async function runFeishuIntegrationChecks(options: {
   const failures: CheckFailure[] = [];
 
   try {
-    const persistedChecks = await getFeishuIntegrationCheckStatus(integration.id);
-    const registrationDetails =
-      persistedChecks?.details?.appRegistration &&
-      typeof persistedChecks.details.appRegistration === 'object'
-        ? persistedChecks.details.appRegistration as Record<string, unknown>
-        : null;
-    if (registrationDetails?.applicationConfigured !== true) {
-      await configureFeishuApplication({
-        userId: integration.userId,
-        integrationId: integration.id,
-        appId: integration.appId,
-        appSecret: integration.secrets.appSecret,
-      });
-    }
     details.appRegistration = {
       provider: 'node_sdk',
-      applicationConfigured: true,
+      configurationMode: 'registration_finalization_only',
+      reconfigurationAttempted: false,
+      note: '真实检查只读取验证应用，不会重复修改或发布应用。',
     };
     const client = createFeishuSdkClient(integration);
     const appResponse = await client.application.v6.application.get({
@@ -763,6 +761,30 @@ export async function runFeishuIntegrationChecks(options: {
     allPassed,
     details,
   };
+}
+
+export function runFeishuIntegrationChecks(options: {
+  userId: string;
+  integrationId: string;
+}): Promise<IntegrationCheckResult> {
+  const flightKey = `${options.userId}:${options.integrationId}`;
+  const flights = getIntegrationCheckFlights();
+  const existingFlight = flights.get(flightKey);
+  if (existingFlight) {
+    logRuntimeMonitor('info', 'integration_checks', 'integration_checks_joined_inflight', {
+      userId: options.userId,
+      integrationId: options.integrationId,
+    });
+    return existingFlight;
+  }
+
+  const flight = executeFeishuIntegrationChecks(options).finally(() => {
+    if (flights.get(flightKey) === flight) {
+      flights.delete(flightKey);
+    }
+  });
+  flights.set(flightKey, flight);
+  return flight;
 }
 
 export async function initializeFeishuIntegrationBase(options: {

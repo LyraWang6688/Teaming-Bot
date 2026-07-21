@@ -278,6 +278,7 @@ export default function FeishuConfigWorkspace() {
   const autoCheckKeyRef = useRef<string | null>(null);
   const setupTraceIdRef = useRef<string | null>(null);
   const previousSetupCompleteRef = useRef<boolean | null>(null);
+  const checksRequestRef = useRef<Promise<void> | null>(null);
 
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -707,11 +708,23 @@ export default function FeishuConfigWorkspace() {
 
   const runAutomatedChecks = useCallback(
     async (integrationId: string, options?: { silent?: boolean }) => {
+      if (checksRequestRef.current) {
+        try {
+          await checksRequestRef.current;
+        } catch (error) {
+          if (!options?.silent) {
+            setPageError(error instanceof Error ? error.message : '系统内部校验失败。');
+          }
+        }
+        return;
+      }
+
       setIsRunningChecks(true);
       if (!options?.silent) {
         setPageError(null);
       }
-      try {
+
+      const request = (async () => {
         await parseJsonResponse<{ allPassed: boolean }>(
           await fetch(`/api/feishu/integrations/${integrationId}/checks`, {
             method: 'POST',
@@ -719,11 +732,19 @@ export default function FeishuConfigWorkspace() {
           })
         );
         await loadIntegrationDetail(integrationId);
+      })();
+      checksRequestRef.current = request;
+
+      try {
+        await request;
       } catch (error) {
         if (!options?.silent) {
           setPageError(error instanceof Error ? error.message : '系统内部校验失败。');
         }
       } finally {
+        if (checksRequestRef.current === request) {
+          checksRequestRef.current = null;
+        }
         setIsRunningChecks(false);
       }
     },
