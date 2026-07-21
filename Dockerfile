@@ -26,6 +26,8 @@ FROM base AS runner
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+ENV WS_NO_BUFFER_UTIL=1
+ENV WS_NO_UTF_8_VALIDATE=1
 RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next

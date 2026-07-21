@@ -74,6 +74,7 @@ function ReportContent() {
   const searchParams = useSearchParams();
   const recordId = searchParams.get('recordId');
   const integrationId = searchParams.get('integrationId');
+  const orgTargetId = searchParams.get('orgTargetId');
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -94,6 +95,9 @@ function ReportContent() {
         requestUrl.searchParams.set('recordId', recordId);
         if (integrationId) {
           requestUrl.searchParams.set('integrationId', integrationId);
+        }
+        if (orgTargetId) {
+          requestUrl.searchParams.set('orgTargetId', orgTargetId);
         }
 
         const response = await fetch(requestUrl.toString());
@@ -124,7 +128,7 @@ function ReportContent() {
     };
 
     fetchData();
-  }, [integrationId, recordId]);
+  }, [integrationId, orgTargetId, recordId]);
 
   if (loading) {
     return <LoadingState />;
