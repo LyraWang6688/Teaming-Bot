@@ -58,6 +58,7 @@ export async function finalizeAppRegistration(
       oauthStatus: 'pending',
       baseStatus: 'pending',
       permissionStatus: 'pending',
+      minuteSubscriptionStatus: 'pending',
       eventSubscriptionStatus: 'pending',
       lastErrorType: null,
       lastErrorMessage: null,

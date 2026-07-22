@@ -159,6 +159,15 @@ async function assertListenerPrerequisites(integrationId: string) {
       '飞书用户权限尚未通过校验，不能启动事件长连接。'
     );
   }
+  if (checks?.minuteSubscriptionStatus !== 'success') {
+    throw new ListenerPrerequisiteError(
+      checks?.minuteSubscriptionStatus === 'failed'
+        ? 'minute_change_subscription_failed'
+        : 'minute_change_subscription_pending',
+      'minute_subscription',
+      '当前授权用户尚未完成妙记生成事件订阅，不能启动事件长连接。'
+    );
+  }
   return integration;
 }
 

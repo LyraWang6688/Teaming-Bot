@@ -177,6 +177,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         integrationId,
         baseStatus: 'pending',
         permissionStatus: 'pending',
+        minuteSubscriptionStatus: 'pending',
         eventSubscriptionStatus: 'pending',
         lastErrorType: null,
         lastErrorMessage: null,

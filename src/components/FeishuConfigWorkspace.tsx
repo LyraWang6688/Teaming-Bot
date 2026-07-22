@@ -86,6 +86,7 @@ type AuthorizationView = {
 type CheckStatusView = {
   appCredentialStatus: string;
   permissionStatus: string;
+  minuteSubscriptionStatus: string;
   eventSubscriptionStatus: string;
   oauthStatus: string;
   baseStatus: string;
@@ -203,6 +204,7 @@ function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
     checks.oauthStatus === 'authorized' &&
     checks.baseStatus === 'success' &&
     checks.permissionStatus === 'success' &&
+    checks.minuteSubscriptionStatus === 'success' &&
     checks.eventSubscriptionStatus === 'success'
   );
 }

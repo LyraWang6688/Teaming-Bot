@@ -129,6 +129,7 @@ export const feishuIntegrationChecks = pgTable(
     integrationId: uuid('integration_id').notNull(),
     appCredentialStatus: text('app_credential_status').notNull().default('pending'),
     permissionStatus: text('permission_status').notNull().default('pending'),
+    minuteSubscriptionStatus: text('minute_subscription_status').notNull().default('pending'),
     eventSubscriptionStatus: text('event_subscription_status').notNull().default('pending'),
     oauthStatus: text('oauth_status').notNull().default('pending'),
     baseStatus: text('base_status').notNull().default('pending'),

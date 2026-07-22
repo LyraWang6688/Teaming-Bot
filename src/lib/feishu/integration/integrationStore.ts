@@ -92,6 +92,7 @@ export type FeishuAuthorizationContext = {
 export type FeishuCheckStatusView = {
   appCredentialStatus: string;
   permissionStatus: string;
+  minuteSubscriptionStatus: string;
   eventSubscriptionStatus: string;
   oauthStatus: string;
   baseStatus: string;
@@ -146,6 +147,7 @@ type UpsertCheckStatusInput = Partial<
     FeishuIntegrationCheckRow,
     | 'appCredentialStatus'
     | 'permissionStatus'
+    | 'minuteSubscriptionStatus'
     | 'eventSubscriptionStatus'
     | 'oauthStatus'
     | 'baseStatus'
@@ -265,6 +267,7 @@ function isAllCheckStatusesPassed(row: FeishuIntegrationCheckRow): boolean {
   return (
     row.appCredentialStatus === 'success' &&
     row.permissionStatus === 'success' &&
+    row.minuteSubscriptionStatus === 'success' &&
     row.eventSubscriptionStatus === 'success' &&
     row.oauthStatus === 'authorized' &&
     row.baseStatus === 'success'
@@ -275,6 +278,7 @@ function mapCheckStatus(row: FeishuIntegrationCheckRow): FeishuCheckStatusView {
   return {
     appCredentialStatus: row.appCredentialStatus,
     permissionStatus: row.permissionStatus,
+    minuteSubscriptionStatus: row.minuteSubscriptionStatus,
     eventSubscriptionStatus: row.eventSubscriptionStatus,
     oauthStatus: row.oauthStatus,
     baseStatus: row.baseStatus,
@@ -585,6 +589,7 @@ export async function upsertFeishuIntegrationCheckStatus(
       integrationId: input.integrationId,
       appCredentialStatus: input.appCredentialStatus || 'pending',
       permissionStatus: input.permissionStatus || 'pending',
+      minuteSubscriptionStatus: input.minuteSubscriptionStatus || 'pending',
       eventSubscriptionStatus: input.eventSubscriptionStatus || 'pending',
       oauthStatus: input.oauthStatus || 'pending',
       baseStatus: input.baseStatus || 'pending',
@@ -599,6 +604,8 @@ export async function upsertFeishuIntegrationCheckStatus(
       set: {
         appCredentialStatus: input.appCredentialStatus ?? sql`${feishuIntegrationChecks.appCredentialStatus}`,
         permissionStatus: input.permissionStatus ?? sql`${feishuIntegrationChecks.permissionStatus}`,
+        minuteSubscriptionStatus:
+          input.minuteSubscriptionStatus ?? sql`${feishuIntegrationChecks.minuteSubscriptionStatus}`,
         eventSubscriptionStatus:
           input.eventSubscriptionStatus ?? sql`${feishuIntegrationChecks.eventSubscriptionStatus}`,
         oauthStatus: input.oauthStatus ?? sql`${feishuIntegrationChecks.oauthStatus}`,

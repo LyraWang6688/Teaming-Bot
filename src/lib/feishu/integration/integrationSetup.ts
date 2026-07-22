@@ -23,6 +23,7 @@ type CheckStatus = 'success' | 'failed' | 'pending' | 'authorized';
 type IntegrationCheckStatuses = {
   appCredentialStatus: CheckStatus;
   permissionStatus: CheckStatus;
+  minuteSubscriptionStatus: CheckStatus;
   eventSubscriptionStatus: CheckStatus;
   oauthStatus: CheckStatus;
   baseStatus: CheckStatus;
@@ -191,6 +192,7 @@ function isAllChecksPassed(statuses: IntegrationCheckStatuses): boolean {
   return (
     statuses.appCredentialStatus === 'success' &&
     statuses.permissionStatus === 'success' &&
+    statuses.minuteSubscriptionStatus === 'success' &&
     statuses.eventSubscriptionStatus === 'success' &&
     statuses.oauthStatus === 'authorized' &&
     statuses.baseStatus === 'success'
@@ -201,6 +203,7 @@ function createInitialStatuses(): IntegrationCheckStatuses {
   return {
     appCredentialStatus: 'pending',
     permissionStatus: 'pending',
+    minuteSubscriptionStatus: 'pending',
     eventSubscriptionStatus: 'pending',
     oauthStatus: 'pending',
     baseStatus: 'pending',
@@ -230,8 +233,7 @@ function parseScopeList(value: string | null | undefined): string[] {
 
 function getListenerPrerequisiteFailures(
   statuses: IntegrationCheckStatuses,
-  hasSelectedOrgTarget: boolean,
-  minuteChangeSubscriptionStatus: CheckStatus
+  hasSelectedOrgTarget: boolean
 ): ListenerPrerequisiteFailure[] {
   const failures: ListenerPrerequisiteFailure[] = [];
 
@@ -291,15 +293,15 @@ function getListenerPrerequisiteFailures(
     hasSelectedOrgTarget &&
     statuses.baseStatus === 'success' &&
     statuses.permissionStatus === 'success' &&
-    minuteChangeSubscriptionStatus !== 'success'
+    statuses.minuteSubscriptionStatus !== 'success'
   ) {
     failures.push({
       code:
-        minuteChangeSubscriptionStatus === 'failed'
+        statuses.minuteSubscriptionStatus === 'failed'
           ? 'minute_change_subscription_failed'
           : 'minute_change_subscription_pending',
       gate: 'minute_subscription',
-      status: minuteChangeSubscriptionStatus,
+      status: statuses.minuteSubscriptionStatus,
       message: '当前授权用户尚未完成妙记生成事件订阅。',
     });
   }
@@ -719,7 +721,6 @@ async function executeFeishuIntegrationChecks(options: {
     };
   }
 
-  let minuteChangeSubscriptionStatus: CheckStatus = 'pending';
   if (
     statuses.appCredentialStatus === 'success' &&
     statuses.oauthStatus === 'authorized' &&
@@ -732,7 +733,7 @@ async function executeFeishuIntegrationChecks(options: {
         userId: options.userId,
         integration,
       });
-      minuteChangeSubscriptionStatus = 'success';
+      statuses.minuteSubscriptionStatus = 'success';
       details.eventSubscription = {
         ok: false,
         pending: true,
@@ -748,7 +749,7 @@ async function executeFeishuIntegrationChecks(options: {
       };
     } catch (error) {
       const failure = pickFailure(error, 'MinuteChangeSubscriptionFailed');
-      minuteChangeSubscriptionStatus = 'failed';
+      statuses.minuteSubscriptionStatus = 'failed';
       failures.push(failure);
       details.eventSubscription = {
         ok: false,
@@ -770,8 +771,7 @@ async function executeFeishuIntegrationChecks(options: {
 
   const listenerPrerequisiteFailures = getListenerPrerequisiteFailures(
     statuses,
-    Boolean(integration.selectedOrgTargetId),
-    minuteChangeSubscriptionStatus
+    Boolean(integration.selectedOrgTargetId)
   );
   const primaryListenerBlocker = listenerPrerequisiteFailures[0] || null;
 
@@ -816,6 +816,7 @@ async function executeFeishuIntegrationChecks(options: {
     integrationId: integration.id,
     appCredentialStatus: statuses.appCredentialStatus,
     permissionStatus: statuses.permissionStatus,
+    minuteSubscriptionStatus: statuses.minuteSubscriptionStatus,
     eventSubscriptionStatus: 'pending',
     oauthStatus: statuses.oauthStatus,
     baseStatus: statuses.baseStatus,
@@ -830,7 +831,7 @@ async function executeFeishuIntegrationChecks(options: {
     statuses.oauthStatus === 'authorized' &&
     statuses.baseStatus === 'success' &&
     statuses.permissionStatus === 'success' &&
-    minuteChangeSubscriptionStatus === 'success' &&
+    statuses.minuteSubscriptionStatus === 'success' &&
     Boolean(integration.selectedOrgTargetId);
 
   if (listenerPrerequisitesPassed) {
@@ -893,7 +894,7 @@ async function executeFeishuIntegrationChecks(options: {
     }
   } else {
     stopListener(integration.id);
-    if (minuteChangeSubscriptionStatus === 'failed') {
+    if (statuses.minuteSubscriptionStatus === 'failed') {
       statuses.eventSubscriptionStatus = 'failed';
     } else {
       statuses.eventSubscriptionStatus = 'pending';
@@ -906,7 +907,7 @@ async function executeFeishuIntegrationChecks(options: {
         blockedGate: primaryListenerBlocker?.gate || 'unknown',
         prerequisiteFailures: listenerPrerequisiteFailures,
         minuteChangeSubscription:
-          minuteChangeSubscriptionStatus === 'success'
+          statuses.minuteSubscriptionStatus === 'success'
             ? {
                 ok: true,
                 provider: 'user_openapi',
@@ -931,7 +932,7 @@ async function executeFeishuIntegrationChecks(options: {
       reasonCode: primaryListenerBlocker?.code || 'listener_prerequisites_pending',
       blockedGate: primaryListenerBlocker?.gate || 'unknown',
       statuses,
-      minuteChangeSubscriptionStatus,
+      minuteSubscriptionStatus: statuses.minuteSubscriptionStatus,
       prerequisiteFailures: listenerPrerequisiteFailures,
       selectedOrgTargetId: integration.selectedOrgTargetId || null,
     });
@@ -942,6 +943,7 @@ async function executeFeishuIntegrationChecks(options: {
     integrationId: integration.id,
     appCredentialStatus: statuses.appCredentialStatus,
     permissionStatus: statuses.permissionStatus,
+    minuteSubscriptionStatus: statuses.minuteSubscriptionStatus,
     eventSubscriptionStatus: statuses.eventSubscriptionStatus,
     oauthStatus: statuses.oauthStatus,
     baseStatus: statuses.baseStatus,

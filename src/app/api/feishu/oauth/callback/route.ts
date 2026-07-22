@@ -115,6 +115,7 @@ export async function GET(request: NextRequest) {
       oauthStatus: 'authorized',
       baseStatus: 'pending',
       permissionStatus: 'pending',
+      minuteSubscriptionStatus: 'pending',
       eventSubscriptionStatus: 'pending',
       lastErrorType: null,
       lastErrorMessage: null,
