@@ -21,12 +21,8 @@ export const feishuIntegrations = pgTable(
     setupStep: text('setup_step').notNull().default('app'),
     appId: text('app_id').notNull(),
     appSecretEncrypted: text('app_secret_encrypted').notNull(),
-    baseAppTokenEncrypted: text('base_app_token_encrypted'),
-    meetingTableId: text('meeting_table_id'),
     selectedOrgTargetId: uuid('selected_org_target_id'),
     orgSelectedAt: timestamp('org_selected_at', { withTimezone: true }),
-    profileName: text('profile_name'),
-    cliConfigDir: text('cli_config_dir'),
     oauthScope: text('oauth_scope').notNull(),
     requiredEvents: jsonb('required_events')
       .$type<string[]>()
@@ -36,6 +32,7 @@ export const feishuIntegrations = pgTable(
       .$type<string[]>()
       .notNull()
       .default([
+        'auth:user.id:read',
         'minutes:minutes.basic:read',
         'minutes:minutes.transcript:export',
         'offline_access',
@@ -128,6 +125,7 @@ export const feishuIntegrationChecks = pgTable(
     integrationId: uuid('integration_id').notNull(),
     appCredentialStatus: text('app_credential_status').notNull().default('pending'),
     permissionStatus: text('permission_status').notNull().default('pending'),
+    minuteSubscriptionStatus: text('minute_subscription_status').notNull().default('pending'),
     eventSubscriptionStatus: text('event_subscription_status').notNull().default('pending'),
     oauthStatus: text('oauth_status').notNull().default('pending'),
     baseStatus: text('base_status').notNull().default('pending'),

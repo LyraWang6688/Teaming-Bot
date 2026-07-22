@@ -74,6 +74,7 @@ function ReportContent() {
   const searchParams = useSearchParams();
   const recordId = searchParams.get('recordId');
   const integrationId = searchParams.get('integrationId');
+  const orgTargetId = searchParams.get('orgTargetId');
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,13 +89,18 @@ function ReportContent() {
       return;
     }
 
+    if (!integrationId || !orgTargetId) {
+      setError('报告链接缺少集成或组织参数，无法定位对应的多维表格');
+      setLoading(false);
+      return;
+    }
+
     const fetchData = async () => {
       try {
         const requestUrl = new URL('/api/feishu/record', window.location.origin);
         requestUrl.searchParams.set('recordId', recordId);
-        if (integrationId) {
-          requestUrl.searchParams.set('integrationId', integrationId);
-        }
+        requestUrl.searchParams.set('integrationId', integrationId);
+        requestUrl.searchParams.set('orgTargetId', orgTargetId);
 
         const response = await fetch(requestUrl.toString());
         const data = await response.json();
@@ -124,7 +130,7 @@ function ReportContent() {
     };
 
     fetchData();
-  }, [integrationId, recordId]);
+  }, [integrationId, orgTargetId, recordId]);
 
   if (loading) {
     return <LoadingState />;

@@ -28,13 +28,24 @@ export async function POST(request: NextRequest, context: RouteContext) {
       integrationId,
     });
 
-    logRuntimeMonitor('info', 'integration_checks', 'integration_checks_completed', {
-      ...traceContext,
-      userId: user.id,
-      integrationId,
-      allPassed: result.allPassed,
-      statuses: result.statuses,
-    });
+    if (result.metadata?.staleSnapshot) {
+      logRuntimeMonitor('info', 'integration_checks', 'integration_checks_stale_result_ignored', {
+        ...traceContext,
+        userId: user.id,
+        integrationId,
+        statuses: result.statuses,
+        snapshot: result.metadata.snapshot,
+        currentSnapshot: result.metadata.currentSnapshot,
+      });
+    } else {
+      logRuntimeMonitor('info', 'integration_checks', 'integration_checks_completed', {
+        ...traceContext,
+        userId: user.id,
+        integrationId,
+        allPassed: result.allPassed,
+        statuses: result.statuses,
+      });
+    }
 
     return NextResponse.json({
       success: true,

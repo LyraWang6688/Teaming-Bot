@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth/session';
 import { getUserFeishuIntegrationContext } from '@/lib/feishu/integration/integrationStore';
-import { startListener, getListenerStatus } from '@/lib/feishu/events/eventListenerManager';
+import {
+  getListenerStartFailureContext,
+  getListenerStatus,
+  startListener,
+} from '@/lib/feishu/events/eventListenerManager';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 
 type RouteContext = { params: Promise<{ integrationId: string }> };
@@ -47,7 +51,6 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     logRuntimeMonitor('info', 'feishu_event_listener', 'event_listener_manual_start_started', {
       stage: 'manual_start_listener',
       integrationId,
-      profileName: integration.profileName,
       userId: user.id,
     });
 
@@ -56,7 +59,6 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     logRuntimeMonitor('info', 'feishu_event_listener', 'event_listener_manual_start_completed', {
       stage: 'manual_start_listener',
       integrationId,
-      profileName: integration.profileName,
       userId: user.id,
       listenerStatus: listener.state,
       readyAt: listener.readyAt?.toISOString() || null,
@@ -73,8 +75,8 @@ export async function POST(_request: NextRequest, context: RouteContext) {
     logRuntimeMonitor('error', 'feishu_event_listener', 'event_listener_manual_start_failed', {
       stage: 'manual_start_listener',
       integrationId,
-      profileName: integration.profileName,
       userId: user.id,
+      ...getListenerStartFailureContext(error),
       ...toRuntimeErrorContext(error),
     });
 

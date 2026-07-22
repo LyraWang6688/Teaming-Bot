@@ -1,6 +1,6 @@
 import type { AnalysisResult } from '@/types';
 import type { FeishuBitableConfig } from '../common/config';
-import { callFeishuIntegrationUserCliOpenApi } from '../integration/integrationOpenApi';
+import { callFeishuIntegrationUserOpenApi } from '../integration/integrationOpenApi';
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import {
   getEnabledOrgTargetContextById,
@@ -59,20 +59,6 @@ export type FeishuBitableAccess = FeishuBitableConfig & {
   orgTarget?: FeishuOrgTargetContext;
 };
 
-export function createIntegrationBitableAccess(
-  integration: FeishuIntegrationContext
-): FeishuBitableAccess {
-  if (!integration.secrets.baseAppToken || !integration.meetingTableId) {
-    throw new Error('当前集成尚未完成 Base 初始化。');
-  }
-
-  return {
-    appToken: integration.secrets.baseAppToken,
-    tableId: integration.meetingTableId,
-    integration,
-  };
-}
-
 export function createOrgTargetBitableAccess(
   integration: FeishuIntegrationContext,
   orgTarget: FeishuOrgTargetContext
@@ -110,7 +96,7 @@ async function callBitableOpenApi<T = unknown>(
   path: string,
   data?: Record<string, unknown>
 ): Promise<T> {
-  return callFeishuIntegrationUserCliOpenApi<T>(config.integration, method, path, data);
+  return callFeishuIntegrationUserOpenApi<T>(config.integration, method, path, data);
 }
 
 function extractBitableText(value: unknown): string | undefined {

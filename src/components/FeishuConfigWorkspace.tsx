@@ -2,12 +2,21 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import Layout from '@/components/Layout';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
 import {
@@ -18,23 +27,13 @@ import {
   RefreshCw,
   Rocket,
   Shield,
+  Sparkles,
   User,
   QrCode,
 } from 'lucide-react';
 
-const DEFAULT_USER_OAUTH_SCOPE =
-  'minutes:minutes.basic:read minutes:minutes.transcript:export offline_access bitable:app';
-
-const OAUTH_SCOPE_DESCRIPTIONS: Record<string, string> = {
-  'minutes:minutes.basic:read': '获取妙记基本信息',
-  'minutes:minutes.search:read': '搜索妙记',
-  'minutes:minutes.transcript:export': '导出妙记转写文字',
-  offline_access: '持续访问已授权数据',
-  'bitable:app': '多维表格（查看、评论、编辑）',
-};
-
 type StepDisplayStatus = 'completed' | 'current' | 'pending';
-type SummaryTone = 'slate' | 'indigo' | 'amber' | 'emerald';
+type ActiveQrDialog = 'registration' | 'authorization' | null;
 
 type AuthUser = {
   id: string;
@@ -49,18 +48,13 @@ type IntegrationView = {
   setupStep: string;
   appId: string;
   oauthScope: string;
-  meetingTableId: string | null;
   selectedOrgTargetId: string | null;
   orgSelectedAt: string | null;
   initializedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  links: {
-    baseUrl: string | null;
-  };
   masked: {
     appSecret: string | null;
-    baseAppToken: string | null;
   };
 };
 
@@ -87,6 +81,7 @@ type AuthorizationView = {
 type CheckStatusView = {
   appCredentialStatus: string;
   permissionStatus: string;
+  minuteSubscriptionStatus: string;
   eventSubscriptionStatus: string;
   oauthStatus: string;
   baseStatus: string;
@@ -122,12 +117,6 @@ type OrgTargetView = {
 type ActiveOrgTargetsResponse = {
   project: ActiveProjectView | null;
   targets: OrgTargetView[];
-};
-
-type SetupSummary = {
-  tone: SummaryTone;
-  title: string;
-  description: string;
 };
 
 function formatDateTime(value: string | null) {
@@ -178,7 +167,9 @@ function getStepTitle(step: number) {
     case 3:
       return '选择组织';
     case 4:
-      return '系统校验';
+      return 'Base 校验';
+    case 5:
+      return '事件长连接';
     default:
       return '';
   }
@@ -187,80 +178,18 @@ function getStepTitle(step: number) {
 function getStepDescription(step: number) {
   switch (step) {
     case 1:
-      return '使用飞书 CLI 创建新的飞书应用。';
+      return '创建飞书应用并完成事件配置。';
     case 2:
-      return '授权应用访问妙记、多维表格等权限。';
+      return '授权访问妙记和多维表格。';
     case 3:
-      return '选择你所在的组织，系统将写入对应多维表格。';
+      return '绑定目标组织表格。';
     case 4:
-      return '系统自动检查应用、授权、表格访问和事件监听状态。';
+      return '自动校验目标多维表格可访问。';
+    case 5:
+      return '建立消费级事件长连接。';
     default:
       return '';
   }
-}
-
-function buildSetupSummary(options: {
-  user: AuthUser | null;
-  integration: IntegrationView | null;
-  authorization: AuthorizationView | null | undefined;
-  checks: CheckStatusView | null | undefined;
-  isRunningChecks: boolean;
-  setupComplete: boolean;
-  hasSelectedOrganization: boolean;
-}): SetupSummary {
-  if (!options.user) {
-    return {
-      tone: 'indigo',
-      title: '创建应用',
-      description: '点击下方按钮，通过飞书 CLI 创建新的飞书应用。',
-    };
-  }
-
-  if (!options.integration) {
-    return {
-      tone: 'indigo',
-      title: '创建应用',
-      description: '点击下方按钮，通过飞书 CLI 创建新的飞书应用。',
-    };
-  }
-
-  if (!options.authorization || options.authorization.status !== 'authorized') {
-    return {
-      tone: 'indigo',
-      title: '授权应用',
-      description: '点击按钮，通过飞书 CLI 完成授权。',
-    };
-  }
-
-  if (!options.hasSelectedOrganization) {
-    return {
-      tone: 'indigo',
-      title: '选择组织',
-      description: '请选择你所在的组织，系统会写入该组织对应的多维表格。',
-    };
-  }
-
-  if (options.setupComplete) {
-    return {
-      tone: 'emerald',
-      title: '配置完成，可以开始使用',
-      description: '系统将自动监听并分析后续会议。',
-    };
-  }
-
-  if (options.isRunningChecks) {
-    return {
-      tone: 'amber',
-      title: '系统正在自动校验',
-      description: '正在后台检查各项配置是否正常。',
-    };
-  }
-
-  return {
-    tone: 'amber',
-    title: '等待系统完成校验',
-    description: '配置步骤已完成，系统正在确认各项状态。',
-  };
 }
 
 function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
@@ -270,30 +199,9 @@ function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
     checks.oauthStatus === 'authorized' &&
     checks.baseStatus === 'success' &&
     checks.permissionStatus === 'success' &&
+    checks.minuteSubscriptionStatus === 'success' &&
     checks.eventSubscriptionStatus === 'success'
   );
-}
-
-type EventSubscriptionDisplayStatus = 'success' | 'checking' | 'failed' | 'pending';
-
-function resolveEventSubscriptionStatus(
-  checks: CheckStatusView | null | undefined,
-  eventSubscribed: boolean | null,
-  isCheckingEvent: boolean
-): EventSubscriptionDisplayStatus {
-  if (checks?.eventSubscriptionStatus === 'success' || eventSubscribed === true) {
-    return 'success';
-  }
-
-  if (isCheckingEvent) {
-    return 'checking';
-  }
-
-  if (checks?.eventSubscriptionStatus === 'failed' || eventSubscribed === false) {
-    return 'failed';
-  }
-
-  return 'pending';
 }
 
 function getCheckStatusTone(passed: boolean) {
@@ -302,39 +210,6 @@ function getCheckStatusTone(passed: boolean) {
 
 function getCheckStatusLabel(passed: boolean) {
   return passed ? '已通过' : '待确认';
-}
-
-function getSummaryToneClasses(tone: SummaryTone) {
-  switch (tone) {
-    case 'emerald':
-      return {
-        badge: 'bg-emerald-100 text-emerald-700',
-        panel: 'border-emerald-200 bg-emerald-50',
-        title: 'text-emerald-900',
-        text: 'text-emerald-800',
-      };
-    case 'amber':
-      return {
-        badge: 'bg-amber-100 text-amber-700',
-        panel: 'border-amber-200 bg-amber-50',
-        title: 'text-amber-900',
-        text: 'text-amber-800',
-      };
-    case 'indigo':
-      return {
-        badge: 'bg-indigo-100 text-indigo-700',
-        panel: 'border-indigo-200 bg-indigo-50',
-        title: 'text-indigo-900',
-        text: 'text-indigo-800',
-      };
-    default:
-      return {
-        badge: 'bg-slate-100 text-slate-700',
-        panel: 'border-slate-200 bg-slate-50',
-        title: 'text-slate-900',
-        text: 'text-slate-700',
-      };
-  }
 }
 
 function createSetupTraceId() {
@@ -355,11 +230,11 @@ function StepHeader(props: {
   const isCurrent = status === 'current';
 
   return (
-    <CardHeader className="pb-3">
+    <CardHeader className="px-0 pb-2 pt-0">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div
-            className={`flex h-9 w-9 items-center justify-center rounded-full text-sm font-medium ${
+            className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium ${
               isCompleted
                 ? 'bg-emerald-500 text-white'
                 : isCurrent
@@ -371,7 +246,7 @@ function StepHeader(props: {
           </div>
           <div>
             <div
-              className={`font-medium ${
+              className={`text-sm font-medium ${
                 isCompleted
                   ? 'text-emerald-700'
                   : isCurrent
@@ -381,7 +256,7 @@ function StepHeader(props: {
             >
               {getStepTitle(step)}
             </div>
-            <CardDescription className="pt-1">{description}</CardDescription>
+            <CardDescription className="pt-0.5 text-xs">{description}</CardDescription>
           </div>
         </div>
         {badgeText ? (
@@ -399,6 +274,8 @@ export default function FeishuConfigWorkspace() {
   const searchParams = useSearchParams();
   const autoCheckKeyRef = useRef<string | null>(null);
   const setupTraceIdRef = useRef<string | null>(null);
+  const previousSetupCompleteRef = useRef<boolean | null>(null);
+  const checksRequestRef = useRef<Promise<void> | null>(null);
 
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -413,14 +290,15 @@ export default function FeishuConfigWorkspace() {
 
   const [isCreatingApp, setIsCreatingApp] = useState(false);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
-  const [eventSubscribed, setEventSubscribed] = useState<boolean | null>(null);
-  const [isCheckingEvent, setIsCheckingEvent] = useState(false);
 
   const [pageError, setPageError] = useState<string | null>(null);
+  const [showCelebration, setShowCelebration] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [registrationQrUrl, setRegistrationQrUrl] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
+  const [activeQrDialog, setActiveQrDialog] = useState<ActiveQrDialog>(null);
+  const [showOrgDialog, setShowOrgDialog] = useState(false);
   const [authorizePollStatus, setAuthorizePollStatus] = useState<string>('idle');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const authorizePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -440,16 +318,13 @@ export default function FeishuConfigWorkspace() {
   const currentStep = useMemo(() => {
     if (!user) return 1;
     if (!integration) return 1;
-    if (!detail?.authorization || detail.authorization.status !== 'authorized') return 2;
+    if (detail?.authorization?.status !== 'authorized') return 2;
     if (!selectedOrgTargetId) return 3;
-    return 4;
-  }, [user, integration, detail?.authorization?.status, selectedOrgTargetId]);
+    if (detail?.checks?.baseStatus !== 'success') return 4;
+    return 5;
+  }, [user, integration, detail?.authorization?.status, detail?.checks?.baseStatus, selectedOrgTargetId]);
 
-  const eventSubscriptionStatus = useMemo(
-    () => resolveEventSubscriptionStatus(detail?.checks, eventSubscribed, isCheckingEvent),
-    [detail?.checks, eventSubscribed, isCheckingEvent]
-  );
-  const eventSubscriptionPassed = eventSubscriptionStatus === 'success';
+  const eventSubscriptionPassed = detail?.checks?.eventSubscriptionStatus === 'success';
 
   const sidebarSteps = useMemo(() => {
     const steps = [
@@ -457,7 +332,7 @@ export default function FeishuConfigWorkspace() {
         step: 1,
         anchor: 'step-create-app',
         title: '创建应用',
-        description: '使用飞书 CLI 创建应用',
+        description: '使用飞书 SDK 一键创建应用',
         status: integration ? 'completed' : 'current',
       },
       {
@@ -477,53 +352,53 @@ export default function FeishuConfigWorkspace() {
       {
         step: 4,
         anchor: 'step-checks',
-        title: '系统校验',
-        description: '状态自动检查',
-        status: areDisplayedChecksPassed(detail?.checks) ? 'completed' : selectedOrgTargetId ? 'current' : 'pending',
+        title: 'Base 校验',
+        description: '自动校验可访问',
+        status: detail?.checks?.baseStatus === 'success' ? 'completed' : selectedOrgTargetId ? 'current' : 'pending',
+      },
+      {
+        step: 5,
+        anchor: 'step-checks',
+        title: '事件长连接',
+        description: '启动事件消费',
+        status: eventSubscriptionPassed ? 'completed' : detail?.checks?.baseStatus === 'success' ? 'current' : 'pending',
       },
     ];
     return steps;
-  }, [selectedOrgTargetId, integration, detail?.authorization?.status, detail?.checks]);
-
-  const effectiveOauthScopes = useMemo(() => {
-    const scope = detail?.authorization?.scope || integration?.oauthScope || DEFAULT_USER_OAUTH_SCOPE;
-    const allScopes = scope.split(/\s+/).filter(Boolean);
-    const requestedScopes = new Set(DEFAULT_USER_OAUTH_SCOPE.split(/\s+/));
-    return allScopes.filter(s => requestedScopes.has(s));
-  }, [detail?.authorization?.scope, integration?.oauthScope]);
+  }, [selectedOrgTargetId, integration, detail?.authorization?.status, detail?.checks, eventSubscriptionPassed]);
 
   const displayedChecksPassed = useMemo(
     () => areDisplayedChecksPassed(detail?.checks),
     [detail?.checks]
   );
 
-  const setupComplete = useMemo(
-    () => Boolean(
-      selectedOrgTargetId &&
-      detail?.authorization?.status === 'authorized' &&
-      eventSubscriptionPassed &&
-      displayedChecksPassed
-    ),
-    [selectedOrgTargetId, detail?.authorization?.status, displayedChecksPassed, eventSubscriptionPassed]
-  );
+  const setupComplete = eventSubscriptionPassed;
 
-  const setupSummary = useMemo(() => {
-    return buildSetupSummary({
-      user,
-      integration,
-      authorization: detail?.authorization,
-      checks: detail?.checks,
-      isRunningChecks,
-      setupComplete,
-      hasSelectedOrganization: Boolean(selectedOrgTargetId),
-    });
-  }, [user, integration, detail?.authorization, detail?.checks, isRunningChecks, setupComplete, selectedOrgTargetId]);
+  const activeRegistrationQrUrl = verificationUrl || registrationQrUrl;
 
-  const summaryToneClasses = useMemo(() => getSummaryToneClasses(setupSummary.tone), [setupSummary.tone]);
   const selectedOrgTarget = useMemo(
     () => activeOrgTargets?.targets.find((target) => target.id === selectedOrgTargetId) || null,
     [activeOrgTargets?.targets, selectedOrgTargetId]
   );
+
+  const createStepIsActive = !integration;
+  const authorizeStepIsActive = Boolean(integration && detail?.authorization?.status !== 'authorized');
+  const organizationStepIsActive = Boolean(detail?.authorization?.status === 'authorized' && !selectedOrgTargetId);
+  const getStepPanelClassName = (isActive: boolean) =>
+    `min-h-0 rounded-xl border border-slate-200 bg-white p-3 transition-all ${isActive ? 'flex flex-1 flex-col' : 'shrink-0'}`;
+
+  useEffect(() => {
+    if (previousSetupCompleteRef.current === null) {
+      previousSetupCompleteRef.current = setupComplete;
+      return;
+    }
+    const becameComplete = !previousSetupCompleteRef.current && setupComplete;
+    previousSetupCompleteRef.current = setupComplete;
+    if (!becameComplete) return;
+    setShowCelebration(true);
+    const timer = window.setTimeout(() => setShowCelebration(false), 4200);
+    return () => window.clearTimeout(timer);
+  }, [setupComplete]);
 
   useEffect(() => {
     void (async () => {
@@ -560,59 +435,8 @@ export default function FeishuConfigWorkspace() {
     })();
   }, []);
 
-  useEffect(() => {
-    if (user) {
-      loadIntegrationDetail(null);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    const authCode = searchParams.get('code');
-    if (authCode && integration?.id) {
-      void runAutomatedChecks(integration.id, { silent: true });
-    }
-  }, [searchParams]);
-
-  // Auto-check event subscription when authorization completes
-  useEffect(() => {
-    if (!integration?.id) return;
-    if (detail?.authorization?.status !== 'authorized') return;
-    if (eventSubscriptionPassed) return;
-    if (eventSubscribed !== null) return;
-
-    setIsCheckingEvent(true);
-    fetch(`/api/feishu/integrations/${integration.id}/event-subscription/check`, {
-      method: 'POST',
-      headers: setupHeaders(),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.success && data.data) {
-          const isReady = data.data.eventFound === true;
-          setEventSubscribed(isReady);
-          setDetail((previous) => {
-            if (!previous?.checks) return previous;
-            return {
-              ...previous,
-              checks: {
-                ...previous.checks,
-                eventSubscriptionStatus: isReady ? 'success' : 'failed',
-                lastErrorMessage: isReady ? null : (data.data.error || previous.checks.lastErrorMessage),
-              },
-            };
-          });
-        } else {
-          setEventSubscribed(false);
-        }
-      })
-      .catch(() => setEventSubscribed(false))
-      .finally(() => setIsCheckingEvent(false));
-  }, [integration?.id, detail?.authorization?.status, eventSubscribed, eventSubscriptionPassed, setupHeaders]);
-
   const loadIntegrationDetail = useCallback(
     async (integrationId: string | null) => {
-      if (!user) return;
-
       setIsLoadingDetail(true);
       setPageError(null);
 
@@ -668,8 +492,14 @@ export default function FeishuConfigWorkspace() {
         setIsLoadingDetail(false);
       }
     },
-    [user]
+    []
   );
+
+  useEffect(() => {
+    if (user) {
+      void loadIntegrationDetail(searchParams.get('integrationId'));
+    }
+  }, [loadIntegrationDetail, searchParams, user]);
 
   const autoCheckTriggerKey = useMemo(() => {
     if (!integration?.id) return '';
@@ -713,8 +543,8 @@ export default function FeishuConfigWorkspace() {
           body: JSON.stringify({ selectedOrgTargetId: orgTargetId }),
         })
       );
-      setEventSubscribed(null);
       await loadIntegrationDetail(integration.id);
+      setShowOrgDialog(false);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '保存组织失败。');
     } finally {
@@ -723,14 +553,17 @@ export default function FeishuConfigWorkspace() {
   };
 
   const handleCreateApp = async () => {
+    setIsCreatingApp(true);
     setPageError(null);
     setRegistrationQrUrl(null);
     setVerificationUrl(null);
+    setActiveQrDialog(null);
     try {
       const result = await parseJsonResponse<{
         verificationUrl: string;
         sessionToken: string;
-        profileName: string;
+        expiresAt: string;
+        user: AuthUser;
       }>(await fetch('/api/feishu/integrations/create-app', {
         method: 'POST',
         headers: setupHeaders(),
@@ -738,6 +571,8 @@ export default function FeishuConfigWorkspace() {
       
       setVerificationUrl(result.verificationUrl);
       setRegistrationQrUrl(result.verificationUrl);
+      setActiveQrDialog('registration');
+      setUser(result.user);
       
       const intervalMs = 3000;
       
@@ -746,24 +581,45 @@ export default function FeishuConfigWorkspace() {
           const pollRes = await fetch('/api/feishu/integrations/register/poll', {
             method: 'POST',
             headers: setupHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ sessionToken: result.sessionToken, profileName: result.profileName }),
+            body: JSON.stringify({ sessionToken: result.sessionToken }),
           });
           const pollData = await pollRes.json();
           const status = pollData?.data?.status || pollData?.status;
           
           if (status === 'completed') {
-            if (pollRef.current) clearInterval(pollRef.current);
-            window.location.reload();
-          } else if (status === 'error' || status === 'denied' || status === 'expired') {
-            if (pollRef.current) clearInterval(pollRef.current);
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
+            setActiveQrDialog(null);
             setRegistrationQrUrl(null);
+            setVerificationUrl(null);
+            const completedIntegration = pollData?.data?.integration as IntegrationView | undefined;
+            const completedIntegrationId = pollData?.data?.integrationId as string | undefined;
+            if (completedIntegration) {
+              setIntegration(completedIntegration);
+            }
+            if (completedIntegrationId) {
+              await loadIntegrationDetail(completedIntegrationId);
+            }
+          } else if (
+            status === 'failed' ||
+            status === 'error' ||
+            status === 'denied' ||
+            status === 'expired'
+          ) {
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
+            setRegistrationQrUrl(null);
+            setActiveQrDialog(null);
             setPageError(pollData?.data?.error || pollData?.error || '创建失败');
           }
         } catch (e) {
           logClientMonitor('warn', 'feishu_config_workspace', 'register_poll_request_failed', {
             ...toClientErrorContext(e),
             setupTraceId: getSetupTraceId(),
-            profileName: result.profileName,
           });
         }
       };
@@ -771,6 +627,8 @@ export default function FeishuConfigWorkspace() {
       pollRef.current = setInterval(poll, intervalMs);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '创建应用失败。');
+    } finally {
+      setIsCreatingApp(false);
     }
   };
 
@@ -779,9 +637,10 @@ export default function FeishuConfigWorkspace() {
     setIsAuthorizing(true);
     setPageError(null);
     setAuthorizeUrl(null);
+    setActiveQrDialog(null);
     setAuthorizePollStatus('idle');
     try {
-      const result = await parseJsonResponse<{ verificationUrl: string; deviceCode: string }>(
+      const result = await parseJsonResponse<{ authorizationUrl: string; expiresIn: number }>(
         await fetch(`/api/feishu/integrations/${integration.id}/authorize/start`, {
           method: 'POST',
           headers: setupHeaders({ 'Content-Type': 'application/json' }),
@@ -789,7 +648,8 @@ export default function FeishuConfigWorkspace() {
         })
       );
 
-      setAuthorizeUrl(result.verificationUrl);
+      setAuthorizeUrl(result.authorizationUrl);
+      setActiveQrDialog('authorization');
       setAuthorizePollStatus('pending');
 
       if (authorizePollRef.current) {
@@ -810,9 +670,11 @@ export default function FeishuConfigWorkspace() {
 
             if (pollResult.status === 'completed') {
               setAuthorizePollStatus('completed');
+              setActiveQrDialog(null);
               await loadIntegrationDetail(integration.id);
             } else if (pollResult.status === 'denied' || pollResult.status === 'expired' || pollResult.status === 'error') {
               setAuthorizePollStatus(pollResult.status);
+              setActiveQrDialog(null);
               setPageError(pollResult.error || '授权失败');
             } else {
               scheduleAuthorizePoll();
@@ -843,11 +705,23 @@ export default function FeishuConfigWorkspace() {
 
   const runAutomatedChecks = useCallback(
     async (integrationId: string, options?: { silent?: boolean }) => {
+      if (checksRequestRef.current) {
+        try {
+          await checksRequestRef.current;
+        } catch (error) {
+          if (!options?.silent) {
+            setPageError(error instanceof Error ? error.message : '系统内部校验失败。');
+          }
+        }
+        return;
+      }
+
       setIsRunningChecks(true);
       if (!options?.silent) {
         setPageError(null);
       }
-      try {
+
+      const request = (async () => {
         await parseJsonResponse<{ allPassed: boolean }>(
           await fetch(`/api/feishu/integrations/${integrationId}/checks`, {
             method: 'POST',
@@ -855,11 +729,19 @@ export default function FeishuConfigWorkspace() {
           })
         );
         await loadIntegrationDetail(integrationId);
+      })();
+      checksRequestRef.current = request;
+
+      try {
+        await request;
       } catch (error) {
         if (!options?.silent) {
           setPageError(error instanceof Error ? error.message : '系统内部校验失败。');
         }
       } finally {
+        if (checksRequestRef.current === request) {
+          checksRequestRef.current = null;
+        }
         setIsRunningChecks(false);
       }
     },
@@ -881,43 +763,210 @@ export default function FeishuConfigWorkspace() {
 
   return (
     <Layout>
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="space-y-2">
-          <h1 className="text-2xl font-bold text-slate-900">飞书集成配置</h1>
-          <p className="text-slate-600">完成以下 4 个步骤，让系统自动监听并分析你的飞书会议。</p>
-        </div>
+      <AlertDialog open={Boolean(pageError)} onOpenChange={(open) => {
+        if (!open) setPageError(null);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-red-100 text-red-600">
+              <AlertCircle className="h-5 w-5" />
+            </div>
+            <AlertDialogTitle>操作未完成</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-6 text-slate-600">
+              {pageError}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setPageError(null)}>
+              我知道了
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-        <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <aside className="space-y-4 self-start lg:sticky lg:top-24">
-            <Card className={summaryToneClasses.panel}>
-              <CardContent className="space-y-3 pt-6">
-                <Badge className={summaryToneClasses.badge}>当前状态</Badge>
-                <div className={`text-base font-semibold ${summaryToneClasses.title}`}>{setupSummary.title}</div>
-                <p className={`text-sm leading-6 ${summaryToneClasses.text}`}>{setupSummary.description}</p>
-                <div className="flex items-center gap-2 text-xs text-slate-600">
-                  <span>当前进度</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                  <span>第 {currentStep} 步 / 共 4 步</span>
-                </div>
-                {setupComplete ? (
-                  <div className="rounded-lg border border-emerald-200 bg-white/70 p-3 text-sm text-emerald-800">
-                    系统内部校验已通过，你可以开始使用系统了。
+      <AlertDialog open={activeQrDialog === 'registration' && Boolean(activeRegistrationQrUrl)} onOpenChange={(open) => {
+        if (!open) setActiveQrDialog(null);
+      }}>
+        <AlertDialogContent className="sm:max-w-xl">
+          <AlertDialogHeader>
+            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+              <QrCode className="h-5 w-5" />
+            </div>
+            <AlertDialogTitle>创建飞书应用</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-6 text-slate-600">
+              你可以使用飞书扫码，也可以直接打开链接完成应用创建。请在飞书页面显示的有效期内完成确认，创建成功后本页会自动进入用户授权步骤。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {activeRegistrationQrUrl ? (
+            <div className="grid gap-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 sm:grid-cols-[160px_minmax(0,1fr)]">
+              <div className="mx-auto rounded-xl border bg-white p-3 shadow-sm">
+                <Image
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=${encodeURIComponent(activeRegistrationQrUrl)}`}
+                  alt="创建应用二维码"
+                  width={144}
+                  height={144}
+                  unoptimized
+                  className="h-36 w-36"
+                />
+              </div>
+              <div className="space-y-2 text-sm text-slate-700">
+                <div className="font-medium text-slate-900">扫码或打开链接</div>
+                <p className="leading-6">按飞书页面提示完成应用创建和权限配置。系统会在后台轮询创建结果。</p>
+                <a href={activeRegistrationQrUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800">
+                  打开链接
+                </a>
+                <p className="text-xs leading-5 text-slate-500">如果二维码过期，请关闭弹窗后重新点击“创建应用”。</p>
+              </div>
+            </div>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setActiveQrDialog(null)}>稍后处理</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={activeQrDialog === 'authorization' && Boolean(authorizeUrl)} onOpenChange={(open) => {
+        if (!open) setActiveQrDialog(null);
+      }}>
+        <AlertDialogContent className="sm:max-w-xl">
+          <AlertDialogHeader>
+            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+              <Shield className="h-5 w-5" />
+            </div>
+            <AlertDialogTitle>完成用户授权</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-6 text-slate-600">
+              你可以使用飞书扫码，也可以直接打开链接授权妙记和多维表格访问权限。授权完成后系统会自动更新状态。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {authorizeUrl ? (
+            <div className="grid gap-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 sm:grid-cols-[160px_minmax(0,1fr)]">
+              <div className="mx-auto rounded-xl border bg-white p-3 shadow-sm">
+                <Image
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=${encodeURIComponent(authorizeUrl)}`}
+                  alt="授权二维码"
+                  width={144}
+                  height={144}
+                  unoptimized
+                  className="h-36 w-36"
+                />
+              </div>
+              <div className="space-y-2 text-sm text-slate-700">
+                <div className="font-medium text-slate-900">扫码或打开链接</div>
+                <p className="leading-6">确认授权后，系统会持续等待飞书返回授权结果。</p>
+                <a href={authorizeUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800">
+                  打开链接
+                </a>
+                {authorizePollStatus === 'pending' ? (
+                  <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    等待授权确认
                   </div>
                 ) : null}
-              </CardContent>
-            </Card>
+                <p className="text-xs leading-5 text-slate-500">如果授权链接失效，请关闭弹窗后重新发起授权。</p>
+              </div>
+            </div>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setActiveQrDialog(null)}>稍后处理</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-            <Card>
-              <CardContent className="pt-6">
-                <div className="space-y-4">
+      <AlertDialog open={showOrgDialog} onOpenChange={setShowOrgDialog}>
+        <AlertDialogContent className="sm:max-w-lg">
+          <AlertDialogHeader>
+            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+              <User className="h-5 w-5" />
+            </div>
+            <AlertDialogTitle>选择目标组织</AlertDialogTitle>
+            <AlertDialogDescription className="text-sm leading-6 text-slate-600">
+              请选择本次飞书会议分析要写入的组织表格。系统会将后续会议记录、总结和校验结果绑定到该组织目标。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="text-xs font-medium text-slate-500">当前项目</div>
+              <div className="mt-1 text-sm font-semibold text-slate-900">
+                {activeOrgTargets?.project?.name || '尚未导入 active 项目配置'}
+              </div>
+            </div>
+            {activeOrgTargets?.targets.length ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                {activeOrgTargets.targets.map((target) => (
+                  <Button
+                    key={target.id}
+                    type="button"
+                    variant={target.id === selectedOrgTargetId ? 'default' : 'outline'}
+                    onClick={() => void handleSelectOrganization(target.id)}
+                    disabled={isSavingOrganization}
+                    className="justify-start"
+                  >
+                    {isSavingOrganization && target.id === selectedOrgTargetId ? (
+                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    {target.orgName}
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800">
+                当前没有可选组织，请先在服务器导入项目组织配置。
+              </div>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSavingOrganization}>稍后选择</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {showCelebration ? (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-slate-950/10 backdrop-blur-[1px]">
+          <div className="relative overflow-hidden rounded-2xl border border-emerald-200 bg-white px-8 py-7 text-center shadow-2xl">
+            {['left-6 top-6 bg-pink-400', 'right-8 top-8 bg-indigo-400', 'left-10 bottom-8 bg-amber-400', 'right-10 bottom-7 bg-emerald-400', 'left-1/2 top-4 bg-sky-400'].map((className) => (
+              <span
+                key={className}
+                className={`absolute h-2.5 w-2.5 rounded-full ${className} animate-ping`}
+              />
+            ))}
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+              <Sparkles className="h-7 w-7" />
+            </div>
+            <div className="text-lg font-semibold text-slate-900">配置完成</div>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-slate-600">
+              系统校验已通过，后续可以自动监听并分析飞书会议。
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="mx-auto flex h-[calc(100vh-4rem)] max-w-6xl flex-col gap-3 py-5 lg:overflow-hidden">
+        <div className="shrink-0 space-y-0.5">
+          <h1 className="text-xl font-bold text-slate-900">飞书集成配置</h1>
+          <p className="text-sm text-slate-600">完成创建应用、用户授权和组织选择，系统会自动校验目标表格与事件监听状态。</p>
+        </div>
+
+        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <aside className="flex min-h-0 flex-col gap-2">
+            <Card className="shrink-0">
+              <CardContent className="p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-sm font-medium text-slate-900">配置进度</div>
+                  <div className="flex items-center gap-1 text-xs text-slate-500">
+                    <span>第 {currentStep} 步</span>
+                    <ArrowRight className="h-3 w-3" />
+                    <span>共 4 步</span>
+                  </div>
+                </div>
+                <div className="space-y-1">
                   {sidebarSteps.map((item, index) => {
                     const isCompleted = item.status === 'completed';
                     const isCurrent = item.status === 'current';
                     return (
-                      <a key={item.step} href={`#${item.anchor}`} className="flex gap-3 rounded-lg p-1 transition hover:bg-slate-50">
+                      <a key={item.step} href={`#${item.anchor}`} className="flex gap-2 rounded-lg p-1 transition hover:bg-slate-50">
                         <div className="flex flex-col items-center">
                           <div
-                            className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium ${
+                            className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium ${
                               isCompleted
                                 ? 'bg-emerald-500 text-white'
                                 : isCurrent
@@ -928,10 +977,10 @@ export default function FeishuConfigWorkspace() {
                             {isCompleted ? <Check className="h-4 w-4" /> : item.step}
                           </div>
                           {index < sidebarSteps.length - 1 ? (
-                            <div className={`mt-2 h-10 w-px ${isCompleted ? 'bg-emerald-300' : 'bg-slate-200'}`} />
+                            <div className={`mt-1 h-4 w-px ${isCompleted ? 'bg-emerald-300' : 'bg-slate-200'}`} />
                           ) : null}
                         </div>
-                        <div className="pb-2">
+                        <div className="pb-1">
                           <div
                             className={`text-sm font-medium ${
                               isCompleted
@@ -943,7 +992,7 @@ export default function FeishuConfigWorkspace() {
                           >
                             {item.title}
                           </div>
-                          <div className="mt-1 text-xs leading-5 text-slate-500">{item.description}</div>
+                          <div className="mt-0.5 text-[11px] leading-3 text-slate-500">{item.description}</div>
                         </div>
                       </a>
                     );
@@ -952,18 +1001,26 @@ export default function FeishuConfigWorkspace() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardContent className="space-y-3 pt-6">
-                <div className="flex items-center justify-between">
+            <Card className="min-h-0 flex-1">
+              <CardContent className="flex h-full min-h-0 flex-col space-y-1.5 p-2.5">
+                <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-medium text-slate-900">系统校验结果</div>
-                  <Badge
-                    variant="outline"
-                    className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
-                  >
-                    {displayedChecksPassed ? '全部通过' : '待确认'}
-                  </Badge>
+                  <div className="flex items-center gap-1.5">
+                    {integration?.id ? (
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="h-6 px-2 text-xs">
+                        <RefreshCw className={`mr-1 h-3 w-3 ${isRunningChecks ? 'animate-spin' : ''}`} />
+                        刷新
+                      </Button>
+                    ) : null}
+                    <Badge
+                      variant="outline"
+                      className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
+                    >
+                      {displayedChecksPassed ? '全部通过' : '待确认'}
+                    </Badge>
+                  </div>
                 </div>
-                <div className="space-y-2 text-sm">
+                <div className="space-y-1 text-xs">
                   <div className={`flex items-center justify-between ${getCheckStatusTone(Boolean(selectedOrgTargetId))}`}>
                     <span>组织配置</span>
                     <span className="text-xs">{selectedOrgTarget ? selectedOrgTarget.orgName : getCheckStatusLabel(Boolean(selectedOrgTargetId))}</span>
@@ -978,7 +1035,7 @@ export default function FeishuConfigWorkspace() {
                   </div>
                   <div className={`flex items-center justify-between ${getCheckStatusTone(detail?.checks?.baseStatus === 'success')}`}>
                     <span>目标表格</span>
-                    <span className="text-xs">{detail?.checks?.baseStatus === 'success' ? '可写入' : getStatusLabel(detail?.checks?.baseStatus)}</span>
+                    <span className="text-xs">{detail?.checks?.baseStatus === 'success' ? '可访问' : getStatusLabel(detail?.checks?.baseStatus)}</span>
                   </div>
                   <div className={`flex items-center justify-between ${getCheckStatusTone(eventSubscriptionPassed)}`}>
                     <span>事件监听</span>
@@ -986,87 +1043,37 @@ export default function FeishuConfigWorkspace() {
                   </div>
                 </div>
                 {!displayedChecksPassed && detail?.checks?.lastErrorMessage ? (
-                  <div className="rounded-lg border border-red-100 bg-red-50 p-2 text-xs leading-5 text-red-700">
+                  <div className="rounded-md border border-red-100 bg-red-50 p-1.5 text-xs leading-4 text-red-700">
                     {detail.checks.lastErrorMessage}
                   </div>
                 ) : null}
-                {integration?.id ? (
-                  <Button type="button" variant="outline" size="sm" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="w-full">
-                    <RefreshCw className={`mr-2 h-4 w-4 ${isRunningChecks ? 'animate-spin' : ''}`} />
-                    刷新校验
-                  </Button>
+                {setupComplete ? (
+                  <div className="rounded-md border border-emerald-200 bg-emerald-50 p-1.5 text-xs leading-4 text-emerald-800">
+                    配置已完成，后续可以实现飞书会议的自动监听与分析。
+                  </div>
                 ) : null}
               </CardContent>
             </Card>
           </aside>
 
-          <div className="space-y-6">
-            {pageError ? (
-              <Alert className="border-red-200 bg-red-50">
-                <AlertCircle className="h-4 w-4 text-red-600" />
-                <AlertDescription className="text-red-800">{pageError}</AlertDescription>
-              </Alert>
-            ) : null}
-
-            <Card>
-              <CardContent className="space-y-6">
+          <div className="flex min-h-0 flex-col">
+            <Card className="min-h-0 flex-1">
+              <CardContent className="flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3">
                 {authLoading ? (
-                  <div className="space-y-4">
+                  <div className="space-y-3">
                     <Skeleton className="h-8 w-32" />
                     <Skeleton className="h-48 w-full" />
                   </div>
-                ) : !user ? (
-                  <div id="step-login" className="flex flex-col items-center justify-center py-12">
-                    {registrationQrUrl ? (
-                      <>
-                        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
-                          <QrCode className="h-8 w-8 text-indigo-600" />
-                        </div>
-                        <h3 className="mb-2 text-lg font-semibold text-slate-900">请使用飞书扫码</h3>
-                        <p className="mb-4 text-center text-sm text-slate-500">
-                          打开飞书扫描下方二维码创建应用。
-                        </p>
-                        <div className="mb-4 rounded-lg border bg-white p-4 shadow-sm">
-                          <img
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(verificationUrl || registrationQrUrl)}`}
-                            alt="QR Code"
-                            className="mx-auto h-48 w-48"
-                          />
-                        </div>
-                        <p className="text-xs text-slate-400">
-                          二维码有效期 5 分钟，请尽快扫码
-                        </p>
-                        <p className="mt-2 text-xs text-slate-400 break-all text-center max-w-xs">
-                          <a href={verificationUrl || registrationQrUrl} target="_blank" rel="noopener noreferrer" className="underline">
-                            或点击打开链接
-                          </a>
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100">
-                          <User className="h-8 w-8 text-indigo-600" />
-                        </div>
-                        <h3 className="mb-2 text-lg font-semibold text-slate-900">创建应用</h3>
-                        <p className="mb-6 text-center text-sm text-slate-500">
-                          点击按钮后使用飞书扫码创建应用。
-                        </p>
-                        <Button onClick={handleCreateApp} className="w-full max-w-xs">
-                          <QrCode className="mr-2 h-4 w-4" />
-                          创建应用
-                        </Button>
-                      </>
-                    )}
-                  </div>
                 ) : (
                   <>
-                    <div className="flex items-center justify-between">
+                    {user ? (
+                    <div className="flex shrink-0 items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-100 text-sm font-medium text-indigo-700">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-sm font-medium text-indigo-700">
                           <User className="h-4 w-4" />
                         </div>
                         <div>
-                          <div className="font-medium text-slate-900">已登录</div>
+                          <div className="text-sm font-medium text-slate-900">已登录</div>
                           <div className="text-xs text-slate-500">{user.email || '飞书用户'}</div>
                         </div>
                       </div>
@@ -1075,212 +1082,139 @@ export default function FeishuConfigWorkspace() {
                         {isSigningOut ? '退出中...' : '退出'}
                       </Button>
                     </div>
+                    ) : null}
 
-                    <div id="step-create-app">
+                    <div id="step-create-app" className={getStepPanelClassName(createStepIsActive)}>
                       <StepHeader
                         step={1}
                         status={integration ? 'completed' : 'current'}
                         description={getStepDescription(1)}
                       />
-                      <CardContent>
+                      <CardContent className="min-h-0 flex-1 px-0 pb-0 pt-0">
                         {!integration ? (
-                          <div className="space-y-4">
-                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
-                              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
-                                <Rocket className="h-8 w-8 text-indigo-600" />
+                          <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3">
+                            {registrationQrUrl ? (
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-sm font-medium text-indigo-900">创建二维码已生成</div>
+                                  <p className="mt-1 text-xs leading-4 text-slate-600">请在弹窗中扫码，页面会自动等待创建结果。</p>
+                                </div>
+                                <Button type="button" size="sm" className="shrink-0" onClick={() => setActiveQrDialog('registration')}>
+                                  <QrCode className="mr-2 h-4 w-4" />
+                                  查看二维码
+                                </Button>
                               </div>
-                              <h3 className="mb-2 text-lg font-semibold text-slate-900">创建应用</h3>
-                              <p className="mb-6 text-sm text-slate-600">
-                                点击下方按钮，系统将自动完成以下操作：
-                              </p>
-                              <ul className="mb-6 text-left text-sm text-slate-600 space-y-2">
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  创建应用（App ID + App Secret）
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  配置应用权限（多维表格）
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  订阅妙记生成事件（minutes.minute.generated_v1）
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  配置 OAuth 重定向地址
-                                </li>
-                              </ul>
-                              <Button onClick={handleCreateApp} disabled={isCreatingApp} className="w-full">
-                                {isCreatingApp ? (
-                                  <>
-                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                                    创建中...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Rocket className="mr-2 h-4 w-4" />
-                                    创建应用
-                                  </>
-                                )}
-                              </Button>
-                            </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-4">
+                                <div className="min-w-0">
+                                  <h3 className="text-sm font-semibold text-slate-900">创建飞书应用</h3>
+                                </div>
+                                <Button onClick={handleCreateApp} disabled={isCreatingApp} size="sm" className="shrink-0">
+                                  {isCreatingApp ? (
+                                    <>
+                                      <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                      创建中
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Rocket className="mr-2 h-4 w-4" />
+                                      创建应用
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            )}
                           </div>
                         ) : (
-                          <div className="space-y-4">
-                            <div className="rounded-lg bg-emerald-50 p-4">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Check className="h-4 w-4 text-emerald-600" />
-                                <span className="font-medium text-emerald-900">应用已创建</span>
+                          <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                                <span className="truncate text-sm font-medium text-emerald-900">应用已创建：{integration.name}</span>
                               </div>
-                              <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                  <div className="text-xs text-emerald-600 mb-1">应用名称</div>
-                                  <div className="font-medium text-emerald-900">{integration.name}</div>
-                                </div>
-                                <div>
-                                  <div className="text-xs text-emerald-600 mb-1">App ID</div>
-                                  <div className="font-mono text-sm text-emerald-900">{integration.appId}</div>
-                                </div>
-                              </div>
+                              <span className="shrink-0 font-mono text-[11px] text-emerald-700">{integration.appId}</span>
                             </div>
-
                           </div>
                         )}
                       </CardContent>
                     </div>
 
-                    <Separator />
-
-                    <div id="step-authorize">
+                    <div id="step-authorize" className={getStepPanelClassName(authorizeStepIsActive)}>
                       <StepHeader
                         step={2}
                         status={(detail?.authorization?.status === 'authorized') ? 'completed' : integration ? 'current' : 'pending'}
                         description={getStepDescription(2)}
                       />
-                      <CardContent>
+                      <CardContent className="min-h-0 flex-1 px-0 pb-0 pt-0">
                         {!integration ? (
-                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-                            <div className="mb-2 text-sm font-medium text-slate-500">请先创建应用</div>
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
+                            <div className="text-sm font-medium text-slate-500">请先完成第 1 步创建应用</div>
                           </div>
                         ) : detail?.authorization?.status === 'authorized' ? (
-                          <div className="space-y-4">
-                            <div className="rounded-lg bg-emerald-50 p-4">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Check className="h-4 w-4 text-emerald-600" />
-                                <span className="font-medium text-emerald-900">已完成授权</span>
+                          <div className="rounded-lg bg-emerald-50 px-3 py-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                                <span className="truncate text-sm font-medium text-emerald-900">
+                                  已完成授权：{detail.authorization.authorizedUserName || '未知用户'}
+                                </span>
                               </div>
-                              <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                  <div className="text-xs text-emerald-600 mb-1">授权用户</div>
-                                  <div className="font-medium text-emerald-900">{detail.authorization.authorizedUserName || '未知'}</div>
-                                </div>
-                                <div>
-                                  <div className="text-xs text-emerald-600 mb-1">授权时间</div>
-                                  <div className="font-medium text-emerald-900">{formatDateTime(detail.authorization.updatedAt)}</div>
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="rounded-lg border border-slate-200 p-4">
-                              <div className="mb-3 text-sm font-medium text-slate-900">已授权权限</div>
-                              <div className="space-y-2">
-                                {effectiveOauthScopes.map((scope) => (
-                                  <div key={scope} className="flex items-center gap-2 text-sm">
-                                    <Check className="h-4 w-4 text-emerald-500" />
-                                    <code className="text-slate-700">{scope}</code>
-                                    <span className="text-slate-500">
-                                      {OAUTH_SCOPE_DESCRIPTIONS[scope] || '用于飞书用户授权'}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
+                              <span className="shrink-0 text-[11px] text-emerald-700">{formatDateTime(detail.authorization.updatedAt)}</span>
                             </div>
                           </div>
                         ) : (
-                          <div className="space-y-4">
-                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-6 text-center">
-                              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm">
-                                <Shield className="h-8 w-8 text-indigo-600" />
-                              </div>
-                              <h3 className="mb-2 text-lg font-semibold text-slate-900">授权应用</h3>
-                              <p className="mb-6 text-sm text-slate-600">
-                                点击下方按钮，通过飞书 CLI 授权应用访问权限。
-                              </p>
-                              <ul className="mb-6 text-left text-sm text-slate-600 space-y-2">
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  获取妙记基本信息
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  导出妙记转写文字
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  持续访问已授权数据
-                                </li>
-                                <li className="flex items-center gap-2">
-                                  <Check className="h-4 w-4 text-emerald-500" />
-                                  多维表格（查看、评论、编辑）
-                                </li>
-                              </ul>
+                          <div>
+                            <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3">
                               {authorizeUrl ? (
-                                <div className="space-y-4">
-                                  <div className="rounded-lg bg-white p-4 text-center">
-                                    <div className="mb-2 text-sm font-medium text-slate-700">请用飞书扫描下方二维码进行授权</div>
-                                    <img
-                                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(authorizeUrl)}`}
-                                      alt="授权二维码"
-                                      className="mx-auto"
-                                      width={200}
-                                      height={200}
-                                      onError={(e) => {
-                                        // Fallback: show URL as link if QR image fails
-                                        (e.target as HTMLImageElement).style.display = 'none';
-                                      }}
-                                    />
-                                    <p className="mt-2 text-xs text-slate-500">
-                                      或
-                                      <a href={authorizeUrl} target="_blank" rel="noopener noreferrer" className="ml-1 text-indigo-600 hover:underline">
-                                        点击此处打开链接
-                                      </a>
-                                    </p>
+                                <div className="flex items-center justify-between gap-4">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-medium text-indigo-900">授权二维码已生成</div>
                                     {authorizePollStatus === 'pending' && (
-                                      <div className="mt-3 flex items-center justify-center gap-2 text-sm text-slate-500">
-                                        <RefreshCw className="h-4 w-4 animate-spin" />
-                                        等待授权确认...
+                                      <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                        等待授权确认
                                       </div>
                                     )}
                                     {authorizePollStatus === 'completed' && (
-                                      <div className="mt-3 flex items-center justify-center gap-2 text-sm text-emerald-600">
-                                        <Check className="h-4 w-4" />
+                                      <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600">
+                                        <Check className="h-3.5 w-3.5" />
                                         授权已完成
                                       </div>
                                     )}
                                   </div>
-                                  <Button
-                                    variant="outline"
-                                    onClick={() => {
-                                      setAuthorizeUrl(null);
-                                      setAuthorizePollStatus('idle');
-                                      if (authorizePollRef.current) {
-                                        clearTimeout(authorizePollRef.current);
-                                        authorizePollRef.current = null;
-                                      }
-                                    }}
-                                    className="w-full"
-                                  >
-                                    重新发起授权
-                                  </Button>
+                                  <div className="flex shrink-0 items-center gap-2">
+                                    <Button type="button" size="sm" onClick={() => setActiveQrDialog('authorization')}>
+                                      <QrCode className="mr-2 h-4 w-4" />
+                                      查看二维码
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => {
+                                        setAuthorizeUrl(null);
+                                        setActiveQrDialog(null);
+                                        setAuthorizePollStatus('idle');
+                                        if (authorizePollRef.current) {
+                                          clearTimeout(authorizePollRef.current);
+                                          authorizePollRef.current = null;
+                                        }
+                                      }}
+                                    >
+                                      重新发起
+                                    </Button>
+                                  </div>
                                 </div>
                               ) : (
-                                <>
-                                  <Button onClick={handleAuthorize} disabled={isAuthorizing} className="w-full">
+                                <div className="flex items-center justify-between gap-4">
+                                  <div className="min-w-0">
+                                    <h3 className="text-sm font-semibold text-slate-900">授权应用</h3>
+                                    <p className="mt-1 text-xs leading-4 text-slate-600">允许系统读取妙记并写入目标多维表格。</p>
+                                  </div>
+                                  <Button onClick={handleAuthorize} disabled={isAuthorizing} size="sm" className="shrink-0">
                                     {isAuthorizing ? (
                                       <>
                                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                                        生成授权二维码中...
+                                        生成中
                                       </>
                                     ) : (
                                       <>
@@ -1289,7 +1223,7 @@ export default function FeishuConfigWorkspace() {
                                       </>
                                     )}
                                   </Button>
-                                </>
+                                </div>
                               )}
                             </div>
                           </div>
@@ -1297,91 +1231,67 @@ export default function FeishuConfigWorkspace() {
                       </CardContent>
                     </div>
 
-                    <Separator />
-
-                    <div id="step-organization">
+                    <div id="step-organization" className={getStepPanelClassName(organizationStepIsActive)}>
                       <StepHeader
                         step={3}
                         status={selectedOrgTargetId ? 'completed' : (detail?.authorization?.status === 'authorized') ? 'current' : 'pending'}
                         description={getStepDescription(3)}
                       />
-                      <CardContent>
+                      <CardContent className="min-h-0 flex-1 px-0 pb-0 pt-0">
                         {detail?.authorization?.status !== 'authorized' ? (
-                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-                            <div className="mb-2 text-sm font-medium text-slate-500">请先完成飞书用户授权</div>
+                          <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3">
+                            <div className="text-sm font-medium text-slate-500">请先完成第 2 步用户授权</div>
                           </div>
                         ) : (
-                          <div className="space-y-4">
-                            <div className={selectedOrgTarget ? 'rounded-lg bg-emerald-50 p-4' : 'rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-4'}>
-                              <div className="mb-2 flex items-center gap-2">
-                                {selectedOrgTarget ? (
-                                  <Check className="h-4 w-4 text-emerald-600" />
-                                ) : (
-                                  <AlertCircle className="h-4 w-4 text-indigo-600" />
-                                )}
-                                <span className={selectedOrgTarget ? 'font-medium text-emerald-900' : 'font-medium text-indigo-900'}>
-                                  {selectedOrgTarget ? '组织已选择' : '请选择所在组织'}
-                                </span>
-                              </div>
-                              <p className={selectedOrgTarget ? 'text-sm text-emerald-900' : 'text-sm text-slate-600'}>
-                                当前项目：{activeOrgTargets?.project?.name || '尚未导入 active 项目配置'}
-                              </p>
-                              {selectedOrgTarget ? (
-                                <p className="mt-2 text-sm text-emerald-900">
-                                  当前组织：{selectedOrgTarget.orgName}
+                          <div className={selectedOrgTarget ? 'rounded-lg bg-emerald-50 p-3' : 'rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3'}>
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="mb-1 flex items-center gap-2">
+                                  {selectedOrgTarget ? (
+                                    <Check className="h-4 w-4 text-emerald-600" />
+                                  ) : (
+                                    <AlertCircle className="h-4 w-4 text-indigo-600" />
+                                  )}
+                                  <span className={selectedOrgTarget ? 'text-sm font-medium text-emerald-900' : 'text-sm font-medium text-indigo-900'}>
+                                    {selectedOrgTarget ? '组织已选择' : '请选择所在组织'}
+                                  </span>
+                                </div>
+                                <p className={selectedOrgTarget ? 'text-xs text-emerald-900' : 'text-xs text-slate-600'}>
+                                  当前项目：{activeOrgTargets?.project?.name || '尚未导入 active 项目配置'}
                                 </p>
-                              ) : null}
-                              <p className="mt-2 text-xs leading-5 text-slate-500">
-                                修改组织只影响后续新产生的会议分析结果，历史报告不会迁移。
-                              </p>
+                                {selectedOrgTarget ? (
+                                  <p className="mt-1 text-xs text-emerald-900">目标组织：{selectedOrgTarget.orgName}</p>
+                                ) : (
+                                  <p className="mt-1 text-xs text-slate-600">
+                                    可选组织：{activeOrgTargets?.targets.length || 0} 个
+                                  </p>
+                                )}
+                              </div>
+                              <Button
+                                type="button"
+                                variant={selectedOrgTarget ? 'outline' : 'default'}
+                                size="sm"
+                                onClick={() => setShowOrgDialog(true)}
+                                disabled={isSavingOrganization}
+                                className="shrink-0"
+                              >
+                                {isSavingOrganization ? (
+                                  <>
+                                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                    保存中
+                                  </>
+                                ) : selectedOrgTarget ? (
+                                  '更换组织'
+                                ) : (
+                                  '选择组织'
+                                )}
+                              </Button>
                             </div>
-                            {activeOrgTargets?.targets.length ? (
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                {activeOrgTargets.targets.map((target) => (
-                                  <Button
-                                    key={target.id}
-                                    type="button"
-                                    variant={target.id === selectedOrgTargetId ? 'default' : 'outline'}
-                                    onClick={() => void handleSelectOrganization(target.id)}
-                                    disabled={isSavingOrganization}
-                                  >
-                                    {target.orgName}
-                                  </Button>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                                当前没有可选组织，请先在服务器导入项目组织配置。
-                              </div>
-                            )}
                           </div>
                         )}
                       </CardContent>
                     </div>
 
-                    <Separator />
-
-                    <div id="step-checks">
-                      <StepHeader
-                        step={4}
-                        status={displayedChecksPassed ? 'completed' : selectedOrgTargetId ? 'current' : 'pending'}
-                        description={getStepDescription(4)}
-                      />
-                      <CardContent>
-                        <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
-                          <div className="mb-2 text-sm font-medium text-slate-700">系统会自动完成校验</div>
-                          <p className="text-sm text-slate-500">
-                            应用凭证、用户授权、目标表格访问和事件监听状态会显示在左侧“系统校验结果”中。
-                          </p>
-                          {integration?.id ? (
-                            <Button type="button" variant="outline" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="mt-4">
-                              <RefreshCw className={`mr-2 h-4 w-4 ${isRunningChecks ? 'animate-spin' : ''}`} />
-                              刷新系统校验
-                            </Button>
-                          ) : null}
-                        </div>
-                      </CardContent>
-                    </div>
                   </>
                 )}
               </CardContent>

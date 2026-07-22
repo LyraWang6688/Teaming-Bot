@@ -16,8 +16,3 @@ services:
       HOSTNAME: 0.0.0.0
     ports:
       - "127.0.0.1:3011:3000"
-    volumes:
-      - lark-cli-config:/app/.lark-cli
-
-volumes:
-  lark-cli-config:

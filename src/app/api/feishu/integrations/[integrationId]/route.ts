@@ -6,23 +6,16 @@ import {
   getUserFeishuIntegrationDetail,
   updateUserFeishuIntegration,
   upsertFeishuIntegrationCheckStatus,
+  writeAuditLog,
 } from '@/lib/feishu/integration/integrationStore';
 import { getEnabledOrgTargetContextById } from '@/lib/feishu/projects/projectConfigStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { getCurrentUser } from '@/lib/auth/session';
+import { stopListener } from '@/lib/feishu/events/eventListenerManager';
 
 const updateIntegrationSchema = z.object({
   name: z.string().trim().min(1).optional(),
-  profileName: z.string().trim().min(1).optional(),
-  appId: z.string().trim().min(1).optional(),
-  appSecret: z.string().trim().min(1).optional(),
-  baseAppToken: z.string().trim().min(1).nullable().optional(),
-  meetingTableId: z.string().trim().min(1).nullable().optional(),
   selectedOrgTargetId: z.string().uuid().nullable().optional(),
-  oauthScope: z.string().trim().min(1).optional(),
-  status: z.string().trim().min(1).optional(),
-  setupStep: z.string().trim().min(1).optional(),
-  initializedAt: z.string().datetime().nullable().optional(),
 });
 
 type RouteContext = {
@@ -110,11 +103,26 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const { integrationId } = await context.params;
   try {
+    const currentIntegration = await getUserFeishuIntegrationDetail(user.id, integrationId);
+    if (!currentIntegration) {
+      return NextResponse.json(
+        { success: false, error: '未找到对应的飞书集成配置。' },
+        { status: 404 }
+      );
+    }
+
     let selectedTarget:
       | Awaited<ReturnType<typeof getEnabledOrgTargetContextById>>
       | null = null;
 
     if (typeof parsed.data.selectedOrgTargetId === 'string') {
+      const authorization = await getLatestFeishuAuthorization(integrationId);
+      if (authorization?.status !== 'authorized') {
+        return NextResponse.json(
+          { success: false, error: '飞书用户授权尚未完成，请先完成第二步。' },
+          { status: 409 }
+        );
+      }
       selectedTarget = await getEnabledOrgTargetContextById(parsed.data.selectedOrgTargetId);
       if (!selectedTarget) {
         logRuntimeMonitor('warn', 'integration_api', 'organization_target_select_rejected_unavailable', {
@@ -131,12 +139,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     const integration = await updateUserFeishuIntegration(user.id, integrationId, {
       ...parsed.data,
-      initializedAt:
-        parsed.data.initializedAt === undefined
-          ? undefined
-          : parsed.data.initializedAt
-            ? new Date(parsed.data.initializedAt)
-            : null,
+      ...(Object.prototype.hasOwnProperty.call(parsed.data, 'selectedOrgTargetId')
+        ? { status: 'draft', setupStep: 'organization', initializedAt: null }
+        : {}),
     });
 
     if (!integration) {
@@ -157,6 +162,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     });
 
     if (Object.prototype.hasOwnProperty.call(parsed.data, 'selectedOrgTargetId')) {
+      stopListener(integrationId);
       logRuntimeMonitor('info', 'integration_api', 'organization_target_selected', {
         userId: user.id,
         integrationId,
@@ -171,12 +177,26 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         integrationId,
         baseStatus: 'pending',
         permissionStatus: 'pending',
+        minuteSubscriptionStatus: 'pending',
         eventSubscriptionStatus: 'pending',
         lastErrorType: null,
         lastErrorMessage: null,
         details: {
           reason: 'organization_target_changed',
           selectedOrgTargetId: parsed.data.selectedOrgTargetId || null,
+        },
+      });
+      await writeAuditLog({
+        userId: user.id,
+        integrationId,
+        action: 'integration.organization.selected',
+        result: 'success',
+        summary: parsed.data.selectedOrgTargetId ? '选择飞书集成所属组织' : '清除飞书集成所属组织',
+        metadata: {
+          orgTargetId: parsed.data.selectedOrgTargetId || null,
+          projectId: selectedTarget?.projectId || null,
+          orgKey: selectedTarget?.orgKey || null,
+          orgName: selectedTarget?.orgName || null,
         },
       });
     }

@@ -1,157 +1,63 @@
-import { NextResponse } from 'next/server';
-import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { storeProcess, getProcess } from '@/lib/feishu/cliProcessStore';
+import { NextResponse } from 'next/server';
+import { createSession, getCurrentUser } from '@/lib/auth/session';
+import { findOrCreateUserByFeishu, toSafeUser } from '@/lib/auth/userStore';
+import { startAppRegistration } from '@/lib/feishu/integration/appRegistrationStore';
+import { finalizeAppRegistration } from '@/lib/feishu/integration/appRegistrationService';
+import { writeAuditLog } from '@/lib/feishu/integration/integrationStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { getRequestTraceContext } from '@/lib/platform/requestTrace';
-
-function getElapsedMs(startedAt: number) {
-  return Date.now() - startedAt;
-}
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
   const traceContext = getRequestTraceContext(request);
-  let sessionToken = '';
-  let profileName = '';
 
   try {
-    sessionToken = randomUUID().slice(0, 8);
-    profileName = `teaming-${sessionToken}`;
-
-    logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_started', {
-      ...traceContext,
-      stage: 'create_app',
-      sessionToken,
-      profileName,
-    });
-
-    const child = spawn('lark-cli', [
-      'config', 'init', '--new',
-      '--name', profileName,
-      '--force-init',
-      '--lang', 'zh',
-    ], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 300000,
-      env: {
-        ...process.env,
-        LARKSUITE_CLI_CONFIG_DIR: process.env.LARKSUITE_CLI_CONFIG_DIR || '/app/.lark-cli',
-      },
-    });
-
-    // Store entry first — listeners will update the stored ref
-    storeProcess(sessionToken, {
-      child,
-      profileName,
-      startedAt: new Date(),
-      integrationId: null,
-      stdoutBuffer: '',
-      stderrBuffer: '',
-    });
-
-    let verificationUrl: string | null = null;
-
-    child.stdout?.on('data', (data: Buffer) => {
-      const entry = getProcess(sessionToken);
-      if (entry) {
-        entry.stdoutBuffer += data.toString();
-      }
-      logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_stdout_received', {
-        ...traceContext,
-        stage: 'create_app',
-        sessionToken,
-        profileName,
-        bytes: data.length,
+    let user = await getCurrentUser();
+    if (!user) {
+      const pendingId = randomUUID();
+      const created = await findOrCreateUserByFeishu({
+        openId: `pending-${pendingId}`,
+        name: `待授权用户-${pendingId.slice(0, 8)}`,
       });
-    });
-
-    child.stderr?.on('data', (data: Buffer) => {
-      const stderrText = data.toString();
-      const entry = getProcess(sessionToken);
-      if (entry) {
-        entry.stderrBuffer += stderrText;
-      }
-      logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_stderr_received', {
-        ...traceContext,
-        stage: 'create_app',
-        sessionToken,
-        profileName,
-        bytes: data.length,
-        hasVerificationUrl: /https:\/\/[^\s]+/.test(stderrText),
-      });
-      if (!verificationUrl) {
-        const text = entry ? entry.stderrBuffer : stderrText;
-        const match = text.match(/https:\/\/[^\s]+/);
-        if (match) {
-          verificationUrl = match[0];
-        }
-      }
-    });
-
-    child.on('error', (err) => {
-      logRuntimeMonitor('error', 'feishu_cli_setup', 'create_app_process_error', {
-        ...traceContext,
-        stage: 'create_app',
-        sessionToken,
-        profileName,
-        durationMs: getElapsedMs(startedAt),
-        ...toRuntimeErrorContext(err),
-      });
-    });
-
-    // Wait up to 5 seconds for the URL to appear
-    const url = await new Promise<string | null>((resolve) => {
-      const check = setInterval(() => {
-        if (verificationUrl) {
-          clearInterval(check);
-          resolve(verificationUrl);
-        }
-      }, 200);
-      setTimeout(() => {
-        clearInterval(check);
-        resolve(verificationUrl);
-      }, 5000);
-    });
-
-    if (!url) {
-      child.kill();
-      logRuntimeMonitor('error', 'feishu_cli_setup', 'create_app_verification_url_missing', {
-        ...traceContext,
-        stage: 'create_app',
-        sessionToken,
-        profileName,
-        durationMs: getElapsedMs(startedAt),
-      });
-      return NextResponse.json(
-        { success: false, error: '无法获取二维码，请重试' },
-        { status: 500 }
-      );
+      await createSession(created.user.id);
+      user = toSafeUser(created.user);
     }
 
-    logRuntimeMonitor('info', 'feishu_cli_setup', 'create_app_verification_url_ready', {
+    logRuntimeMonitor('info', 'feishu_sdk_setup', 'create_app_started', {
       ...traceContext,
       stage: 'create_app',
-      sessionToken,
-      profileName,
-      durationMs: getElapsedMs(startedAt),
+      userId: user.id,
+    });
+
+    const task = await startAppRegistration(user.id, async (sessionToken) => {
+      await finalizeAppRegistration(sessionToken);
+    });
+    await writeAuditLog({
+      userId: user.id,
+      action: 'integration.app_registration.started',
+      result: 'pending',
+      summary: '发起 SDK 一键创建飞书应用',
+      metadata: {
+        sessionToken: task.sessionToken,
+        expiresAt: new Date(task.expiresAt).toISOString(),
+      },
     });
 
     return NextResponse.json({
       success: true,
       data: {
-        verificationUrl: url,
-        sessionToken,
-        profileName,
+        verificationUrl: task.verificationUrl,
+        sessionToken: task.sessionToken,
+        expiresAt: new Date(task.expiresAt).toISOString(),
+        user,
       },
     });
   } catch (error) {
-    logRuntimeMonitor('error', 'feishu_cli_setup', 'create_app_failed', {
+    logRuntimeMonitor('error', 'feishu_sdk_setup', 'create_app_failed', {
       ...traceContext,
       stage: 'create_app',
-      sessionToken,
-      profileName,
-      durationMs: getElapsedMs(startedAt),
+      durationMs: Date.now() - startedAt,
       ...toRuntimeErrorContext(error),
     });
     return NextResponse.json(

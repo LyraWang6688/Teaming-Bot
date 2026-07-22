@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db/client';
 import {
   feishuAuditLogs,
@@ -12,6 +12,10 @@ import {
 } from '@/lib/db/schema';
 import { getDefaultFeishuOauthScope } from '@/lib/platform/env';
 import {
+  FEISHU_REQUIRED_USER_EVENTS,
+  FEISHU_REQUIRED_USER_SCOPES,
+} from './integrationConstants';
+import {
   createOpaqueToken,
   decrypt,
   encrypt,
@@ -21,7 +25,6 @@ import {
 
 export type FeishuIntegrationSecrets = {
   appSecret: string;
-  baseAppToken: string | null;
 };
 
 export type FeishuIntegrationView = {
@@ -32,19 +35,13 @@ export type FeishuIntegrationView = {
   setupStep: string;
   appId: string;
   oauthScope: string;
-  meetingTableId: string | null;
   selectedOrgTargetId: string | null;
   orgSelectedAt: string | null;
-  profileName: string | null;
   initializedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  links: {
-    baseUrl: string | null;
-  };
   masked: {
     appSecret: string | null;
-    baseAppToken: string | null;
   };
 };
 
@@ -88,6 +85,7 @@ export type FeishuAuthorizationContext = {
 export type FeishuCheckStatusView = {
   appCredentialStatus: string;
   permissionStatus: string;
+  minuteSubscriptionStatus: string;
   eventSubscriptionStatus: string;
   oauthStatus: string;
   baseStatus: string;
@@ -103,9 +101,6 @@ type CreateIntegrationInput = {
   name: string;
   appId: string;
   appSecret: string;
-  profileName?: string;
-  baseAppToken?: string | null;
-  meetingTableId?: string | null;
   selectedOrgTargetId?: string | null;
   oauthScope?: string;
 };
@@ -114,9 +109,6 @@ type UpdateIntegrationInput = {
   name?: string;
   appId?: string;
   appSecret?: string;
-  profileName?: string | null;
-  baseAppToken?: string | null;
-  meetingTableId?: string | null;
   selectedOrgTargetId?: string | null;
   oauthScope?: string;
   status?: string;
@@ -142,6 +134,7 @@ type UpsertCheckStatusInput = Partial<
     FeishuIntegrationCheckRow,
     | 'appCredentialStatus'
     | 'permissionStatus'
+    | 'minuteSubscriptionStatus'
     | 'eventSubscriptionStatus'
     | 'oauthStatus'
     | 'baseStatus'
@@ -167,17 +160,8 @@ function toIsoString(value: Date | null): string | null {
   return value ? value.toISOString() : null;
 }
 
-function buildFeishuBaseUrl(baseAppToken: string | null, meetingTableId: string | null): string | null {
-  if (!baseAppToken || !meetingTableId) {
-    return null;
-  }
-
-  return `https://feishu.cn/base/${baseAppToken}?table=${meetingTableId}`;
-}
-
 function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
   const appSecret = decrypt(row.appSecretEncrypted);
-  const baseAppToken = row.baseAppTokenEncrypted ? decrypt(row.baseAppTokenEncrypted) : null;
 
   return {
     id: row.id,
@@ -187,19 +171,13 @@ function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
     setupStep: row.setupStep,
     appId: row.appId,
     oauthScope: row.oauthScope,
-    meetingTableId: row.meetingTableId,
     selectedOrgTargetId: row.selectedOrgTargetId,
     orgSelectedAt: toIsoString(row.orgSelectedAt),
-    profileName: row.profileName,
     initializedAt: toIsoString(row.initializedAt),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    links: {
-      baseUrl: buildFeishuBaseUrl(baseAppToken, row.meetingTableId),
-    },
     masked: {
       appSecret: maskSecret(appSecret),
-      baseAppToken: maskSecret(baseAppToken),
     },
   };
 }
@@ -217,7 +195,6 @@ function mapIntegrationContext(row: FeishuIntegrationRow): FeishuIntegrationCont
     ...mapIntegrationDetail(row),
     secrets: {
       appSecret: decrypt(row.appSecretEncrypted),
-      baseAppToken: row.baseAppTokenEncrypted ? decrypt(row.baseAppTokenEncrypted) : null,
     },
   };
 }
@@ -261,6 +238,7 @@ function isAllCheckStatusesPassed(row: FeishuIntegrationCheckRow): boolean {
   return (
     row.appCredentialStatus === 'success' &&
     row.permissionStatus === 'success' &&
+    row.minuteSubscriptionStatus === 'success' &&
     row.eventSubscriptionStatus === 'success' &&
     row.oauthStatus === 'authorized' &&
     row.baseStatus === 'success'
@@ -271,6 +249,7 @@ function mapCheckStatus(row: FeishuIntegrationCheckRow): FeishuCheckStatusView {
   return {
     appCredentialStatus: row.appCredentialStatus,
     permissionStatus: row.permissionStatus,
+    minuteSubscriptionStatus: row.minuteSubscriptionStatus,
     eventSubscriptionStatus: row.eventSubscriptionStatus,
     oauthStatus: row.oauthStatus,
     baseStatus: row.baseStatus,
@@ -324,12 +303,11 @@ export async function createUserFeishuIntegration(
       name: input.name.trim(),
       appId: input.appId.trim(),
       appSecretEncrypted: encrypt(input.appSecret.trim()),
-      profileName: input.profileName?.trim() || null,
-      baseAppTokenEncrypted: input.baseAppToken?.trim() ? encrypt(input.baseAppToken.trim()) : null,
-      meetingTableId: input.meetingTableId?.trim() || null,
       selectedOrgTargetId: input.selectedOrgTargetId || null,
       orgSelectedAt: input.selectedOrgTargetId ? new Date() : null,
       oauthScope: input.oauthScope?.trim() || getDefaultFeishuOauthScope(),
+      requiredEvents: [...FEISHU_REQUIRED_USER_EVENTS],
+      requiredPermissions: [...FEISHU_REQUIRED_USER_SCOPES],
       updatedAt: new Date(),
     })
     .returning();
@@ -343,7 +321,6 @@ export async function createUserFeishuIntegration(
     metadata: {
       appId: row.appId,
       name: row.name,
-      profileName: row.profileName,
     },
   });
 
@@ -368,24 +345,6 @@ export async function updateUserFeishuIntegration(
   }
   if (typeof input.appSecret === 'string') {
     updateValues.appSecretEncrypted = encrypt(input.appSecret.trim());
-  }
-  if (typeof input.profileName === 'string') {
-    updateValues.profileName = input.profileName.trim();
-  }
-  if (input.profileName === null) {
-    updateValues.profileName = null;
-  }
-  if (typeof input.baseAppToken === 'string') {
-    updateValues.baseAppTokenEncrypted = encrypt(input.baseAppToken.trim());
-  }
-  if (input.baseAppToken === null) {
-    updateValues.baseAppTokenEncrypted = null;
-  }
-  if (typeof input.meetingTableId === 'string') {
-    updateValues.meetingTableId = input.meetingTableId.trim();
-  }
-  if (input.meetingTableId === null) {
-    updateValues.meetingTableId = null;
   }
   if (typeof input.selectedOrgTargetId === 'string') {
     updateValues.selectedOrgTargetId = input.selectedOrgTargetId.trim();
@@ -555,6 +514,20 @@ export async function upsertFeishuAuthorization(
   return mapAuthorizationView(row);
 }
 
+export async function markFeishuAuthorizationStatus(
+  integrationId: string,
+  status: string
+): Promise<void> {
+  const db = getDb();
+  await db
+    .update(feishuAuthorizations)
+    .set({
+      status,
+      updatedAt: new Date(),
+    })
+    .where(eq(feishuAuthorizations.integrationId, integrationId));
+}
+
 export async function upsertFeishuIntegrationCheckStatus(
   input: UpsertCheckStatusInput
 ): Promise<FeishuCheckStatusView> {
@@ -565,6 +538,7 @@ export async function upsertFeishuIntegrationCheckStatus(
       integrationId: input.integrationId,
       appCredentialStatus: input.appCredentialStatus || 'pending',
       permissionStatus: input.permissionStatus || 'pending',
+      minuteSubscriptionStatus: input.minuteSubscriptionStatus || 'pending',
       eventSubscriptionStatus: input.eventSubscriptionStatus || 'pending',
       oauthStatus: input.oauthStatus || 'pending',
       baseStatus: input.baseStatus || 'pending',
@@ -579,6 +553,8 @@ export async function upsertFeishuIntegrationCheckStatus(
       set: {
         appCredentialStatus: input.appCredentialStatus ?? sql`${feishuIntegrationChecks.appCredentialStatus}`,
         permissionStatus: input.permissionStatus ?? sql`${feishuIntegrationChecks.permissionStatus}`,
+        minuteSubscriptionStatus:
+          input.minuteSubscriptionStatus ?? sql`${feishuIntegrationChecks.minuteSubscriptionStatus}`,
         eventSubscriptionStatus:
           input.eventSubscriptionStatus ?? sql`${feishuIntegrationChecks.eventSubscriptionStatus}`,
         oauthStatus: input.oauthStatus ?? sql`${feishuIntegrationChecks.oauthStatus}`,
@@ -653,12 +629,13 @@ export async function consumeOauthState(rawState: string): Promise<{
     .where(
       and(
         eq(feishuOauthStates.stateHash, stateHash),
-        eq(feishuOauthStates.status, 'pending')
+        eq(feishuOauthStates.status, 'pending'),
+        gt(feishuOauthStates.expiresAt, now)
       )
     )
     .returning();
 
-  if (!row || row.expiresAt <= now) {
+  if (!row) {
     return null;
   }
 

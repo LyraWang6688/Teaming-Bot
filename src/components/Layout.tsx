@@ -159,7 +159,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         </div>
       </header>
 
-      <main className="flex-grow w-full px-4 sm:px-6 lg:px-8 py-8">
+      <main className={`flex-grow w-full px-4 sm:px-6 lg:px-8 ${pathname === '/feishu-config' ? 'py-0' : 'py-8'}`}>
         {children}
       </main>
     </div>
