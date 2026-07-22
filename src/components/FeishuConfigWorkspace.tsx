@@ -48,18 +48,13 @@ type IntegrationView = {
   setupStep: string;
   appId: string;
   oauthScope: string;
-  meetingTableId: string | null;
   selectedOrgTargetId: string | null;
   orgSelectedAt: string | null;
   initializedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  links: {
-    baseUrl: string | null;
-  };
   masked: {
     appSecret: string | null;
-    baseAppToken: string | null;
   };
 };
 

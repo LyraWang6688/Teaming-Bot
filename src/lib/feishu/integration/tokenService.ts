@@ -135,11 +135,11 @@ export async function getValidIntegrationUserAuthorization(
     );
   }
 
-  if (authorization.accessToken === 'cli-managed' || !authorization.refreshToken) {
+  if (!authorization.refreshToken) {
     await markFeishuAuthorizationStatus(integration.id, 'reauthorization_required');
     throw new FeishuAuthorizationError(
       'refresh_token_missing',
-      '该集成仍是旧版 CLI 授权记录，未保存真实令牌，请重新完成一次用户授权。'
+      '当前飞书授权缺少 Refresh Token，请重新完成一次用户授权。'
     );
   }
 

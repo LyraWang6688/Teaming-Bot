@@ -25,7 +25,6 @@ import {
 
 export type FeishuIntegrationSecrets = {
   appSecret: string;
-  baseAppToken: string | null;
 };
 
 export type FeishuIntegrationView = {
@@ -36,19 +35,13 @@ export type FeishuIntegrationView = {
   setupStep: string;
   appId: string;
   oauthScope: string;
-  meetingTableId: string | null;
   selectedOrgTargetId: string | null;
   orgSelectedAt: string | null;
-  profileName: string | null;
   initializedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  links: {
-    baseUrl: string | null;
-  };
   masked: {
     appSecret: string | null;
-    baseAppToken: string | null;
   };
 };
 
@@ -108,9 +101,6 @@ type CreateIntegrationInput = {
   name: string;
   appId: string;
   appSecret: string;
-  profileName?: string;
-  baseAppToken?: string | null;
-  meetingTableId?: string | null;
   selectedOrgTargetId?: string | null;
   oauthScope?: string;
 };
@@ -119,9 +109,6 @@ type UpdateIntegrationInput = {
   name?: string;
   appId?: string;
   appSecret?: string;
-  profileName?: string | null;
-  baseAppToken?: string | null;
-  meetingTableId?: string | null;
   selectedOrgTargetId?: string | null;
   oauthScope?: string;
   status?: string;
@@ -173,17 +160,8 @@ function toIsoString(value: Date | null): string | null {
   return value ? value.toISOString() : null;
 }
 
-function buildFeishuBaseUrl(baseAppToken: string | null, meetingTableId: string | null): string | null {
-  if (!baseAppToken || !meetingTableId) {
-    return null;
-  }
-
-  return `https://feishu.cn/base/${baseAppToken}?table=${meetingTableId}`;
-}
-
 function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
   const appSecret = decrypt(row.appSecretEncrypted);
-  const baseAppToken = row.baseAppTokenEncrypted ? decrypt(row.baseAppTokenEncrypted) : null;
 
   return {
     id: row.id,
@@ -193,19 +171,13 @@ function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
     setupStep: row.setupStep,
     appId: row.appId,
     oauthScope: row.oauthScope,
-    meetingTableId: row.meetingTableId,
     selectedOrgTargetId: row.selectedOrgTargetId,
     orgSelectedAt: toIsoString(row.orgSelectedAt),
-    profileName: row.profileName,
     initializedAt: toIsoString(row.initializedAt),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    links: {
-      baseUrl: buildFeishuBaseUrl(baseAppToken, row.meetingTableId),
-    },
     masked: {
       appSecret: maskSecret(appSecret),
-      baseAppToken: maskSecret(baseAppToken),
     },
   };
 }
@@ -223,7 +195,6 @@ function mapIntegrationContext(row: FeishuIntegrationRow): FeishuIntegrationCont
     ...mapIntegrationDetail(row),
     secrets: {
       appSecret: decrypt(row.appSecretEncrypted),
-      baseAppToken: row.baseAppTokenEncrypted ? decrypt(row.baseAppTokenEncrypted) : null,
     },
   };
 }
@@ -332,9 +303,6 @@ export async function createUserFeishuIntegration(
       name: input.name.trim(),
       appId: input.appId.trim(),
       appSecretEncrypted: encrypt(input.appSecret.trim()),
-      profileName: input.profileName?.trim() || null,
-      baseAppTokenEncrypted: input.baseAppToken?.trim() ? encrypt(input.baseAppToken.trim()) : null,
-      meetingTableId: input.meetingTableId?.trim() || null,
       selectedOrgTargetId: input.selectedOrgTargetId || null,
       orgSelectedAt: input.selectedOrgTargetId ? new Date() : null,
       oauthScope: input.oauthScope?.trim() || getDefaultFeishuOauthScope(),
@@ -353,7 +321,6 @@ export async function createUserFeishuIntegration(
     metadata: {
       appId: row.appId,
       name: row.name,
-      profileName: row.profileName,
     },
   });
 
@@ -378,24 +345,6 @@ export async function updateUserFeishuIntegration(
   }
   if (typeof input.appSecret === 'string') {
     updateValues.appSecretEncrypted = encrypt(input.appSecret.trim());
-  }
-  if (typeof input.profileName === 'string') {
-    updateValues.profileName = input.profileName.trim();
-  }
-  if (input.profileName === null) {
-    updateValues.profileName = null;
-  }
-  if (typeof input.baseAppToken === 'string') {
-    updateValues.baseAppTokenEncrypted = encrypt(input.baseAppToken.trim());
-  }
-  if (input.baseAppToken === null) {
-    updateValues.baseAppTokenEncrypted = null;
-  }
-  if (typeof input.meetingTableId === 'string') {
-    updateValues.meetingTableId = input.meetingTableId.trim();
-  }
-  if (input.meetingTableId === null) {
-    updateValues.meetingTableId = null;
   }
   if (typeof input.selectedOrgTargetId === 'string') {
     updateValues.selectedOrgTargetId = input.selectedOrgTargetId.trim();

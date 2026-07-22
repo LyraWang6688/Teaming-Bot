@@ -21,12 +21,8 @@ export const feishuIntegrations = pgTable(
     setupStep: text('setup_step').notNull().default('app'),
     appId: text('app_id').notNull(),
     appSecretEncrypted: text('app_secret_encrypted').notNull(),
-    baseAppTokenEncrypted: text('base_app_token_encrypted'),
-    meetingTableId: text('meeting_table_id'),
     selectedOrgTargetId: uuid('selected_org_target_id'),
     orgSelectedAt: timestamp('org_selected_at', { withTimezone: true }),
-    profileName: text('profile_name'),
-    cliConfigDir: text('cli_config_dir'),
     oauthScope: text('oauth_scope').notNull(),
     requiredEvents: jsonb('required_events')
       .$type<string[]>()

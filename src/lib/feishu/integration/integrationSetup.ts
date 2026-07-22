@@ -1,4 +1,3 @@
-import { FEISHU_STATUS_OPTIONS } from '../pipeline/status';
 import {
   callFeishuIntegrationUserOpenApi,
 } from './integrationOpenApi';
@@ -60,45 +59,14 @@ type BitableAppInfoResult = {
   };
 };
 
-type BitableCreateTableResult = {
-  table_id?: string;
-  default_view_id?: string;
-  field_id_list?: string[];
-};
-
 type BitableFieldListResult = {
   has_more?: boolean;
   page_token?: string;
-  total?: number;
   items?: Array<{
     field_id: string;
     field_name: string;
     type: number;
   }>;
-};
-
-type BitableCreateFieldResult = {
-  field?: {
-    field_id?: string;
-    field_name?: string;
-    type?: number;
-  };
-};
-
-type BitableCreateAppResult = {
-  app?: {
-    app_token?: string;
-    default_table_id?: string;
-    name?: string;
-    url?: string;
-  };
-};
-
-type RequiredFieldDefinition = {
-  fieldName: string;
-  type: number;
-  uiType?: string;
-  property?: Record<string, unknown>;
 };
 
 type CheckFailure = {
@@ -157,35 +125,6 @@ function isIntegrationCheckSnapshotStale(
     snapshot.authorizationStatus !== currentSnapshot.authorizationStatus ||
     snapshot.authorizationUpdatedAt !== currentSnapshot.authorizationUpdatedAt
   );
-}
-
-export const REQUIRED_MEETING_FIELDS: RequiredFieldDefinition[] = [
-  { fieldName: '会议ID', type: 1, uiType: 'Text' },
-  {
-    fieldName: '处理状态',
-    type: 3,
-    uiType: 'SingleSelect',
-    property: {
-      options: FEISHU_STATUS_OPTIONS.map((option) => ({
-        name: option.name,
-        color: option.color,
-      })),
-    },
-  },
-  { fieldName: '会议文字稿', type: 1, uiType: 'Text' },
-  { fieldName: '分析摘要', type: 1, uiType: 'Text' },
-  { fieldName: '报告链接', type: 15, uiType: 'Url' },
-  { fieldName: 'JSON数据', type: 1, uiType: 'Text' },
-  { fieldName: '错误信息', type: 1, uiType: 'Text' },
-];
-
-export function toBitableFieldPayload(field: RequiredFieldDefinition) {
-  return {
-    field_name: field.fieldName,
-    type: field.type,
-    ...(field.uiType ? { ui_type: field.uiType } : {}),
-    ...(field.property ? { property: field.property } : {}),
-  };
 }
 
 function isAllChecksPassed(statuses: IntegrationCheckStatuses): boolean {
@@ -371,59 +310,6 @@ async function listAllBitableFields(
   } while (pageToken);
 
   return fields;
-}
-
-async function ensureMeetingTableFields(
-  userId: string,
-  integrationId: string,
-  appToken: string,
-  tableId: string
-): Promise<{
-  fieldCount: number;
-  createdFields: string[];
-  existingFields: string[];
-}> {
-  const integration = await getUserFeishuIntegrationContext(userId, integrationId);
-  if (!integration) {
-    throw new Error('未找到对应的飞书集成配置。');
-  }
-
-  const existingFields = await listAllBitableFields(integration, appToken, tableId);
-  const existingFieldNames = new Set(existingFields.map((field) => field.field_name));
-  const createdFields: string[] = [];
-
-  for (const field of REQUIRED_MEETING_FIELDS) {
-    if (existingFieldNames.has(field.fieldName)) {
-      continue;
-    }
-
-    try {
-      await callFeishuIntegrationUserOpenApi<BitableCreateFieldResult>(
-        integration,
-        'POST',
-        `/bitable/v1/apps/${appToken}/tables/${tableId}/fields`,
-        toBitableFieldPayload(field)
-      );
-    } catch (error) {
-      logRuntimeMonitor('error', 'integration_base', 'base_field_create_failed', {
-        userId,
-        integrationId,
-        appToken,
-        tableId,
-        fieldName: field.fieldName,
-        fieldType: field.type,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
-    createdFields.push(field.fieldName);
-  }
-
-  return {
-    fieldCount: existingFields.length + createdFields.length,
-    createdFields,
-    existingFields: existingFields.map((field) => field.field_name),
-  };
 }
 
 async function executeFeishuIntegrationChecks(options: {
@@ -1044,158 +930,4 @@ export async function runFeishuIntegrationChecks(options: {
   });
   flights.set(flightKey, flight);
   return flight;
-}
-
-export async function initializeFeishuIntegrationBase(options: {
-  userId: string;
-  integrationId: string;
-  setupTraceId?: string;
-}): Promise<{
-  appToken: string;
-  tableId: string;
-  createdApp: boolean;
-  createdTable: boolean;
-  createdFields: string[];
-  fieldCount: number;
-  checkResult: {
-    statuses: IntegrationCheckStatuses;
-    allPassed: boolean;
-    details: Record<string, unknown>;
-  };
-}> {
-  const integration = await getUserFeishuIntegrationContext(options.userId, options.integrationId);
-  if (!integration) {
-    throw new Error('未找到对应的飞书集成配置。');
-  }
-
-  let appToken = integration.secrets.baseAppToken;
-  let tableId = integration.meetingTableId;
-  let createdApp = false;
-  let createdTable = false;
-  let createdFieldsFromNewTable: string[] = [];
-  const traceContext = {
-    setupTraceId: options.setupTraceId,
-    userId: options.userId,
-    integrationId: options.integrationId,
-  };
-
-  if (!appToken) {
-    logRuntimeMonitor('info', 'integration_base', 'base_app_create_started', {
-      ...traceContext,
-      integrationName: integration.name,
-    });
-    const createAppResult = await callFeishuIntegrationUserOpenApi<BitableCreateAppResult>(
-      integration,
-      'POST',
-      '/bitable/v1/apps',
-      {
-        name: `${integration.name} 会议信息`,
-      }
-    );
-
-    appToken = createAppResult.app?.app_token || null;
-    createdApp = true;
-    logRuntimeMonitor('info', 'integration_base', 'base_app_create_completed', {
-      ...traceContext,
-      appToken,
-      createdApp,
-    });
-  }
-
-  if (!appToken) {
-    throw new Error('Base 初始化失败：未能获取 app_token。');
-  }
-
-  if (!tableId) {
-    const initialFields = REQUIRED_MEETING_FIELDS.map(toBitableFieldPayload);
-    logRuntimeMonitor('info', 'integration_base', 'base_table_create_started', {
-      ...traceContext,
-      appToken,
-      tableName: '会议信息',
-      initialFieldCount: initialFields.length,
-    });
-    const createTableResult = await callFeishuIntegrationUserOpenApi<BitableCreateTableResult>(
-      integration,
-      'POST',
-      `/bitable/v1/apps/${appToken}/tables`,
-      {
-        table: {
-          name: '会议信息',
-          fields: initialFields,
-        },
-      }
-    );
-    tableId = createTableResult.table_id || null;
-    createdTable = true;
-    createdFieldsFromNewTable = REQUIRED_MEETING_FIELDS.map((field) => field.fieldName);
-    logRuntimeMonitor('info', 'integration_base', 'base_table_create_completed', {
-      ...traceContext,
-      appToken,
-      tableId,
-      createdTable,
-      initialFieldCount: createdFieldsFromNewTable.length,
-    });
-  }
-
-  if (!tableId) {
-    throw new Error('Base 初始化失败：未能获取 table_id。');
-  }
-
-  logRuntimeMonitor('info', 'integration_base', 'base_field_ensure_started', {
-    ...traceContext,
-    appToken,
-    tableId,
-    requiredFieldCount: REQUIRED_MEETING_FIELDS.length,
-  });
-  const ensuredFields = await ensureMeetingTableFields(
-    options.userId,
-    options.integrationId,
-    appToken,
-    tableId
-  );
-  logRuntimeMonitor('info', 'integration_base', 'base_field_ensure_completed', {
-    ...traceContext,
-    appToken,
-    tableId,
-    fieldCount: ensuredFields.fieldCount,
-    createdFields: [...createdFieldsFromNewTable, ...ensuredFields.createdFields],
-    existingFields: ensuredFields.existingFields,
-  });
-
-  await updateUserFeishuIntegration(options.userId, integration.id, {
-    baseAppToken: appToken,
-    meetingTableId: tableId,
-    initializedAt: new Date(),
-    setupStep: 'base',
-  });
-
-  await writeAuditLog({
-    userId: options.userId,
-    integrationId: integration.id,
-    action: 'integration.base.initialized',
-    result: 'success',
-    summary: '初始化飞书 Base 与会议信息表',
-    metadata: {
-      appToken,
-      tableId,
-      createdApp,
-      createdTable,
-      createdFields: [...createdFieldsFromNewTable, ...ensuredFields.createdFields],
-    },
-  });
-
-  const checkResult = await runFeishuIntegrationChecks({
-    userId: options.userId,
-    integrationId: integration.id,
-  });
-
-  return {
-    appToken,
-    tableId,
-    createdApp,
-    createdTable,
-    createdFields: [...createdFieldsFromNewTable, ...ensuredFields.createdFields],
-    fieldCount: ensuredFields.fieldCount,
-    checkResult,
-  };
 }

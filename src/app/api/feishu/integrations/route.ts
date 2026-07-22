@@ -11,8 +11,6 @@ const createIntegrationSchema = z.object({
   name: z.string().trim().min(1, '请输入集成名称'),
   appId: z.string().trim().min(1, '请输入 App ID'),
   appSecret: z.string().trim().min(1, '请输入 App Secret'),
-  baseAppToken: z.string().trim().min(1).nullable().optional(),
-  meetingTableId: z.string().trim().min(1).nullable().optional(),
   oauthScope: z.string().trim().optional(),
 });
 

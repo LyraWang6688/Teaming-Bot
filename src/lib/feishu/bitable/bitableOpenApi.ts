@@ -59,20 +59,6 @@ export type FeishuBitableAccess = FeishuBitableConfig & {
   orgTarget?: FeishuOrgTargetContext;
 };
 
-export function createIntegrationBitableAccess(
-  integration: FeishuIntegrationContext
-): FeishuBitableAccess {
-  if (!integration.secrets.baseAppToken || !integration.meetingTableId) {
-    throw new Error('当前集成尚未完成 Base 初始化。');
-  }
-
-  return {
-    appToken: integration.secrets.baseAppToken,
-    tableId: integration.meetingTableId,
-    integration,
-  };
-}
-
 export function createOrgTargetBitableAccess(
   integration: FeishuIntegrationContext,
   orgTarget: FeishuOrgTargetContext

@@ -6,7 +6,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   createOrgTargetBitableAccess,
-  createIntegrationBitableAccess,
   getBitableRecord,
 } from '@/lib/feishu/bitable/bitableOpenApi';
 import { getFeishuIntegrationContextById } from '@/lib/feishu/integration/integrationStore';
@@ -31,13 +30,20 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    if (!orgTargetId) {
+      return NextResponse.json(
+        { error: '缺少 orgTargetId 参数，无法定位对应组织的多维表格。' },
+        { status: 400 }
+      );
+    }
+
     const integration = await getFeishuIntegrationContextById(integrationId);
     if (!integration) {
       return NextResponse.json({ error: '未找到对应的飞书集成配置' }, { status: 404 });
     }
 
-    const orgTarget = orgTargetId ? await getOrgTargetContextById(orgTargetId) : null;
-    if (orgTargetId && !orgTarget) {
+    const orgTarget = await getOrgTargetContextById(orgTargetId);
+    if (!orgTarget) {
       logRuntimeMonitor('warn', 'feishu_record_api', 'report_record_load_org_target_missing', {
         recordId,
         integrationId,
@@ -46,19 +52,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '未找到对应的组织目标表配置' }, { status: 404 });
     }
 
-    const config = orgTarget
-      ? createOrgTargetBitableAccess(integration, orgTarget)
-      : createIntegrationBitableAccess(integration);
+    const config = createOrgTargetBitableAccess(integration, orgTarget);
 
     logRuntimeMonitor('info', 'feishu_record_api', 'report_record_load_started', {
       recordId,
       integrationId,
-      orgTargetId: orgTarget?.id || null,
-      projectId: orgTarget?.projectId || null,
-      orgKey: orgTarget?.orgKey || null,
-      orgName: orgTarget?.orgName || null,
-      tableId: orgTarget?.tableId || config.tableId,
-      mode: orgTarget ? 'org_target' : 'legacy_integration_base',
+      orgTargetId: orgTarget.id,
+      projectId: orgTarget.projectId,
+      orgKey: orgTarget.orgKey,
+      orgName: orgTarget.orgName,
+      tableId: orgTarget.tableId,
+      mode: 'org_target',
     });
 
     const record = await getBitableRecord(config, recordId);
@@ -66,11 +70,11 @@ export async function GET(request: NextRequest) {
     logRuntimeMonitor('info', 'feishu_record_api', 'report_record_load_succeeded', {
       recordId,
       integrationId,
-      orgTargetId: orgTarget?.id || null,
-      projectId: orgTarget?.projectId || null,
-      orgKey: orgTarget?.orgKey || null,
-      orgName: orgTarget?.orgName || null,
-      tableId: orgTarget?.tableId || config.tableId,
+      orgTargetId: orgTarget.id,
+      projectId: orgTarget.projectId,
+      orgKey: orgTarget.orgKey,
+      orgName: orgTarget.orgName,
+      tableId: orgTarget.tableId,
     });
     
     return NextResponse.json({
