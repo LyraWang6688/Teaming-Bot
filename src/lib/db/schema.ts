@@ -78,11 +78,6 @@ export const feishuProjectOrgTargets = pgTable(
     tableId: text('table_id').notNull(),
     baseUrl: text('base_url').notNull(),
     enabled: boolean('enabled').notNull().default(true),
-    fieldCheckStatus: text('field_check_status').notNull().default('pending'),
-    fieldCheckDetails: jsonb('field_check_details')
-      .$type<Record<string, unknown>>()
-      .notNull()
-      .default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },

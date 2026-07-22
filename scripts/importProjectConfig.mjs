@@ -134,11 +134,6 @@ async function main() {
         ...target,
         appToken,
         tableId,
-        fieldCheckDetails: {
-          status: 'pending',
-          message: '字段模板将在首个授权用户完成系统校验时检查并缓存。',
-          importedAt: new Date().toISOString(),
-        },
       });
     } catch (error) {
       logImportMonitor('warn', 'project_config_target_parse_failed', {
@@ -217,11 +212,9 @@ async function main() {
             table_id,
             base_url,
             enabled,
-            field_check_status,
-            field_check_details,
             updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, 'pending', $8::jsonb, now())
+          values ($1, $2, $3, $4, $5, $6, $7, now())
           on conflict (project_id, org_key)
           do update set
             org_name = excluded.org_name,
@@ -229,8 +222,6 @@ async function main() {
             table_id = excluded.table_id,
             base_url = excluded.base_url,
             enabled = excluded.enabled,
-            field_check_status = 'pending',
-            field_check_details = excluded.field_check_details,
             updated_at = now()
         `,
         [
@@ -241,7 +232,6 @@ async function main() {
           target.tableId,
           target.baseUrl,
           target.enabled,
-          JSON.stringify(target.fieldCheckDetails),
         ]
       );
     }
@@ -262,7 +252,7 @@ async function main() {
       await client.query(
         `
           update feishu_project_org_targets
-          set enabled = false, field_check_status = 'failed', updated_at = now()
+          set enabled = false, updated_at = now()
           where project_id = $1
             and org_key = any($2::text[])
         `,

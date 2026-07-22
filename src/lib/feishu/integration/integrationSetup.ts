@@ -474,7 +474,6 @@ async function executeFeishuIntegrationChecks(options: {
         orgKey: selectedOrgTarget.orgKey,
         orgName: selectedOrgTarget.orgName,
         tableId: selectedOrgTarget.tableId,
-        fieldCheckStatus: selectedOrgTarget.fieldCheckStatus,
       });
 
       const appInfo = await callFeishuIntegrationUserOpenApi<BitableAppInfoResult>(

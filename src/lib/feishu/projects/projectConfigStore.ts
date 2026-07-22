@@ -25,8 +25,6 @@ export type FeishuOrgTargetView = {
   tableId: string;
   baseUrl: string;
   enabled: boolean;
-  fieldCheckStatus: string;
-  fieldCheckDetails: Record<string, unknown>;
   masked: {
     baseAppToken: string | null;
   };
@@ -67,8 +65,6 @@ function mapTarget(row: FeishuProjectOrgTargetRow): FeishuOrgTargetView {
     tableId: row.tableId,
     baseUrl: row.baseUrl,
     enabled: row.enabled,
-    fieldCheckStatus: row.fieldCheckStatus,
-    fieldCheckDetails: row.fieldCheckDetails,
     masked: {
       baseAppToken: maskSecret(baseAppToken),
     },
@@ -150,21 +146,4 @@ export async function getEnabledOrgTargetContextById(
     .limit(1);
 
   return row ? mapTargetContext(row) : null;
-}
-
-export async function updateOrgTargetFieldCheckStatus(input: {
-  orgTargetId: string;
-  status: 'pending' | 'success' | 'failed';
-  details: Record<string, unknown>;
-}) {
-  const db = getDb();
-  await db
-    .update(feishuProjectOrgTargets)
-    .set({
-      fieldCheckStatus: input.status,
-      fieldCheckDetails: input.details,
-      enabled: input.status === 'failed' ? false : undefined,
-      updatedAt: new Date(),
-    })
-    .where(eq(feishuProjectOrgTargets.id, input.orgTargetId));
 }
