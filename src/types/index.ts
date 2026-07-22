@@ -54,6 +54,30 @@ export interface CommunicationParticipant {
   effectiveSentences: number;
 }
 
+export type PlayerRole = 'mover' | 'follower' | 'opposer' | 'bystander' | 'silent';
+
+export interface NetworkNode {
+  name: string;
+  role?: string;
+  playerRole: PlayerRole;
+  playerReason: string;
+  speakingShare?: number;
+}
+
+export interface NetworkEdge {
+  source: string;
+  target: string;
+  weight: 'strong' | 'moderate' | 'light';
+  nature?: string;
+}
+
+export interface DialogueNetwork {
+  nodes: NetworkNode[];
+  edges: NetworkEdge[];
+  analysis: string;
+  riskAssessment: string;
+}
+
 export interface MeetingMetadata {
   meetingType: string;
   projectPhase?: 'Start-up' | 'Post-startup';
@@ -62,14 +86,35 @@ export interface MeetingMetadata {
   qualityFlag: 'normal' | 'low_sample' | 'unbalanced';
 }
 
+export interface UnfinishedDialogue {
+  topic: string;
+  whyUnfinished: string;
+  whyNeedsClosure: string;
+}
+
+export interface UnseenDisagreement {
+  topic: string;
+  whatEachSideSays: string;
+  whyItMatters: string;
+}
+
+export interface KeyAssumption {
+  assumption: string;
+  whyToVerify: string;
+}
+
 export interface AnalysisResult {
   reportTimestamp: string;
   metadata: MeetingMetadata;
   summary: string;
   behaviors: TeamBehaviors;
   teamState: TeamState;
+  keyAssumptions: KeyAssumption[];
+  unfinishedDialogues: UnfinishedDialogue[];
+  unseenDisagreements: UnseenDisagreement[];
   leaderAdvice: LeaderAdvice;
   communication: CommunicationParticipant[];
+  dialogueNetwork?: DialogueNetwork;
 }
 
 export enum AnalysisStatus {
