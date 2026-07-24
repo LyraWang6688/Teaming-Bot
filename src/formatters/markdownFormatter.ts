@@ -41,22 +41,26 @@ const BEHAVIOR_LABELS: Record<string, string> = {
  * 用于飞书多维表格存储
  */
 export function markdownFormatter(result: AnalysisResult): string {
-  const { teamState, behaviors, leaderAdvice } = result;
+  const {
+    teamState,
+    behaviors,
+    leaderAdvice,
+    unfinishedDialogues,
+    unseenDisagreements,
+    dialogueNetwork,
+    keyAssumptions,
+  } = result;
 
   const sections: string[] = [];
 
-  // 1. 团队状态
   const zoneLabel = ZONE_LABELS[teamState.zone] || teamState.zone;
-  sections.push(`【团队状态】${zoneLabel}`);
+  sections.push('【第一部分：团队整体状态】');
+  sections.push(`当前区域：${zoneLabel}`);
   sections.push('');
-
-  // 2. 动力诊断
-  sections.push(`【动力诊断】`);
   sections.push(teamState.analysis);
   sections.push('');
 
-  // 3. 行为评估
-  sections.push(`【行为评估】`);
+  sections.push('【行为评估】');
   const behaviorOrder = ['speakingUp', 'collaboration', 'experimentation', 'reflection'] as const;
   for (const key of behaviorOrder) {
     const behavior = behaviors[key];
@@ -68,9 +72,51 @@ export function markdownFormatter(result: AnalysisResult): string {
   }
   sections.push('');
 
-  // 4. 给领导者的建议
-  sections.push(`【给领导者的建议】`);
+  if (dialogueNetwork) {
+    sections.push('【第二部分：团队互动网络】');
+    sections.push(dialogueNetwork.analysis);
+    if (dialogueNetwork.riskAssessment) {
+      sections.push('');
+      sections.push(`需要注意的是：${dialogueNetwork.riskAssessment}`);
+    }
+    sections.push('');
+  }
+
+  if (unfinishedDialogues.length > 0) {
+    sections.push('【第三部分：未完形对话】');
+    unfinishedDialogues.forEach((item, index) => {
+      sections.push(`${index + 1}. ${item.topic}`);
+      sections.push(`- 为什么没有完形：${item.whyUnfinished}`);
+      sections.push(`- 为什么需要完形：${item.whyNeedsClosure}`);
+    });
+    sections.push('');
+  }
+
+  if (unseenDisagreements.length > 0) {
+    sections.push('【值得被看见的非共识】');
+    unseenDisagreements.forEach((item, index) => {
+      sections.push(`${index + 1}. ${item.topic}`);
+      sections.push(`- 各方看法：${item.whatEachSideSays}`);
+      sections.push(`- 为什么重要：${item.whyItMatters}`);
+    });
+    sections.push('');
+  }
+
+  if (keyAssumptions.length > 0) {
+    sections.push('【关键假设】');
+    keyAssumptions.forEach((item, index) => {
+      sections.push(`${index + 1}. ${item.assumption}`);
+      sections.push(`- 为什么值得验证：${item.whyToVerify}`);
+    });
+    sections.push('');
+  }
+
+  sections.push('【第四部分：给领导者的建议】');
   sections.push(leaderAdvice.advice);
+  if (leaderAdvice.reasoning) {
+    sections.push('');
+    sections.push(`为什么给出这个建议：${leaderAdvice.reasoning}`);
+  }
 
   return sections.join('\n');
 }

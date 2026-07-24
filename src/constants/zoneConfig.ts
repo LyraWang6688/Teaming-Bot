@@ -1,9 +1,9 @@
+import type { BehaviorMetric, TeamBehaviors } from '@/types';
+
 /**
  * Zone配置相关常量和函数
  * 包含Zone类型定义、计算逻辑、验证逻辑
  */
-
-import type { TeamBehaviors, BehaviorMetric } from '@/types';
 
 /**
  * Zone类型定义
@@ -46,17 +46,21 @@ type Dimension = 'H' | 'M' | 'L';
  * 将行为色标映射为维度等级
  *
  * @param level 行为色标（Green/Blue/Red/Grey）
+ * @param isStartup 是否为启动期
+ * @param isExOrRef 是否为实验或反思维度（启动期时 Grey 视为中性）
  * @returns 维度等级 H/M/L
  */
-function toDimension(level: string): Dimension {
+function toDimension(level: string, isStartup: boolean, isExOrRef: boolean): Dimension {
   if (level === 'Green') return 'H';
   if (level === 'Blue') return 'M';
   if (level === 'Red') return 'L';
   if (level === 'Grey') {
-    // 启动期的实验/反思维度标记为 Grey 是正常的，但视为 L（而非 M）
-    // 理由：Grey 表示缺乏证据，启动期也不例外。将 Grey 视为 M 可能导致
-    // 在 E/R 均为 Grey 时推导出 WS=高/中，进而错误进入学习区。
-    // 真正的 H/M 级行为应该有实际证据（Green/Blue），而非缺乏证据的 Grey。
+    if (isStartup && isExOrRef) {
+      // 启动期的实验/反思维度标记为 Grey 是正常的，但仍视为 L（而非 M）。
+      // 缺乏证据不等于达到中等水平，否则会把“未发生”误判成学习闭环的一部分。
+      return 'L';
+    }
+
     return 'L';
   }
   return 'L';
@@ -88,7 +92,8 @@ function toDimension(level: string): Dimension {
  * 决策树直接从行为色标到 Zone，不经过中间抽象层。
  */
 export function determineZoneFromBehaviors(
-  behaviors: TeamBehaviors | null | undefined,
+  behaviors: Partial<TeamBehaviors> | null | undefined,
+  isStartup: boolean = false,
   qualityFlag?: string
 ): TeamZone {
   if (!behaviors) return 'Difficult to Judge';
@@ -116,9 +121,9 @@ export function determineZoneFromBehaviors(
   if (sLevel === 'Grey' && cLevel === 'Grey') return 'Difficult to Judge';
 
   // 将行为色标映射为维度等级
-  const s = toDimension(sLevel);
-  const e = toDimension(eLevel);
-  const r = toDimension(rLevel);
+  const s = toDimension(sLevel, isStartup, false);
+  const e = toDimension(eLevel, isStartup, true);
+  const r = toDimension(rLevel, isStartup, true);
 
   // 决策树判定 Zone
   let zone: TeamZone;
@@ -211,9 +216,6 @@ export const ZONE_BEHAVIOR_EXPECTATIONS: Record<
 };
 
 /**
- * 行为级别到自然语言描述的映射
- */
-/**
  * 当后端修正 Zone 后，根据最终 Zone 和行为数据重新生成 analysis
  * 确保文字总结与最终 Zone 一致，不增加 LLM 调用
  * 生成风格为自然段落，避免格式化罗列
@@ -231,13 +233,15 @@ export const ZONE_BEHAVIOR_EXPECTATIONS: Record<
  */
 export function regenerateAnalysis(
   finalZone: TeamZone,
-  _originalZone: string,
-  behaviors: TeamBehaviors | null | undefined,
+  originalZone: string,
+  behaviors: Partial<TeamBehaviors> | null | undefined,
   psScore: number,
   wsScore: number
 ): string {
-  const getLevel = (b?: BehaviorMetric): string => b?.level || 'Grey';
-  const getSummary = (b?: BehaviorMetric): string => b?.summary || '';
+  void originalZone;
+
+  const getLevel = (behavior?: BehaviorMetric): string => behavior?.level || 'Grey';
+  const getSummary = (behavior?: BehaviorMetric): string => behavior?.summary || '';
   const suLevel = getLevel(behaviors?.speakingUp);
   const coLevel = getLevel(behaviors?.collaboration);
   const exLevel = getLevel(behaviors?.experimentation);
