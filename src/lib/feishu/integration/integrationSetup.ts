@@ -11,6 +11,7 @@ import {
   updateUserFeishuIntegration,
   writeAuditLog,
 } from './integrationStore';
+import { activateLatestFeishuIntegrationInGroup } from './integrationActivationService';
 import { getListenerStatus, startListener, stopListener } from '../events/eventListenerManager';
 import {
   getEnabledOrgTargetContextById,
@@ -720,62 +721,113 @@ async function executeFeishuIntegrationChecks(options: {
     Boolean(integration.selectedOrgTargetId);
 
   if (listenerPrerequisitesPassed) {
-    try {
-      const existingListener = getListenerStatus(integration.id);
-      const listener =
-        existingListener?.state === 'running' && existingListener.readyAt
-          ? existingListener
-          : await startListener(integration.id);
-      statuses.eventSubscriptionStatus = 'success';
-      details.eventSubscription = {
-        ok: true,
-        eventKey: MINUTE_GENERATED_EVENT,
-        provider: 'node_sdk_ws',
-        minuteChangeSubscription: {
-          ok: true,
-          provider: 'user_openapi',
-          eventKey: MINUTE_GENERATED_EVENT,
-          message: '当前授权用户已完成妙记生成事件订阅。',
-        },
-        listenerStatus: listener.state,
-        readyAt: listener.readyAt?.toISOString() || null,
-        message: '当前授权用户已完成妙记事件订阅，消费级事件长连接已建立。',
-      };
-      logRuntimeMonitor('info', 'integration_checks', 'event_listener_gate_passed', {
-        userId: options.userId,
-        integrationId: integration.id,
-        eventKey: MINUTE_GENERATED_EVENT,
-        provider: 'node_sdk_ws',
-        listenerStatus: listener.state,
-        readyAt: listener.readyAt?.toISOString() || null,
+      const activation = await activateLatestFeishuIntegrationInGroup(integration.id);
+      activation?.supersededIntegrationIds.forEach((supersededIntegrationId) => {
+        stopListener(supersededIntegrationId);
       });
-    } catch (error) {
-      const failure = pickFailure(error, 'EventListenerCheckFailed');
-      statuses.eventSubscriptionStatus = 'failed';
-      failures.push(failure);
-      details.eventSubscription = {
-        ok: false,
-        eventKey: MINUTE_GENERATED_EVENT,
-        provider: 'node_sdk_ws',
-        reasonCode: failure.type,
-        blockedGate: 'event_listener',
-        minuteChangeSubscription: {
-          ok: true,
-          provider: 'user_openapi',
+
+      if (activation && !activation.isCurrentActive) {
+        statuses.eventSubscriptionStatus = 'pending';
+        details.eventSubscription = {
+          ok: false,
+          pending: true,
           eventKey: MINUTE_GENERATED_EVENT,
-          message: '当前授权用户已完成妙记生成事件订阅。',
-        },
-        message: failure.message,
-      };
-      logRuntimeMonitor('error', 'integration_checks', 'event_listener_gate_failed', {
-        userId: options.userId,
-        integrationId: integration.id,
-        eventKey: MINUTE_GENERATED_EVENT,
-        provider: 'node_sdk_ws',
-        reasonCode: failure.type,
-        blockedGate: 'event_listener',
-        message: failure.message,
-      });
+          provider: 'node_sdk_ws',
+          reasonCode: 'integration_inactive',
+          blockedGate: 'activation',
+          prerequisiteFailures: [
+            {
+              code: 'integration_inactive',
+              gate: 'activation',
+              message: '当前集成已被同一飞书账号在该组织目标下更新创建的应用替代，不再启动事件长连接。',
+            },
+          ],
+          latestActiveIntegrationId: activation.activeIntegrationId,
+          minuteChangeSubscription: {
+            ok: true,
+            provider: 'user_openapi',
+            eventKey: MINUTE_GENERATED_EVENT,
+            message: '当前授权用户已完成妙记生成事件订阅。',
+          },
+          message: '当前集成不是该飞书账号在当前组织目标下的最新应用，系统不会为它启动事件长连接。',
+        };
+        logRuntimeMonitor('info', 'integration_checks', 'event_listener_gate_blocked', {
+          userId: options.userId,
+          integrationId: integration.id,
+          eventKey: MINUTE_GENERATED_EVENT,
+          provider: 'node_sdk_ws',
+          reasonCode: 'integration_inactive',
+          blockedGate: 'activation',
+          latestActiveIntegrationId: activation.activeIntegrationId,
+          statuses,
+          minuteSubscriptionStatus: statuses.minuteSubscriptionStatus,
+          prerequisiteFailures: [
+            {
+              code: 'integration_inactive',
+              gate: 'activation',
+              message: '当前集成已被同一飞书账号在该组织目标下更新创建的应用替代，不再启动事件长连接。',
+            },
+          ],
+          selectedOrgTargetId: integration.selectedOrgTargetId || null,
+        });
+      } else {
+        try {
+          const existingListener = getListenerStatus(integration.id);
+          const listener =
+            existingListener?.state === 'running' && existingListener.readyAt
+              ? existingListener
+              : await startListener(integration.id);
+          statuses.eventSubscriptionStatus = 'success';
+          details.eventSubscription = {
+            ok: true,
+            eventKey: MINUTE_GENERATED_EVENT,
+            provider: 'node_sdk_ws',
+            minuteChangeSubscription: {
+              ok: true,
+              provider: 'user_openapi',
+              eventKey: MINUTE_GENERATED_EVENT,
+              message: '当前授权用户已完成妙记生成事件订阅。',
+            },
+            listenerStatus: listener.state,
+            readyAt: listener.readyAt?.toISOString() || null,
+            message: '当前授权用户已完成妙记事件订阅，消费级事件长连接已建立。',
+          };
+          logRuntimeMonitor('info', 'integration_checks', 'event_listener_gate_passed', {
+            userId: options.userId,
+            integrationId: integration.id,
+            eventKey: MINUTE_GENERATED_EVENT,
+            provider: 'node_sdk_ws',
+            listenerStatus: listener.state,
+            readyAt: listener.readyAt?.toISOString() || null,
+          });
+        } catch (error) {
+          const failure = pickFailure(error, 'EventListenerCheckFailed');
+          statuses.eventSubscriptionStatus = 'failed';
+          failures.push(failure);
+          details.eventSubscription = {
+            ok: false,
+            eventKey: MINUTE_GENERATED_EVENT,
+            provider: 'node_sdk_ws',
+            reasonCode: failure.type,
+            blockedGate: 'event_listener',
+            minuteChangeSubscription: {
+              ok: true,
+              provider: 'user_openapi',
+              eventKey: MINUTE_GENERATED_EVENT,
+              message: '当前授权用户已完成妙记生成事件订阅。',
+            },
+            message: failure.message,
+          };
+          logRuntimeMonitor('error', 'integration_checks', 'event_listener_gate_failed', {
+            userId: options.userId,
+            integrationId: integration.id,
+            eventKey: MINUTE_GENERATED_EVENT,
+            provider: 'node_sdk_ws',
+            reasonCode: failure.type,
+            blockedGate: 'event_listener',
+            message: failure.message,
+          });
+        }
     }
   } else {
     stopListener(integration.id);

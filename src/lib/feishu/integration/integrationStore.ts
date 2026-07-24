@@ -449,6 +449,23 @@ export async function listFeishuIntegrationContextsWithBase(): Promise<FeishuInt
   return rows.map(mapIntegrationContext);
 }
 
+export async function listActiveFeishuIntegrationContextsWithBase(): Promise<FeishuIntegrationContext[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(feishuIntegrations)
+    .where(
+      and(
+        isNull(feishuIntegrations.deletedAt),
+        isNotNull(feishuIntegrations.selectedOrgTargetId),
+        eq(feishuIntegrations.isActive, true)
+      )
+    )
+    .orderBy(desc(feishuIntegrations.updatedAt));
+
+  return rows.map(mapIntegrationContext);
+}
+
 export async function getLatestFeishuAuthorization(
   integrationId: string
 ): Promise<FeishuAuthorizationView | null> {

@@ -38,6 +38,10 @@ export const feishuIntegrations = pgTable(
         'offline_access',
         'bitable:app',
       ]),
+    isActive: boolean('is_active').notNull().default(false),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    supersededByIntegrationId: uuid('superseded_by_integration_id'),
     initializedAt: timestamp('initialized_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -46,6 +50,8 @@ export const feishuIntegrations = pgTable(
   (table) => [
     index('feishu_integrations_user_id_idx').on(table.userId),
     index('feishu_integrations_selected_org_target_id_idx').on(table.selectedOrgTargetId),
+    index('feishu_integrations_is_active_idx').on(table.isActive),
+    index('feishu_integrations_superseded_by_integration_id_idx').on(table.supersededByIntegrationId),
   ]
 );
 
