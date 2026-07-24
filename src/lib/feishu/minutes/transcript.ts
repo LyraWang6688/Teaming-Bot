@@ -1,5 +1,4 @@
 import {
-  callFeishuIntegrationUserOpenApi,
   downloadFeishuIntegrationUserOpenApiFile,
 } from '../integration/integrationOpenApi';
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
@@ -7,28 +6,6 @@ import { mkdir, readFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-
-type DocRawContentResult = {
-  content?: string;
-};
-
-export async function fetchTranscriptByDocToken(
-  docToken: string,
-  integration: FeishuIntegrationContext
-): Promise<string> {
-  const result = await callFeishuIntegrationUserOpenApi<DocRawContentResult>(
-    integration,
-    'GET',
-    `/docx/v1/documents/${docToken}/raw_content?lang=0`
-  );
-
-  const transcript = (result.content || '').trim();
-  if (!transcript) {
-    throw new Error('转录稿文档内容为空');
-  }
-
-  return transcript;
-}
 
 export async function fetchTranscriptByMinuteToken(
   minuteToken: string,

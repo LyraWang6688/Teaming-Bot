@@ -3,7 +3,7 @@ import { logFeishuMonitor } from '../common/monitor';
 import {
   getFeishuIntegrationCheckStatus,
   getFeishuIntegrationContextById,
-  listFeishuIntegrationContextsWithBase,
+  listActiveFeishuIntegrationContextsWithBase,
   upsertFeishuIntegrationCheckStatus,
   updateUserFeishuIntegration,
   writeAuditLog,
@@ -12,6 +12,7 @@ import {
   FeishuAuthorizationError,
   getValidIntegrationUserAuthorization,
 } from '../integration/tokenService';
+import { isFeishuIntegrationActive } from '../integration/integrationActivationService';
 import { enqueueFeishuEvent } from '../pipeline/meetingPipelineProcessor';
 import { FEISHU_REQUIRED_USER_EVENTS } from '../integration/integrationConstants';
 
@@ -128,6 +129,13 @@ async function assertListenerPrerequisites(integrationId: string) {
       '未找到飞书集成配置。'
     );
   }
+    if (!(await isFeishuIntegrationActive(integrationId))) {
+      throw new ListenerPrerequisiteError(
+        'integration_inactive',
+        'activation',
+        '当前飞书集成不是当前生效版本，不能启动事件长连接。'
+      );
+    }
   if (!integration.selectedOrgTargetId) {
     throw new ListenerPrerequisiteError(
       'organization_not_selected',
@@ -428,7 +436,7 @@ export async function startListener(integrationId: string): Promise<ListenerInfo
 
 export async function startAllListeners(): Promise<void> {
   try {
-    const integrations = await listFeishuIntegrationContextsWithBase();
+      const integrations = await listActiveFeishuIntegrationContextsWithBase();
     logFeishuMonitor('info', 'event_listener_start_all', {
       count: integrations.length,
       provider: 'node_sdk_ws',

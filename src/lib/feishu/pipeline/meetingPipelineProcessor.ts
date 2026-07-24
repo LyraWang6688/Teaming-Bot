@@ -37,6 +37,7 @@ import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { FeishuOpenApiError } from '../common/openapi';
 import { FEISHU_PROCESS_STATUS } from './status';
 import { fetchTranscriptByMinuteToken } from '../minutes/transcript';
+import { sendMeetingReportNotification } from '../im/reportNotificationService';
 
 type FeishuEventHeader = {
   event_id?: string;
@@ -68,6 +69,7 @@ type MinuteGeneratedSource = {
   taskId?: string;
   eventType?: string;
   meetingId: string;
+  meetingName?: string;
   minuteToken: string;
   attempt: number;
   recordId?: string;
@@ -95,6 +97,10 @@ function getMeetingPipelineKey(context: Pick<MinuteGeneratedSource, 'meetingId' 
 function getTargetFromPayload(payload: Record<string, unknown>): string | undefined {
   const target = asRecord(payload.target);
   return asString(target.orgTargetId);
+}
+
+function getMeetingNameFromPayload(payload: Record<string, unknown>): string | undefined {
+  return asString(payload.meetingName);
 }
 
 async function getMeetingBitableAccess(context: {
@@ -147,6 +153,14 @@ function getMinuteGeneratedEventPayload(event: Record<string, unknown>) {
     minuteSource,
     sourceType,
     minuteToken: asString(event.minute_token) || asString(minute.minute_token) || asString(minute.id),
+    meetingName:
+      asString(event.meeting_name) ||
+      asString(event.meeting_topic) ||
+      asString(event.topic) ||
+      asString(minute.meeting_name) ||
+      asString(minute.meeting_topic) ||
+      asString(minute.title) ||
+      asString(minute.topic),
     meetingId:
       meetingIdFromSource ||
       asString(event.meeting_id) ||
@@ -199,6 +213,7 @@ export async function enqueueFeishuEvent(
   const {
     sourceType,
     minuteToken,
+    meetingName,
     meetingId,
   } = getMinuteGeneratedEventPayload(event);
 
@@ -208,6 +223,7 @@ export async function enqueueFeishuEvent(
     eventType,
     sourceType,
     minuteToken,
+    meetingName,
     meetingId,
   });
 
@@ -248,6 +264,7 @@ export async function enqueueFeishuEvent(
     eventId,
     eventType,
     minuteToken,
+    meetingName,
     meetingId,
     target: targetSnapshot,
   });
@@ -257,6 +274,7 @@ export async function enqueueFeishuEvent(
       integrationId: integration.id,
       taskId: taskResult.task.id,
       minuteToken,
+        meetingName,
       eventId,
       eventType,
       projectId: targetSnapshot?.projectId || null,
@@ -268,6 +286,7 @@ export async function enqueueFeishuEvent(
       integrationId: integration.id,
       taskId: taskResult.task.id,
       minuteToken,
+        meetingName,
       eventId,
       eventType,
       created: taskResult.created,
@@ -545,8 +564,27 @@ async function completeMeetingAnalysis(
       baseRecordId: record.recordId,
       minuteToken,
       payload: {
+        meetingName: context.meetingName,
         reportUrl: reportUrl.toString(),
       },
+    });
+  }
+
+  try {
+    await sendMeetingReportNotification({
+      integration: context.integration,
+      meetingId: context.meetingId,
+      recordId: record.recordId,
+      reportUrl: reportUrl.toString(),
+    });
+  } catch (error) {
+    logFeishuMonitor('warn', 'meeting_pipeline_notification_skipped', {
+      integrationId: context.integration.id,
+      meetingId: context.meetingId,
+      recordId: record.recordId,
+      reportUrl: reportUrl.toString(),
+      ...targetContext,
+      ...toErrorContext(error),
     });
   }
 }
@@ -746,6 +784,7 @@ function buildRecoveryContext(
     integration,
     taskId,
     meetingId,
+    meetingName: undefined,
     minuteToken: '',
     attempt: 0,
     recordId: record.recordId,
@@ -797,6 +836,7 @@ function buildRecoveryContextFromTask(
     taskId: task.id,
     eventType: task.eventType || undefined,
     meetingId: task.feishuMeetingId,
+    meetingName: getMeetingNameFromPayload(task.payload),
     minuteToken: task.minuteToken || '',
     attempt: task.attemptCount,
     recordId: task.baseRecordId || undefined,
