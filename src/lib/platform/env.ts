@@ -13,6 +13,14 @@ export function getProjectPublicUrl(): string {
   return (process.env.PROJECT_PUBLIC_URL || 'http://localhost:5000').replace(/\/$/, '');
 }
 
+export function getFeishuAppId(): string {
+  return getRequiredValue('FEISHU_APP_ID', process.env.FEISHU_APP_ID);
+}
+
+export function getFeishuAppSecret(): string {
+  return getRequiredValue('FEISHU_APP_SECRET', process.env.FEISHU_APP_SECRET);
+}
+
 export function getDatabaseUrl(): string {
   return getRequiredValue('DATABASE_URL', process.env.DATABASE_URL);
 }
@@ -37,5 +45,5 @@ export function getAppEncryptionKey(): string {
 }
 
 export function getDefaultFeishuOauthScope(): string {
-  return FEISHU_REQUIRED_USER_SCOPE;
+  return (process.env.FEISHU_USER_OAUTH_SCOPE || FEISHU_REQUIRED_USER_SCOPE).trim();
 }

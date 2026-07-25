@@ -450,7 +450,7 @@ async function fetchTranscriptWithRetries(context: MinuteGeneratedSource): Promi
     } catch (error) {
       lastError = error;
       const retryable = isRetryableMinuteError(error);
-      logFeishuMonitor('warn', 'transcript_export_retryable_error', {
+      logFeishuMonitor(retryable ? 'warn' : 'error', 'transcript_export_failed', {
         minuteToken: context.minuteToken,
         meetingId: context.meetingId,
         attempt,

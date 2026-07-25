@@ -277,6 +277,32 @@ export const webAnalysisTasks = pgTable(
   ]
 );
 
+export const userFeedbacks = pgTable(
+  'user_feedbacks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull(),
+    integrationId: uuid('integration_id'),
+    orgTargetId: uuid('org_target_id'),
+    sourcePage: text('source_page').notNull(),
+    currentStep: text('current_step'),
+    setupTraceId: text('setup_trace_id'),
+    taskId: text('task_id'),
+    recordId: text('record_id'),
+    feedbackText: text('feedback_text').notNull(),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('user_feedbacks_user_id_idx').on(table.userId),
+    index('user_feedbacks_integration_id_idx').on(table.integrationId),
+    index('user_feedbacks_org_target_id_idx').on(table.orgTargetId),
+    index('user_feedbacks_setup_trace_id_idx').on(table.setupTraceId),
+    index('user_feedbacks_created_at_idx').on(table.createdAt),
+  ]
+);
+
 export const users = pgTable(
   'users',
   {
@@ -323,5 +349,6 @@ export type FeishuAuditLogRow = typeof feishuAuditLogs.$inferSelect;
 export type MeetingRecordRow = typeof meetingRecords.$inferSelect;
 export type MeetingPipelineTaskRow = typeof meetingPipelineTasks.$inferSelect;
 export type WebAnalysisTaskRow = typeof webAnalysisTasks.$inferSelect;
+export type UserFeedbackRow = typeof userFeedbacks.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;

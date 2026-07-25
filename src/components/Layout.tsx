@@ -30,6 +30,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     { href: '/', label: '会议分析', icon: Upload },
     { href: '/feishu-config', label: '飞书配置', icon: Settings },
   ];
+  const loginHref = pathname && pathname !== '/login'
+    ? `/login?next=${encodeURIComponent(pathname)}`
+    : '/login';
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -70,17 +73,70 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="bg-indigo-600 p-2 rounded-lg">
-              <Bot className="w-6 h-6 text-white" />
+        <div className="mx-auto flex max-w-6xl flex-col gap-3 px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8 lg:py-0 lg:h-16">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center space-x-3">
+              <div className="bg-indigo-600 p-2 rounded-lg">
+                <Bot className="w-6 h-6 text-white" />
+              </div>
+              <h1 className="truncate text-lg font-bold tracking-tight text-slate-900 sm:text-xl">Teaming Bot</h1>
             </div>
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight">Teaming Bot</h1>
+
+            <div className="lg:hidden">
+              {isLoading ? (
+                <div className="flex items-center px-2 py-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+                </div>
+              ) : user ? (
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowUserMenu(!showUserMenu)}
+                    className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700"
+                  >
+                    <User className="w-4 h-4" />
+                    <span className="max-w-[88px] truncate">{user.name}</span>
+                    <ChevronDown className="w-4 h-4" />
+                  </button>
+
+                  {showUserMenu && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-10"
+                        onClick={() => setShowUserMenu(false)}
+                      />
+                      <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-slate-200 py-1 z-20">
+                        <div className="px-4 py-2 text-xs text-slate-500 truncate border-b border-slate-100">
+                          {user.email || user.feishuOpenId}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSignOut}
+                          disabled={isSigningOut}
+                          className="flex items-center gap-2 w-full px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          {isSigningOut ? '退出中...' : '退出登录'}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <Link
+                  href={loginHref}
+                  className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
+                >
+                  <User className="w-4 h-4" />
+                  登录
+                </Link>
+              )}
+            </div>
           </div>
 
           {/* 导航链接 */}
-          <div className="flex items-center space-x-4">
-            <nav className="flex items-center space-x-1">
+          <div className="flex items-center gap-4">
+            <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-1 lg:overflow-visible lg:pb-0">
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = pathname === item.href;
@@ -89,7 +145,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     key={item.href}
                     href={item.href}
                     className={`
-                      flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                      flex shrink-0 items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4
                       ${isActive
                         ? 'bg-indigo-100 text-indigo-700'
                         : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}
@@ -103,7 +159,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             </nav>
 
             {/* 用户登录状态 */}
-            <div className="relative">
+            <div className="relative hidden lg:block">
               {isLoading ? (
                 <div className="flex items-center px-3 py-2">
                   <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
@@ -147,7 +203,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 </div>
               ) : (
                 <Link
-                  href="/login"
+                  href={loginHref}
                   className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
                 >
                   <User className="w-4 h-4" />

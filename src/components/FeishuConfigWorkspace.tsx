@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import Layout from '@/components/Layout';
 import {
@@ -17,13 +17,23 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
 import {
   AlertCircle,
   ArrowRight,
   Check,
   LogOut,
+  MessageSquare,
   RefreshCw,
   Rocket,
   Shield,
@@ -119,6 +129,9 @@ type ActiveOrgTargetsResponse = {
   targets: OrgTargetView[];
 };
 
+const INTEGRATION_LIST_CACHE_TTL_MS = 3_000;
+const INTEGRATION_DETAIL_CACHE_TTL_MS = 1_500;
+
 function formatDateTime(value: string | null) {
   if (!value) return '未设置';
   const date = new Date(value);
@@ -190,6 +203,10 @@ function getStepDescription(step: number) {
     default:
       return '';
   }
+}
+
+function getStepLogLabel(step: number) {
+  return `第 ${step} 步：${getStepTitle(step)}`;
 }
 
 function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
@@ -270,12 +287,23 @@ function StepHeader(props: {
 }
 
 export default function FeishuConfigWorkspace() {
+  const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const requestedIntegrationId = searchParams.get('integrationId');
   const autoCheckKeyRef = useRef<string | null>(null);
   const setupTraceIdRef = useRef<string | null>(null);
   const previousSetupCompleteRef = useRef<boolean | null>(null);
   const checksRequestRef = useRef<Promise<void> | null>(null);
+  const integrationListRequestRef = useRef<Promise<IntegrationView[]> | null>(null);
+  const integrationListCacheRef = useRef<{ data: IntegrationView[]; fetchedAt: number } | null>(null);
+  const integrationDetailRequestRef = useRef<Promise<IntegrationDetailResponse | null> | null>(null);
+  const integrationDetailRequestKeyRef = useRef<string | null>(null);
+  const integrationDetailCacheRef = useRef<{
+    integrationId: string;
+    data: IntegrationDetailResponse;
+    fetchedAt: number;
+  } | null>(null);
 
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -300,6 +328,10 @@ export default function FeishuConfigWorkspace() {
   const [activeQrDialog, setActiveQrDialog] = useState<ActiveQrDialog>(null);
   const [showOrgDialog, setShowOrgDialog] = useState(false);
   const [authorizePollStatus, setAuthorizePollStatus] = useState<string>('idle');
+  const [isFeedbackDialogOpen, setIsFeedbackDialogOpen] = useState(false);
+  const [feedbackDraft, setFeedbackDraft] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [feedbackSuccessMessage, setFeedbackSuccessMessage] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const authorizePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -373,6 +405,59 @@ export default function FeishuConfigWorkspace() {
   );
 
   const setupComplete = eventSubscriptionPassed;
+  const completedActionSteps = useMemo(
+    () =>
+      [Boolean(integration), detail?.authorization?.status === 'authorized', Boolean(selectedOrgTargetId)].filter(Boolean)
+        .length,
+    [detail?.authorization?.status, integration, selectedOrgTargetId]
+  );
+  const mobileStatusSummary = useMemo(() => {
+    if (!user) {
+      return {
+        badge: '待登录',
+        title: '先登录并创建应用',
+        description: '从第 1 步开始，系统会在后续自动检查授权、组织和监听状态。',
+      };
+    }
+
+    if (!integration) {
+      return {
+        badge: '第 1 步',
+        title: '等待创建飞书应用',
+        description: '创建完成后，页面会自动继续到授权和组织选择。',
+      };
+    }
+
+    if (detail?.authorization?.status !== 'authorized') {
+      return {
+        badge: '第 2 步',
+        title: '等待你完成飞书授权',
+        description: '授权回跳成功后，页面会自动刷新当前状态。',
+      };
+    }
+
+    if (!selectedOrgTargetId) {
+      return {
+        badge: '第 3 步',
+        title: '请选择目标组织',
+        description: '组织选定后，系统会自动开始 Base 与事件监听检查。',
+      };
+    }
+
+    if (!setupComplete) {
+      return {
+        badge: '自动检查中',
+        title: '系统正在完成最后校验',
+        description: detail?.checks?.lastErrorMessage || '请稍等片刻，系统会自动检查目标表格与事件监听状态。',
+      };
+    }
+
+    return {
+      badge: '已完成',
+      title: '移动端已完成初始化配置',
+      description: '后续可以自动监听并分析飞书会议。',
+    };
+  }, [detail?.authorization?.status, detail?.checks?.lastErrorMessage, integration, selectedOrgTargetId, setupComplete, user]);
 
   const activeRegistrationQrUrl = verificationUrl || registrationQrUrl;
 
@@ -386,6 +471,13 @@ export default function FeishuConfigWorkspace() {
   const organizationStepIsActive = Boolean(detail?.authorization?.status === 'authorized' && !selectedOrgTargetId);
   const getStepPanelClassName = (isActive: boolean) =>
     `min-h-0 rounded-xl border border-slate-200 bg-white p-3 transition-all ${isActive ? 'flex flex-1 flex-col' : 'shrink-0'}`;
+  const feedbackPlaceholder = useMemo(
+    () =>
+      `例子：我在${getStepLogLabel(currentStep)}时卡住了，点击“${
+        currentStep === 1 ? '创建应用' : currentStep === 2 ? '开始授权' : currentStep === 3 ? '选择组织' : '刷新'
+      }”后页面一直没反应，弹窗里看到“xxx”报错，这会影响我继续完成配置。`,
+    [currentStep]
+  );
 
   useEffect(() => {
     if (previousSetupCompleteRef.current === null) {
@@ -435,25 +527,115 @@ export default function FeishuConfigWorkspace() {
     })();
   }, []);
 
-  const loadIntegrationDetail = useCallback(
-    async (integrationId: string | null) => {
-      setIsLoadingDetail(true);
-      setPageError(null);
+  const loadIntegrationList = useCallback(
+    async (options?: { force?: boolean }) => {
+      const cached = integrationListCacheRef.current;
+      const now = Date.now();
+      if (!options?.force && cached && now - cached.fetchedAt < INTEGRATION_LIST_CACHE_TTL_MS) {
+        return cached.data;
+      }
 
-      try {
+      if (integrationListRequestRef.current) {
+        return integrationListRequestRef.current;
+      }
+
+      const request = (async () => {
         const listResponse = await fetch('/api/feishu/integrations');
         const listPayload = (await listResponse.json().catch(() => null)) as
           | { success?: boolean; data?: IntegrationView[] }
           | null;
 
         if (!listPayload?.success) {
-          setIntegration(null);
-          setDetail(null);
-          return;
+          throw new Error('加载飞书集成列表失败。');
         }
 
         const integrations = listPayload.data || [];
-        const targetId = integrationId || integrations[0]?.id;
+        integrationListCacheRef.current = { data: integrations, fetchedAt: Date.now() };
+        return integrations;
+      })();
+
+      integrationListRequestRef.current = request;
+
+      try {
+        return await request;
+      } finally {
+        if (integrationListRequestRef.current === request) {
+          integrationListRequestRef.current = null;
+        }
+      }
+    },
+    []
+  );
+
+  const loadIntegrationSnapshot = useCallback(
+    async (integrationId: string, options?: { force?: boolean }) => {
+      const cached = integrationDetailCacheRef.current;
+      const now = Date.now();
+      if (
+        !options?.force &&
+        cached &&
+        cached.integrationId === integrationId &&
+        now - cached.fetchedAt < INTEGRATION_DETAIL_CACHE_TTL_MS
+      ) {
+        return cached.data;
+      }
+
+      if (
+        integrationDetailRequestRef.current &&
+        integrationDetailRequestKeyRef.current === integrationId
+      ) {
+        return integrationDetailRequestRef.current;
+      }
+
+      const request = (async () => {
+        const detailResponse = await fetch(`/api/feishu/integrations/${integrationId}`);
+        const detailPayload = (await detailResponse.json().catch(() => null)) as
+          | { success?: boolean; data?: IntegrationDetailResponse }
+          | null;
+
+        if (!detailPayload?.success) {
+          return null;
+        }
+
+        const detailData = detailPayload.data || null;
+        if (detailData) {
+          integrationDetailCacheRef.current = {
+            integrationId,
+            data: detailData,
+            fetchedAt: Date.now(),
+          };
+        }
+        return detailData;
+      })();
+
+      integrationDetailRequestRef.current = request;
+      integrationDetailRequestKeyRef.current = integrationId;
+
+      try {
+        return await request;
+      } finally {
+        if (integrationDetailRequestRef.current === request) {
+          integrationDetailRequestRef.current = null;
+          integrationDetailRequestKeyRef.current = null;
+        }
+      }
+    },
+    []
+  );
+
+  const loadIntegrationDetail = useCallback(
+    async (integrationId: string | null, options?: { force?: boolean; refreshList?: boolean }) => {
+      setIsLoadingDetail(true);
+      setPageError(null);
+
+      try {
+        let knownIntegrations = integrationListCacheRef.current?.data || [];
+        let targetId = integrationId || integration?.id || knownIntegrations[0]?.id || null;
+
+        if (!targetId || options?.refreshList) {
+          knownIntegrations = await loadIntegrationList({ force: options?.force || options?.refreshList });
+          targetId = integrationId || knownIntegrations[0]?.id || null;
+        }
 
         if (!targetId) {
           setIntegration(null);
@@ -461,45 +643,44 @@ export default function FeishuConfigWorkspace() {
           return;
         }
 
-        const detailResponse = await fetch(`/api/feishu/integrations/${targetId}`);
-        const detailPayload = (await detailResponse.json().catch(() => null)) as
-          | { success?: boolean; data?: IntegrationDetailResponse }
-          | null;
-
-        if (!detailPayload?.success) {
-          setIntegration(integrations.find((i) => i.id === targetId) || null);
-          setDetail(null);
-          return;
-        }
-
-        const detailData = detailPayload.data;
+        const detailData = await loadIntegrationSnapshot(targetId, { force: options?.force });
         if (!detailData) {
-          setIntegration(integrations.find((i) => i.id === targetId) || null);
+          const fallbackIntegration =
+            knownIntegrations.find((item) => item.id === targetId) ||
+            (integration?.id === targetId ? integration : null);
+          setIntegration(fallbackIntegration);
           setDetail(null);
           return;
         }
+
+        const cachedIntegrations = integrationListCacheRef.current?.data || [];
+        const nextList = cachedIntegrations.some((item) => item.id === detailData.integration.id)
+          ? cachedIntegrations.map((item) =>
+              item.id === detailData.integration.id ? detailData.integration : item
+            )
+          : [...cachedIntegrations, detailData.integration];
+        integrationListCacheRef.current = {
+          data: nextList,
+          fetchedAt: Date.now(),
+        };
 
         setIntegration(detailData.integration);
         setDetail(detailData);
-        if (detailData.integration.selectedOrgTargetId) {
-          setSelectedOrgTargetId(detailData.integration.selectedOrgTargetId);
-        } else {
-          setSelectedOrgTargetId(null);
-        }
+        setSelectedOrgTargetId(detailData.integration.selectedOrgTargetId || null);
       } catch (error) {
         setPageError(error instanceof Error ? error.message : '加载配置失败。');
       } finally {
         setIsLoadingDetail(false);
       }
     },
-    []
+    [integration, loadIntegrationList, loadIntegrationSnapshot]
   );
 
   useEffect(() => {
     if (user) {
-      void loadIntegrationDetail(searchParams.get('integrationId'));
+      void loadIntegrationDetail(requestedIntegrationId);
     }
-  }, [loadIntegrationDetail, searchParams, user]);
+  }, [loadIntegrationDetail, requestedIntegrationId, user]);
 
   const autoCheckTriggerKey = useMemo(() => {
     if (!integration?.id) return '';
@@ -515,6 +696,11 @@ export default function FeishuConfigWorkspace() {
     setPageError(null);
     try {
       await fetch('/api/auth/logout', { method: 'POST' });
+      integrationListCacheRef.current = null;
+      integrationListRequestRef.current = null;
+      integrationDetailCacheRef.current = null;
+      integrationDetailRequestRef.current = null;
+      integrationDetailRequestKeyRef.current = null;
       setUser(null);
       setIntegration(null);
       setDetail(null);
@@ -543,7 +729,7 @@ export default function FeishuConfigWorkspace() {
           body: JSON.stringify({ selectedOrgTargetId: orgTargetId }),
         })
       );
-      await loadIntegrationDetail(integration.id);
+      await loadIntegrationDetail(integration.id, { force: true });
       setShowOrgDialog(false);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '保存组织失败。');
@@ -600,7 +786,7 @@ export default function FeishuConfigWorkspace() {
               setIntegration(completedIntegration);
             }
             if (completedIntegrationId) {
-              await loadIntegrationDetail(completedIntegrationId);
+              await loadIntegrationDetail(completedIntegrationId, { force: true });
             }
           } else if (
             status === 'failed' ||
@@ -671,7 +857,7 @@ export default function FeishuConfigWorkspace() {
             if (pollResult.status === 'completed') {
               setAuthorizePollStatus('completed');
               setActiveQrDialog(null);
-              await loadIntegrationDetail(integration.id);
+              await loadIntegrationDetail(integration.id, { force: true });
             } else if (pollResult.status === 'denied' || pollResult.status === 'expired' || pollResult.status === 'error') {
               setAuthorizePollStatus(pollResult.status);
               setActiveQrDialog(null);
@@ -728,7 +914,7 @@ export default function FeishuConfigWorkspace() {
             headers: setupHeaders(),
           })
         );
-        await loadIntegrationDetail(integrationId);
+        await loadIntegrationDetail(integrationId, { force: true });
       })();
       checksRequestRef.current = request;
 
@@ -747,6 +933,68 @@ export default function FeishuConfigWorkspace() {
     },
     [loadIntegrationDetail, setupHeaders]
   );
+
+  const handleSubmitFeedback = useCallback(async () => {
+    const trimmedFeedback = feedbackDraft.trim();
+    if (!trimmedFeedback) {
+      setPageError('请先描述你遇到的问题，最好带上发生阶段、现象、报错和影响。');
+      return;
+    }
+
+    setIsSubmittingFeedback(true);
+    setPageError(null);
+
+    try {
+      const pageQuery = searchParams.toString();
+      const sourcePage = pageQuery ? `${pathname}?${pageQuery}` : pathname;
+      await parseJsonResponse<{ id: string; createdAt: string }>(
+        await fetch('/api/feedback', {
+          method: 'POST',
+          headers: setupHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({
+            sourcePage,
+            currentStep: getStepLogLabel(currentStep),
+            integrationId: integration?.id || null,
+            orgTargetId: selectedOrgTargetId || integration?.selectedOrgTargetId || null,
+            taskId: null,
+            recordId: null,
+            feedbackText: trimmedFeedback,
+            metadata: {
+              pageType: 'feishu_config_workspace',
+              setupComplete,
+              selectedOrgName: selectedOrgTarget?.orgName || null,
+              authorizationStatus: detail?.authorization?.status || null,
+              baseStatus: detail?.checks?.baseStatus || null,
+              eventSubscriptionStatus: detail?.checks?.eventSubscriptionStatus || null,
+              lastErrorMessage: detail?.checks?.lastErrorMessage || null,
+            },
+          }),
+        })
+      );
+      setFeedbackDraft('');
+      setIsFeedbackDialogOpen(false);
+      setFeedbackSuccessMessage('反馈已提交。我们会结合页面上下文和日志继续排查。');
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : '提交反馈失败。');
+    } finally {
+      setIsSubmittingFeedback(false);
+    }
+  }, [
+    currentStep,
+    detail?.authorization?.status,
+    detail?.checks?.baseStatus,
+    detail?.checks?.eventSubscriptionStatus,
+    detail?.checks?.lastErrorMessage,
+    feedbackDraft,
+    integration?.id,
+    integration?.selectedOrgTargetId,
+    pathname,
+    searchParams,
+    selectedOrgTarget?.orgName,
+    selectedOrgTargetId,
+    setupComplete,
+    setupHeaders,
+  ]);
 
   useEffect(() => {
     if (!integration?.id || !autoCheckTriggerKey || isRunningChecks) {
@@ -920,6 +1168,54 @@ export default function FeishuConfigWorkspace() {
         </AlertDialogContent>
       </AlertDialog>
 
+      <Dialog open={isFeedbackDialogOpen} onOpenChange={setIsFeedbackDialogOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>反馈问题</DialogTitle>
+            <DialogDescription className="leading-6">
+              你只需要描述发生了什么。为了方便我们对齐日志排查，系统会自动附带当前账号、集成、组织、页面、步骤和 trace 上下文。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+              建议尽量提到：问题发生在哪一步、你看到了什么现象或报错、它影响了什么。这样我们更容易把你的描述和日志对齐起来。
+            </div>
+            <Textarea
+              value={feedbackDraft}
+              onChange={(event) => setFeedbackDraft(event.target.value)}
+              placeholder={feedbackPlaceholder}
+              className="min-h-36"
+              disabled={isSubmittingFeedback}
+            />
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-xs leading-5 text-indigo-900">
+              本次会自动附带：
+              {' '}
+              `userId` / `integrationId` / `orgTargetId` / 当前页面 / 当前步骤 / `setupTraceId`
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsFeedbackDialogOpen(false)}
+              disabled={isSubmittingFeedback}
+            >
+              取消
+            </Button>
+            <Button type="button" onClick={() => void handleSubmitFeedback()} disabled={isSubmittingFeedback}>
+              {isSubmittingFeedback ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  提交中
+                </>
+              ) : (
+                '提交反馈'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {showCelebration ? (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-slate-950/10 backdrop-blur-[1px]">
           <div className="relative overflow-hidden rounded-2xl border border-emerald-200 bg-white px-8 py-7 text-center shadow-2xl">
@@ -940,14 +1236,47 @@ export default function FeishuConfigWorkspace() {
         </div>
       ) : null}
 
-      <div className="mx-auto flex h-[calc(100vh-4rem)] max-w-6xl flex-col gap-3 py-5 lg:overflow-hidden">
+      <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-6xl flex-col gap-3 py-4 lg:h-[calc(100dvh-4rem)] lg:overflow-hidden lg:py-5">
         <div className="shrink-0 space-y-0.5">
           <h1 className="text-xl font-bold text-slate-900">飞书集成配置</h1>
           <p className="text-sm text-slate-600">完成创建应用、用户授权和组织选择，系统会自动校验目标表格与事件监听状态。</p>
         </div>
 
+        <div className="sticky top-[88px] z-30 -mx-1 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Badge className={setupComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}>
+                  {mobileStatusSummary.badge}
+                </Badge>
+                <span className="text-xs text-slate-500">操作步骤 {completedActionSteps}/3</span>
+              </div>
+              <div className="mt-2 text-sm font-semibold text-slate-900">{mobileStatusSummary.title}</div>
+              <p className="mt-1 text-xs leading-5 text-slate-600">{mobileStatusSummary.description}</p>
+            </div>
+            <div className="shrink-0 text-right">
+              <div className="text-[11px] text-slate-500">当前进度</div>
+              <div className="mt-1 text-lg font-semibold text-slate-900">{Math.min(currentStep, 3)}/3</div>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-xl bg-slate-50 px-3 py-2">
+              <div className="text-slate-500">组织</div>
+              <div className="mt-1 truncate font-medium text-slate-900">
+                {selectedOrgTarget ? selectedOrgTarget.orgName : '待选择'}
+              </div>
+            </div>
+            <div className="rounded-xl bg-slate-50 px-3 py-2">
+              <div className="text-slate-500">系统状态</div>
+              <div className={`mt-1 font-medium ${setupComplete ? 'text-emerald-700' : 'text-indigo-700'}`}>
+                {setupComplete ? '已完成' : displayedChecksPassed ? '检查通过' : '待继续'}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
-          <aside className="flex min-h-0 flex-col gap-2">
+          <aside className="hidden min-h-0 flex-col gap-2 lg:flex">
             <Card className="shrink-0">
               <CardContent className="p-3">
                 <div className="mb-2 flex items-center justify-between">
@@ -1067,7 +1396,7 @@ export default function FeishuConfigWorkspace() {
                 ) : (
                   <>
                     {user ? (
-                    <div className="flex shrink-0 items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                    <div className="flex shrink-0 flex-col gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:py-2">
                       <div className="flex items-center gap-3">
                         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-sm font-medium text-indigo-700">
                           <User className="h-4 w-4" />
@@ -1077,11 +1406,23 @@ export default function FeishuConfigWorkspace() {
                           <div className="text-xs text-slate-500">{user.email || '飞书用户'}</div>
                         </div>
                       </div>
-                      <Button variant="outline" size="sm" onClick={handleSignOut} disabled={isSigningOut}>
-                        <LogOut className="mr-1.5 h-3.5 w-3.5" />
-                        {isSigningOut ? '退出中...' : '退出'}
-                      </Button>
+                      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                        <Button type="button" variant="outline" size="sm" onClick={() => setIsFeedbackDialogOpen(true)} className="w-full sm:w-auto">
+                          <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+                          反馈问题
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={handleSignOut} disabled={isSigningOut} className="w-full sm:w-auto">
+                          <LogOut className="mr-1.5 h-3.5 w-3.5" />
+                          {isSigningOut ? '退出中...' : '退出'}
+                        </Button>
+                      </div>
                     </div>
+                    ) : null}
+
+                    {feedbackSuccessMessage ? (
+                      <div className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                        {feedbackSuccessMessage}
+                      </div>
                     ) : null}
 
                     <div id="step-create-app" className={getStepPanelClassName(createStepIsActive)}>
@@ -1094,22 +1435,22 @@ export default function FeishuConfigWorkspace() {
                         {!integration ? (
                           <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3">
                             {registrationQrUrl ? (
-                              <div className="flex items-center justify-between gap-4">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-medium text-indigo-900">创建二维码已生成</div>
                                   <p className="mt-1 text-xs leading-4 text-slate-600">请在弹窗中扫码，页面会自动等待创建结果。</p>
                                 </div>
-                                <Button type="button" size="sm" className="shrink-0" onClick={() => setActiveQrDialog('registration')}>
+                                <Button type="button" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => setActiveQrDialog('registration')}>
                                   <QrCode className="mr-2 h-4 w-4" />
                                   查看二维码
                                 </Button>
                               </div>
                             ) : (
-                              <div className="flex items-center justify-between gap-4">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                 <div className="min-w-0">
                                   <h3 className="text-sm font-semibold text-slate-900">创建飞书应用</h3>
                                 </div>
-                                <Button onClick={handleCreateApp} disabled={isCreatingApp} size="sm" className="shrink-0">
+                                <Button onClick={handleCreateApp} disabled={isCreatingApp} size="sm" className="w-full shrink-0 sm:w-auto">
                                   {isCreatingApp ? (
                                     <>
                                       <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
@@ -1127,12 +1468,12 @@ export default function FeishuConfigWorkspace() {
                           </div>
                         ) : (
                           <div className="rounded-lg bg-emerald-50 px-3 py-2">
-                            <div className="flex items-center justify-between gap-3">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                               <div className="flex min-w-0 items-center gap-2">
                                 <Check className="h-4 w-4 shrink-0 text-emerald-600" />
                                 <span className="truncate text-sm font-medium text-emerald-900">应用已创建：{integration.name}</span>
                               </div>
-                              <span className="shrink-0 font-mono text-[11px] text-emerald-700">{integration.appId}</span>
+                              <span className="break-all font-mono text-[11px] text-emerald-700 sm:shrink-0 sm:text-right">{integration.appId}</span>
                             </div>
                           </div>
                         )}
@@ -1166,7 +1507,7 @@ export default function FeishuConfigWorkspace() {
                           <div>
                             <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3">
                               {authorizeUrl ? (
-                                <div className="flex items-center justify-between gap-4">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                   <div className="min-w-0 flex-1">
                                     <div className="text-sm font-medium text-indigo-900">授权二维码已生成</div>
                                     {authorizePollStatus === 'pending' && (
@@ -1182,8 +1523,8 @@ export default function FeishuConfigWorkspace() {
                                       </div>
                                     )}
                                   </div>
-                                  <div className="flex shrink-0 items-center gap-2">
-                                    <Button type="button" size="sm" onClick={() => setActiveQrDialog('authorization')}>
+                                  <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                                    <Button type="button" size="sm" onClick={() => setActiveQrDialog('authorization')} className="w-full sm:w-auto">
                                       <QrCode className="mr-2 h-4 w-4" />
                                       查看二维码
                                     </Button>
@@ -1199,18 +1540,19 @@ export default function FeishuConfigWorkspace() {
                                           authorizePollRef.current = null;
                                         }
                                       }}
+                                      className="w-full sm:w-auto"
                                     >
                                       重新发起
                                     </Button>
                                   </div>
                                 </div>
                               ) : (
-                                <div className="flex items-center justify-between gap-4">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                   <div className="min-w-0">
                                     <h3 className="text-sm font-semibold text-slate-900">授权应用</h3>
                                     <p className="mt-1 text-xs leading-4 text-slate-600">允许系统读取妙记并写入目标多维表格。</p>
                                   </div>
-                                  <Button onClick={handleAuthorize} disabled={isAuthorizing} size="sm" className="shrink-0">
+                                  <Button onClick={handleAuthorize} disabled={isAuthorizing} size="sm" className="w-full shrink-0 sm:w-auto">
                                     {isAuthorizing ? (
                                       <>
                                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
@@ -1244,7 +1586,7 @@ export default function FeishuConfigWorkspace() {
                           </div>
                         ) : (
                           <div className={selectedOrgTarget ? 'rounded-lg bg-emerald-50 p-3' : 'rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3'}>
-                            <div className="flex items-center justify-between gap-3">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                               <div className="min-w-0">
                                 <div className="mb-1 flex items-center gap-2">
                                   {selectedOrgTarget ? (
@@ -1273,7 +1615,7 @@ export default function FeishuConfigWorkspace() {
                                 size="sm"
                                 onClick={() => setShowOrgDialog(true)}
                                 disabled={isSavingOrganization}
-                                className="shrink-0"
+                                className="w-full shrink-0 sm:w-auto"
                               >
                                 {isSavingOrganization ? (
                                   <>
