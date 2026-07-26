@@ -1,5 +1,6 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
@@ -143,6 +144,90 @@ const CHECK_STATUS_LEGEND: Array<{
   { status: 'success', label: '校验通过' },
   { status: 'failed', label: '校验失败' },
 ];
+
+const MOBILE_PROCESSING_BLOBS = [
+  {
+    key: 'north-west',
+    className: 'left-[8%] top-[-10%]',
+    sizeClassName: 'h-44 w-44',
+    color: 'rgba(16, 185, 129, 0.52)',
+    secondaryColor: 'rgba(45, 212, 191, 0.2)',
+    tx: '30vw',
+    ty: '34vh',
+    scale: '0.52',
+    duration: '5.8s',
+    delay: '0s',
+  },
+  {
+    key: 'north-east',
+    className: 'right-[4%] top-[-8%]',
+    sizeClassName: 'h-40 w-40',
+    color: 'rgba(52, 211, 153, 0.48)',
+    secondaryColor: 'rgba(129, 230, 217, 0.16)',
+    tx: '-28vw',
+    ty: '30vh',
+    scale: '0.56',
+    duration: '5.1s',
+    delay: '0.8s',
+  },
+  {
+    key: 'west',
+    className: 'left-[-12%] top-[34%]',
+    sizeClassName: 'h-52 w-52',
+    color: 'rgba(16, 185, 129, 0.44)',
+    secondaryColor: 'rgba(110, 231, 183, 0.16)',
+    tx: '38vw',
+    ty: '0vh',
+    scale: '0.46',
+    duration: '6.3s',
+    delay: '0.4s',
+  },
+  {
+    key: 'east',
+    className: 'right-[-14%] top-[26%]',
+    sizeClassName: 'h-48 w-48',
+    color: 'rgba(20, 184, 166, 0.42)',
+    secondaryColor: 'rgba(16, 185, 129, 0.14)',
+    tx: '-34vw',
+    ty: '8vh',
+    scale: '0.5',
+    duration: '6s',
+    delay: '1.2s',
+  },
+  {
+    key: 'south-west',
+    className: 'bottom-[-12%] left-[6%]',
+    sizeClassName: 'h-44 w-44',
+    color: 'rgba(52, 211, 153, 0.5)',
+    secondaryColor: 'rgba(94, 234, 212, 0.16)',
+    tx: '28vw',
+    ty: '-26vh',
+    scale: '0.58',
+    duration: '5.4s',
+    delay: '0.3s',
+  },
+  {
+    key: 'south-east',
+    className: 'bottom-[-8%] right-[8%]',
+    sizeClassName: 'h-52 w-52',
+    color: 'rgba(5, 150, 105, 0.42)',
+    secondaryColor: 'rgba(52, 211, 153, 0.16)',
+    tx: '-30vw',
+    ty: '-30vh',
+    scale: '0.48',
+    duration: '6.4s',
+    delay: '1s',
+  },
+] as const;
+
+const MOBILE_SUCCESS_FIREWORKS = [
+  { key: 'burst-a', className: 'left-[14%] top-[20%]', delay: '0s', duration: '1.9s' },
+  { key: 'burst-b', className: 'right-[12%] top-[18%]', delay: '0.45s', duration: '2.1s' },
+  { key: 'burst-c', className: 'left-[18%] bottom-[26%]', delay: '0.8s', duration: '2s' },
+  { key: 'burst-d', className: 'right-[16%] bottom-[22%]', delay: '0.25s', duration: '2.15s' },
+  { key: 'burst-e', className: 'left-1/2 top-[34%] -translate-x-1/2', delay: '1.05s', duration: '1.85s' },
+  { key: 'burst-f', className: 'left-1/2 bottom-[18%] -translate-x-1/2', delay: '0.6s', duration: '2.05s' },
+] as const;
 
 function formatDateTime(value: string | null) {
   if (!value) return '未设置';
@@ -332,6 +417,160 @@ function StepHeader(props: {
         ) : null}
       </div>
     </CardHeader>
+  );
+}
+
+function MobileProcessingVeil() {
+  return (
+    <div className="pointer-events-none fixed inset-0 z-40 overflow-hidden lg:hidden" aria-hidden>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(236,253,245,0.2),rgba(255,255,255,0)_58%)]" />
+      <div className="absolute inset-x-[15%] top-[22%] h-44 rounded-full bg-emerald-300/18 blur-3xl mobile-processing-core" />
+      <div className="absolute inset-x-[18%] bottom-[18%] h-32 rounded-full bg-teal-200/14 blur-3xl mobile-processing-core mobile-processing-core-delayed" />
+      {MOBILE_PROCESSING_BLOBS.map((blob) => (
+        <span
+          key={blob.key}
+          className={`absolute rounded-full blur-3xl ${blob.className} ${blob.sizeClassName} mobile-processing-blob`}
+          style={
+            {
+              '--processing-tx': blob.tx,
+              '--processing-ty': blob.ty,
+              '--processing-scale': blob.scale,
+              '--processing-duration': blob.duration,
+              '--processing-delay': blob.delay,
+              background: `radial-gradient(circle, ${blob.color} 0%, ${blob.secondaryColor} 52%, rgba(255,255,255,0) 72%)`,
+            } as CSSProperties
+          }
+        />
+      ))}
+      <style jsx>{`
+        .mobile-processing-blob {
+          animation: mobile-processing-drift var(--processing-duration) ease-in-out infinite;
+          animation-delay: var(--processing-delay);
+          opacity: 0.18;
+        }
+
+        .mobile-processing-core {
+          animation: mobile-processing-core-pulse 4.8s ease-in-out infinite;
+        }
+
+        .mobile-processing-core-delayed {
+          animation-delay: 1.1s;
+        }
+
+        @keyframes mobile-processing-drift {
+          0%,
+          100% {
+            transform: translate3d(0, 0, 0) scale(1);
+            opacity: 0.12;
+          }
+          50% {
+            transform: translate3d(var(--processing-tx), var(--processing-ty), 0)
+              scale(var(--processing-scale));
+            opacity: 0.52;
+          }
+        }
+
+        @keyframes mobile-processing-core-pulse {
+          0%,
+          100% {
+            transform: scale(0.92);
+            opacity: 0.2;
+          }
+          50% {
+            transform: scale(1.08);
+            opacity: 0.4;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function MobileCelebrationOverlay() {
+  return (
+    <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden lg:hidden" aria-hidden>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(236,253,245,0.38),rgba(255,255,255,0)_56%)]" />
+      <div className="absolute inset-0 bg-slate-950/5 backdrop-blur-[1.5px]" />
+      {MOBILE_SUCCESS_FIREWORKS.map((burst) => (
+        <div
+          key={burst.key}
+          className={`absolute h-0 w-0 ${burst.className} mobile-firework-burst`}
+          style={
+            {
+              '--firework-delay': burst.delay,
+              '--firework-duration': burst.duration,
+            } as CSSProperties
+          }
+        >
+          {Array.from({ length: 10 }).map((_, index) => (
+            <span
+              key={`${burst.key}-${index}`}
+              className="mobile-firework-ray"
+              style={
+                {
+                  '--firework-angle': `${index * 36}deg`,
+                } as CSSProperties
+              }
+            />
+          ))}
+          <span className="mobile-firework-core" />
+        </div>
+      ))}
+      <style jsx>{`
+        .mobile-firework-burst {
+          animation: mobile-firework-bloom var(--firework-duration) ease-out infinite;
+          animation-delay: var(--firework-delay);
+        }
+
+        .mobile-firework-ray {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 4px;
+          height: 78px;
+          border-radius: 9999px;
+          transform-origin: 50% 0%;
+          transform: rotate(var(--firework-angle)) translateY(-6px);
+          background: linear-gradient(
+            180deg,
+            rgba(167, 243, 208, 0.98) 0%,
+            rgba(52, 211, 153, 0.9) 30%,
+            rgba(16, 185, 129, 0.24) 74%,
+            rgba(16, 185, 129, 0) 100%
+          );
+          box-shadow: 0 0 10px rgba(52, 211, 153, 0.45);
+        }
+
+        .mobile-firework-core {
+          position: absolute;
+          left: -9px;
+          top: -9px;
+          width: 18px;
+          height: 18px;
+          border-radius: 9999px;
+          background: radial-gradient(circle, rgba(236, 253, 245, 1) 0%, rgba(52, 211, 153, 0.94) 46%, rgba(16, 185, 129, 0) 82%);
+          filter: blur(0.4px);
+        }
+
+        @keyframes mobile-firework-bloom {
+          0% {
+            transform: scale(0.2);
+            opacity: 0;
+          }
+          18% {
+            opacity: 1;
+          }
+          48% {
+            transform: scale(1);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(1.18);
+            opacity: 0;
+          }
+        }
+      `}</style>
+    </div>
   );
 }
 
@@ -552,6 +791,7 @@ export default function FeishuConfigWorkspace() {
       progress: 100,
     };
   }, [detail?.checks, selectedOrgTargetId]);
+  const showMobileProcessingVeil = automaticSetupProgress?.status === 'running';
   const completedActionSteps = useMemo(
     () =>
       [Boolean(integration), detail?.authorization?.status === 'authorized', Boolean(selectedOrgTargetId)].filter(Boolean)
@@ -1227,8 +1467,11 @@ export default function FeishuConfigWorkspace() {
         </DialogContent>
       </Dialog>
 
+      {showMobileProcessingVeil ? <MobileProcessingVeil /> : null}
+      {showCelebration ? <MobileCelebrationOverlay /> : null}
+
       {showCelebration ? (
-        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-slate-950/10 backdrop-blur-[1px]">
+        <div className="pointer-events-none fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/10 backdrop-blur-[1px] lg:flex">
           <div className="relative overflow-hidden rounded-2xl border border-emerald-200 bg-white px-8 py-7 text-center shadow-2xl">
             {['left-6 top-6 bg-pink-400', 'right-8 top-8 bg-indigo-400', 'left-10 bottom-8 bg-amber-400', 'right-10 bottom-7 bg-emerald-400', 'left-1/2 top-4 bg-sky-400'].map((className) => (
               <span
