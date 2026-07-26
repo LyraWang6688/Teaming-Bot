@@ -23,6 +23,7 @@ export type ListenerState = 'stopped' | 'starting' | 'running' | 'reconnecting' 
 export interface ListenerInfo {
   integrationId: string;
   state: ListenerState;
+  stopRequested: boolean;
   lastError: string | null;
   startedAt: Date | null;
   readyAt: Date | null;
@@ -35,6 +36,12 @@ type ListenerStartFailureContext = {
   blockedGate: string;
   message: string;
   errorName?: string;
+};
+
+type StopListenerOptions = {
+  reason?: string;
+  trigger?: string;
+  logIfMissing?: boolean;
 };
 
 class ListenerPrerequisiteError extends Error {
@@ -98,12 +105,6 @@ export function getListenerStartFailureContext(error: unknown): ListenerStartFai
 }
 
 async function enqueueSdkEvent(integrationId: string, rawEvent: unknown): Promise<void> {
-  const integration = await getFeishuIntegrationContextById(integrationId);
-  if (!integration) {
-    logFeishuMonitor('warn', 'event_listener_integration_not_found', { integrationId });
-    return;
-  }
-
   const event = asRecord(rawEvent);
   const eventId = typeof event.event_id === 'string' ? event.event_id : undefined;
   const eventType =
@@ -112,6 +113,30 @@ async function enqueueSdkEvent(integrationId: string, rawEvent: unknown): Promis
     typeof event.create_time === 'string' || typeof event.create_time === 'number'
       ? String(event.create_time)
       : undefined;
+
+  // The activation route and the long-lived listener may run in different
+  // Next.js runtime contexts, so the database gate must be checked again at
+  // event dispatch time instead of trusting an in-memory stop request.
+  if (!(await isFeishuIntegrationActive(integrationId))) {
+    logFeishuMonitor('info', 'inactive_integration_event_ignored', {
+      integrationId,
+      eventId,
+      eventType,
+      reasonCode: 'integration_inactive',
+    });
+    stopListener(integrationId, {
+      reason: 'integration_inactive',
+      trigger: 'event_dispatch',
+      logIfMissing: true,
+    });
+    return;
+  }
+
+  const integration = await getFeishuIntegrationContextById(integrationId);
+  if (!integration) {
+    logFeishuMonitor('warn', 'event_listener_integration_not_found', { integrationId });
+    return;
+  }
 
   await enqueueFeishuEvent(
     {
@@ -191,6 +216,18 @@ async function markListenerReady(integrationId: string): Promise<void> {
   const listener = listeners.get(integrationId);
   const integration = await getFeishuIntegrationContextById(integrationId);
   if (!listener || !integration) return;
+  if (listener.stopRequested || !(await isFeishuIntegrationActive(integrationId))) {
+    stopListener(integrationId, {
+      reason: 'integration_inactive',
+      trigger: 'listener_ready',
+      logIfMissing: true,
+    });
+    throw new ListenerPrerequisiteError(
+      'integration_inactive',
+      'activation',
+      '当前飞书集成已经失活，不能将事件长连接标记为就绪。'
+    );
+  }
 
   listener.state = 'running';
   listener.readyAt = new Date();
@@ -299,6 +336,17 @@ function persistListenerFailure(integrationId: string, error: Error): void {
 async function startListenerForIntegration(integrationId: string): Promise<ListenerInfo> {
   const existing = listeners.get(integrationId);
   if (existing?.state === 'running' && existing.client) {
+    if (!(await isFeishuIntegrationActive(integrationId))) {
+      stopListener(integrationId, {
+        reason: 'integration_inactive',
+        trigger: 'listener_start_reuse',
+      });
+      throw new ListenerPrerequisiteError(
+        'integration_inactive',
+        'activation',
+        '该飞书集成已被更新的同组织集成取代，不能继续复用事件长连接。'
+      );
+    }
     return existing;
   }
 
@@ -310,6 +358,7 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
   const listener: ListenerInfo = {
     integrationId,
     state: 'starting',
+    stopRequested: false,
     lastError: null,
     startedAt: new Date(),
     readyAt: null,
@@ -351,6 +400,13 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
         });
     },
     onError: (error) => {
+      if (listeners.get(integrationId)?.stopRequested) {
+        logFeishuMonitor('info', 'event_listener_stop_acknowledged', {
+          integrationId,
+          eventType: EVENT_TYPE,
+        });
+        return;
+      }
       persistListenerFailure(integrationId, error);
       if (!settled) {
         settled = true;
@@ -359,13 +415,21 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
     },
     onReconnecting: () => {
       const current = listeners.get(integrationId);
-      if (current) {
-        current.state = 'reconnecting';
-        current.reconnectCount += 1;
-      }
-      void getFeishuIntegrationCheckStatus(integrationId)
-        .then((checks) =>
-          upsertFeishuIntegrationCheckStatus({
+      if (!current || current.stopRequested) return;
+      void isFeishuIntegrationActive(integrationId)
+        .then(async (isActive) => {
+          if (!isActive) {
+            stopListener(integrationId, {
+              reason: 'integration_inactive',
+              trigger: 'listener_reconnecting',
+              logIfMissing: true,
+            });
+            return;
+          }
+          current.state = 'reconnecting';
+          current.reconnectCount += 1;
+          const checks = await getFeishuIntegrationCheckStatus(integrationId);
+          await upsertFeishuIntegrationCheckStatus({
             integrationId,
             eventSubscriptionStatus: 'pending',
             details: {
@@ -376,8 +440,8 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
                 eventKey: EVENT_TYPE,
               },
             },
-          })
-        )
+          });
+        })
         .catch((error) => {
           logFeishuMonitor('error', 'event_listener_reconnecting_status_failed', {
             integrationId,
@@ -386,7 +450,14 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
         });
     },
     onReconnected: () => {
-      void markListenerReady(integrationId);
+      if (listeners.get(integrationId)?.stopRequested) return;
+      void markListenerReady(integrationId).catch((error) => {
+        if (error instanceof ListenerPrerequisiteError) return;
+        persistListenerFailure(
+          integrationId,
+          error instanceof Error ? error : new Error(String(error))
+        );
+      });
     },
   });
   listener.client = client;
@@ -415,6 +486,17 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
 
   const timer = setTimeout(() => {
     if (settled) return;
+    if (listener.stopRequested) {
+      settled = true;
+      rejectReady?.(
+        new ListenerPrerequisiteError(
+          'integration_inactive',
+          'activation',
+          '事件长连接在就绪前已因集成失活而停止。'
+        )
+      );
+      return;
+    }
     settled = true;
     client.close({ force: true });
     const timeoutError = new Error('等待飞书事件长连接建立超时，请稍后重试。');
@@ -425,17 +507,35 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
   return readyPromise.finally(() => clearTimeout(timer));
 }
 
-export function stopListener(integrationId: string): void {
+export function stopListener(
+  integrationId: string,
+  options: StopListenerOptions = {}
+): boolean {
   const listener = listeners.get(integrationId);
-  if (!listener) return;
-  listener.client?.close({ force: true });
-  listener.client = null;
+  if (!listener) {
+    if (options.logIfMissing) {
+      logFeishuMonitor('warn', 'event_listener_stop_not_found', {
+        integrationId,
+        eventType: EVENT_TYPE,
+        reason: options.reason || 'unspecified',
+        trigger: options.trigger || 'unspecified',
+      });
+    }
+    return false;
+  }
+  listener.stopRequested = true;
   listener.state = 'stopped';
   listener.readyAt = null;
+  const client = listener.client;
+  listener.client = null;
+  client?.close({ force: true });
   logFeishuMonitor('info', 'event_listener_stopped', {
     integrationId,
     eventType: EVENT_TYPE,
+    reason: options.reason || 'manual',
+    trigger: options.trigger || 'direct',
   });
+  return true;
 }
 
 export async function startListener(integrationId: string): Promise<ListenerInfo> {
@@ -489,13 +589,22 @@ export async function startAllListeners(): Promise<void> {
 async function sweepInactiveListeners(): Promise<void> {
   const activeIntegrations = await listActiveFeishuIntegrationContextsWithBase();
   const activeIntegrationIds = new Set(activeIntegrations.map((integration) => integration.id));
-  const runningListeners = [...listeners.values()].filter((listener) => listener.state !== 'stopped');
+  const runningListeners = [...listeners.values()].filter(
+    (listener) => listener.state !== 'stopped' && !listener.stopRequested
+  );
   let stoppedCount = 0;
 
   runningListeners.forEach((listener) => {
     if (activeIntegrationIds.has(listener.integrationId)) return;
-    stopListener(listener.integrationId);
-    stoppedCount += 1;
+    if (
+      stopListener(listener.integrationId, {
+        reason: 'integration_inactive',
+        trigger: 'inactive_listener_sweep',
+        logIfMissing: true,
+      })
+    ) {
+      stoppedCount += 1;
+    }
   });
 
   if (stoppedCount > 0) {
@@ -529,9 +638,16 @@ async function sweepStaleFeishuIntegrations(): Promise<void> {
   let stoppedListenerCount = 0;
   uniqueCleanupCandidates.forEach((candidate) => {
     const listener = listeners.get(candidate.integrationId);
-    if (!listener || listener.state === 'stopped') return;
-    stopListener(candidate.integrationId);
-    stoppedListenerCount += 1;
+    if (!listener || listener.state === 'stopped' || listener.stopRequested) return;
+    if (
+      stopListener(candidate.integrationId, {
+        reason: 'integration_deleted',
+        trigger: 'integration_cleanup_sweep',
+        logIfMissing: true,
+      })
+    ) {
+      stoppedListenerCount += 1;
+    }
   });
 
   logFeishuMonitor('info', 'feishu_integration_cleanup_completed', {
@@ -544,7 +660,6 @@ async function sweepStaleFeishuIntegrations(): Promise<void> {
     cleanedIntegrationIds: uniqueCleanupCandidates.map((candidate) => candidate.integrationId),
   });
 }
-
 export function startInactiveListenerSweeper(): void {
   if (inactiveListenerSweepTimer) return;
   inactiveListenerSweepTimer = setInterval(() => {

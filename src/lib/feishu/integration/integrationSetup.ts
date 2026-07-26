@@ -723,7 +723,11 @@ async function executeFeishuIntegrationChecks(options: {
   if (listenerPrerequisitesPassed) {
       const activation = await activateLatestFeishuIntegrationInGroup(integration.id);
       activation?.supersededIntegrationIds.forEach((supersededIntegrationId) => {
-        stopListener(supersededIntegrationId);
+        stopListener(supersededIntegrationId, {
+          reason: 'integration_superseded',
+          trigger: 'integration_activation',
+          logIfMissing: true,
+        });
       });
 
       if (activation && !activation.isCurrentActive) {

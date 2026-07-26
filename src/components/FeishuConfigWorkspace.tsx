@@ -1,5 +1,6 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
@@ -19,7 +20,6 @@ import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -40,6 +40,7 @@ import {
 } from 'lucide-react';
 
 type StepDisplayStatus = 'completed' | 'current' | 'pending';
+type CheckVisualStatus = 'pending' | 'success' | 'failed';
 
 type AuthUser = {
   id: string;
@@ -127,6 +128,106 @@ type ActiveOrgTargetsResponse = {
 
 const INTEGRATION_LIST_CACHE_TTL_MS = 3_000;
 const INTEGRATION_DETAIL_CACHE_TTL_MS = 1_500;
+const FAILED_CHECK_STATUSES = new Set([
+  'denied',
+  'error',
+  'expired',
+  'failed',
+  'invalid',
+  'reauthorization_required',
+]);
+const CHECK_STATUS_LEGEND: Array<{
+  status: CheckVisualStatus;
+  label: string;
+}> = [
+  { status: 'pending', label: '尚未完成' },
+  { status: 'success', label: '校验通过' },
+  { status: 'failed', label: '校验失败' },
+];
+
+const MOBILE_PROCESSING_BLOBS = [
+  {
+    key: 'north-west',
+    className: 'left-[8%] top-[-10%]',
+    sizeClassName: 'h-44 w-44',
+    color: 'rgba(59, 130, 246, 0.64)',
+    secondaryColor: 'rgba(96, 165, 250, 0.28)',
+    tx: '30vw',
+    ty: '34vh',
+    scale: '0.52',
+    duration: '5.8s',
+    delay: '0s',
+  },
+  {
+    key: 'north-east',
+    className: 'right-[4%] top-[-8%]',
+    sizeClassName: 'h-40 w-40',
+    color: 'rgba(20, 184, 166, 0.58)',
+    secondaryColor: 'rgba(45, 212, 191, 0.24)',
+    tx: '-28vw',
+    ty: '30vh',
+    scale: '0.56',
+    duration: '5.1s',
+    delay: '0.8s',
+  },
+  {
+    key: 'west',
+    className: 'left-[-12%] top-[34%]',
+    sizeClassName: 'h-52 w-52',
+    color: 'rgba(99, 102, 241, 0.48)',
+    secondaryColor: 'rgba(129, 140, 248, 0.22)',
+    tx: '38vw',
+    ty: '0vh',
+    scale: '0.46',
+    duration: '6.3s',
+    delay: '0.4s',
+  },
+  {
+    key: 'east',
+    className: 'right-[-14%] top-[26%]',
+    sizeClassName: 'h-48 w-48',
+    color: 'rgba(14, 165, 233, 0.5)',
+    secondaryColor: 'rgba(56, 189, 248, 0.22)',
+    tx: '-34vw',
+    ty: '8vh',
+    scale: '0.5',
+    duration: '6s',
+    delay: '1.2s',
+  },
+  {
+    key: 'south-west',
+    className: 'bottom-[-12%] left-[6%]',
+    sizeClassName: 'h-44 w-44',
+    color: 'rgba(13, 148, 136, 0.6)',
+    secondaryColor: 'rgba(45, 212, 191, 0.2)',
+    tx: '28vw',
+    ty: '-26vh',
+    scale: '0.58',
+    duration: '5.4s',
+    delay: '0.3s',
+  },
+  {
+    key: 'south-east',
+    className: 'bottom-[-8%] right-[8%]',
+    sizeClassName: 'h-52 w-52',
+    color: 'rgba(79, 70, 229, 0.42)',
+    secondaryColor: 'rgba(125, 211, 252, 0.18)',
+    tx: '-30vw',
+    ty: '-30vh',
+    scale: '0.48',
+    duration: '6.4s',
+    delay: '1s',
+  },
+] as const;
+
+const MOBILE_SUCCESS_FIREWORKS = [
+  { key: 'burst-a', className: 'left-[14%] top-[20%]', delay: '0s', duration: '1.9s' },
+  { key: 'burst-b', className: 'right-[12%] top-[18%]', delay: '0.45s', duration: '2.1s' },
+  { key: 'burst-c', className: 'left-[18%] bottom-[26%]', delay: '0.8s', duration: '2s' },
+  { key: 'burst-d', className: 'right-[16%] bottom-[22%]', delay: '0.25s', duration: '2.15s' },
+  { key: 'burst-e', className: 'left-1/2 top-[34%] -translate-x-1/2', delay: '1.05s', duration: '1.85s' },
+  { key: 'burst-f', className: 'left-1/2 bottom-[18%] -translate-x-1/2', delay: '0.6s', duration: '2.05s' },
+] as const;
 
 function formatDateTime(value: string | null) {
   if (!value) return '未设置';
@@ -136,25 +237,6 @@ function formatDateTime(value: string | null) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(date);
-}
-
-function getStatusLabel(status: string | null | undefined) {
-  switch (status) {
-    case 'authorized':
-    case 'oauth_authorized':
-      return '已授权';
-    case 'passed':
-    case 'success':
-      return '正常';
-    case 'pending':
-      return '待完成';
-    case 'draft':
-      return '未完成';
-    case 'failed':
-      return '有问题';
-    default:
-      return status || '未设置';
-  }
 }
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
@@ -217,12 +299,68 @@ function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
   );
 }
 
-function getCheckStatusTone(passed: boolean) {
-  return passed ? 'text-emerald-600' : 'text-amber-600';
+function getCheckVisualStatus(
+  status: string | null | undefined,
+  successStatuses: string[] = ['success']
+): CheckVisualStatus {
+  if (status && successStatuses.includes(status)) return 'success';
+  if (status && FAILED_CHECK_STATUSES.has(status)) return 'failed';
+  return 'pending';
 }
 
-function getCheckStatusLabel(passed: boolean) {
-  return passed ? '已通过' : '待确认';
+function getEventCheckVisualStatus(checks: CheckStatusView | null | undefined): CheckVisualStatus {
+  const statuses = [
+    checks?.permissionStatus,
+    checks?.minuteSubscriptionStatus,
+    checks?.eventSubscriptionStatus,
+  ];
+  if (statuses.every((status) => status === 'success')) return 'success';
+  if (statuses.some((status) => getCheckVisualStatus(status) === 'failed')) return 'failed';
+  return 'pending';
+}
+
+function getCheckStatusLabel(status: CheckVisualStatus) {
+  switch (status) {
+    case 'success':
+      return '校验通过';
+    case 'failed':
+      return '校验失败';
+    default:
+      return '尚未完成';
+  }
+}
+
+function getCheckStatusTextTone(status: CheckVisualStatus) {
+  switch (status) {
+    case 'success':
+      return 'text-emerald-700';
+    case 'failed':
+      return 'text-red-700';
+    default:
+      return 'text-amber-700';
+  }
+}
+
+function getCheckStatusCardTone(status: CheckVisualStatus) {
+  switch (status) {
+    case 'success':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+    case 'failed':
+      return 'border-red-200 bg-red-50 text-red-700';
+    default:
+      return 'border-amber-200 bg-amber-50 text-amber-700';
+  }
+}
+
+function getCheckStatusDotTone(status: CheckVisualStatus) {
+  switch (status) {
+    case 'success':
+      return 'bg-emerald-500';
+    case 'failed':
+      return 'bg-red-500';
+    default:
+      return 'bg-amber-400';
+  }
 }
 
 function createSetupTraceId() {
@@ -279,6 +417,182 @@ function StepHeader(props: {
         ) : null}
       </div>
     </CardHeader>
+  );
+}
+
+function MobileProcessingVeil() {
+  return (
+    <div className="pointer-events-none fixed inset-0 z-40 overflow-hidden lg:hidden" aria-hidden>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(219,234,254,0.4),rgba(255,255,255,0)_58%)]" />
+      <div className="absolute inset-x-[15%] top-[22%] h-44 rounded-full bg-sky-300/24 blur-3xl mobile-processing-core" />
+      <div className="absolute inset-x-[18%] bottom-[18%] h-32 rounded-full bg-indigo-300/18 blur-3xl mobile-processing-core mobile-processing-core-delayed" />
+      {MOBILE_PROCESSING_BLOBS.map((blob) => (
+        <span
+          key={blob.key}
+          className={`absolute rounded-full blur-3xl ${blob.className} ${blob.sizeClassName} mobile-processing-blob`}
+          style={
+            {
+              '--processing-tx': blob.tx,
+              '--processing-ty': blob.ty,
+              '--processing-scale': blob.scale,
+              '--processing-duration': blob.duration,
+              '--processing-delay': blob.delay,
+              background: `radial-gradient(circle, ${blob.color} 0%, ${blob.secondaryColor} 52%, rgba(255,255,255,0) 72%)`,
+            } as CSSProperties
+          }
+        />
+      ))}
+      <style jsx>{`
+        .mobile-processing-blob {
+          animation: mobile-processing-drift var(--processing-duration) ease-in-out infinite;
+          animation-delay: var(--processing-delay);
+          opacity: 0.26;
+        }
+
+        .mobile-processing-core {
+          animation: mobile-processing-core-pulse 4.8s ease-in-out infinite;
+        }
+
+        .mobile-processing-core-delayed {
+          animation-delay: 1.1s;
+        }
+
+        @keyframes mobile-processing-drift {
+          0%,
+          100% {
+            transform: translate3d(0, 0, 0) scale(1);
+            opacity: 0.2;
+          }
+          50% {
+            transform: translate3d(var(--processing-tx), var(--processing-ty), 0)
+              scale(var(--processing-scale));
+            opacity: 0.68;
+          }
+        }
+
+        @keyframes mobile-processing-core-pulse {
+          0%,
+          100% {
+            transform: scale(0.92);
+            opacity: 0.28;
+          }
+          50% {
+            transform: scale(1.08);
+            opacity: 0.56;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function MobileCelebrationOverlay() {
+  return (
+    <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden lg:hidden" aria-hidden>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(236,253,245,0.38),rgba(255,255,255,0)_56%)]" />
+      <div className="absolute inset-0 bg-slate-950/5 backdrop-blur-[1.5px]" />
+      {MOBILE_SUCCESS_FIREWORKS.map((burst) => (
+        <div
+          key={burst.key}
+          className={`absolute h-0 w-0 ${burst.className} mobile-firework-burst`}
+          style={
+            {
+              '--firework-delay': burst.delay,
+              '--firework-duration': burst.duration,
+            } as CSSProperties
+          }
+        >
+          {Array.from({ length: 10 }).map((_, index) => (
+            <span
+              key={`${burst.key}-${index}`}
+              className="mobile-firework-ray"
+              style={
+                {
+                  '--firework-angle': `${index * 36}deg`,
+                } as CSSProperties
+              }
+            />
+          ))}
+          <span className="mobile-firework-core" />
+        </div>
+      ))}
+      <style jsx>{`
+        .mobile-firework-burst {
+          animation: mobile-firework-bloom var(--firework-duration) ease-out infinite;
+          animation-delay: var(--firework-delay);
+        }
+
+        .mobile-firework-ray {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 4px;
+          height: 78px;
+          border-radius: 9999px;
+          transform-origin: 50% 0%;
+          transform: rotate(var(--firework-angle)) translateY(-6px);
+          background: linear-gradient(
+            180deg,
+            rgba(167, 243, 208, 0.98) 0%,
+            rgba(52, 211, 153, 0.9) 30%,
+            rgba(16, 185, 129, 0.24) 74%,
+            rgba(16, 185, 129, 0) 100%
+          );
+          box-shadow: 0 0 10px rgba(52, 211, 153, 0.45);
+        }
+
+        .mobile-firework-core {
+          position: absolute;
+          left: -9px;
+          top: -9px;
+          width: 18px;
+          height: 18px;
+          border-radius: 9999px;
+          background: radial-gradient(circle, rgba(236, 253, 245, 1) 0%, rgba(52, 211, 153, 0.94) 46%, rgba(16, 185, 129, 0) 82%);
+          filter: blur(0.4px);
+        }
+
+        @keyframes mobile-firework-bloom {
+          0% {
+            transform: scale(0.2);
+            opacity: 0;
+          }
+          18% {
+            opacity: 1;
+          }
+          48% {
+            transform: scale(1);
+            opacity: 1;
+          }
+          100% {
+            transform: scale(1.18);
+            opacity: 0;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function CelebrationDialog() {
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/10 px-4 backdrop-blur-[1px]">
+      <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-emerald-200 bg-white px-6 py-6 text-center shadow-2xl sm:px-8 sm:py-7">
+        {['left-6 top-6 bg-pink-400', 'right-8 top-8 bg-indigo-400', 'left-10 bottom-8 bg-amber-400', 'right-10 bottom-7 bg-emerald-400', 'left-1/2 top-4 bg-sky-400'].map((className) => (
+          <span
+            key={className}
+            className={`absolute h-2.5 w-2.5 rounded-full ${className} animate-ping`}
+          />
+        ))}
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+          <Sparkles className="h-7 w-7" />
+        </div>
+        <div className="text-lg font-semibold text-slate-900">配置完成</div>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          系统校验已通过，后续可以自动监听并分析飞书会议。
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -405,52 +719,101 @@ export default function FeishuConfigWorkspace() {
     [detail?.checks]
   );
   const systemCheckItems = useMemo(
-    () => [
-      {
-        label: '组织配置',
-        value: selectedOrgTarget
-          ? selectedOrgTarget.orgName
-          : getCheckStatusLabel(Boolean(selectedOrgTargetId)),
-        passed: Boolean(selectedOrgTargetId),
-      },
-      {
-        label: '应用凭证',
-        value: getCheckStatusLabel(detail?.checks?.appCredentialStatus === 'success'),
-        passed: detail?.checks?.appCredentialStatus === 'success',
-      },
-      {
-        label: '用户授权',
-        value: getCheckStatusLabel(detail?.checks?.oauthStatus === 'authorized'),
-        passed: detail?.checks?.oauthStatus === 'authorized',
-      },
-      {
-        label: '目标表格',
-        value:
-          detail?.checks?.baseStatus === 'success'
-            ? '可访问'
-            : getStatusLabel(detail?.checks?.baseStatus),
-        passed: detail?.checks?.baseStatus === 'success',
-      },
-      {
-        label: '事件监听',
-        value: eventSubscriptionPassed
-          ? '已就绪'
-          : getStatusLabel(detail?.checks?.eventSubscriptionStatus),
-        passed: eventSubscriptionPassed,
-      },
-    ],
-    [
-      detail?.checks?.appCredentialStatus,
-      detail?.checks?.baseStatus,
-      detail?.checks?.eventSubscriptionStatus,
-      detail?.checks?.oauthStatus,
-      eventSubscriptionPassed,
-      selectedOrgTarget,
-      selectedOrgTargetId,
-    ]
+    () => {
+      const organizationStatus: CheckVisualStatus = selectedOrgTargetId ? 'success' : 'pending';
+      const appCredentialStatus = getCheckVisualStatus(detail?.checks?.appCredentialStatus);
+      const oauthStatus = getCheckVisualStatus(detail?.checks?.oauthStatus, ['authorized', 'success']);
+      const baseStatus = getCheckVisualStatus(detail?.checks?.baseStatus);
+      const eventStatus = getEventCheckVisualStatus(detail?.checks);
+
+      return [
+        {
+          label: '组织配置',
+          shortLabel: '组织',
+          status: organizationStatus,
+          value: getCheckStatusLabel(organizationStatus),
+        },
+        {
+          label: '应用凭证',
+          shortLabel: '应用',
+          status: appCredentialStatus,
+          value: getCheckStatusLabel(appCredentialStatus),
+        },
+        {
+          label: '用户授权',
+          shortLabel: '授权',
+          status: oauthStatus,
+          value: getCheckStatusLabel(oauthStatus),
+        },
+        {
+          label: '目标表格',
+          shortLabel: '表格',
+          status: baseStatus,
+          value: getCheckStatusLabel(baseStatus),
+        },
+        {
+          label: '事件监听',
+          shortLabel: '监听',
+          status: eventStatus,
+          value: getCheckStatusLabel(eventStatus),
+        },
+      ];
+    },
+    [detail?.checks, selectedOrgTargetId]
   );
 
   const setupComplete = eventSubscriptionPassed;
+  const automaticSetupProgress = useMemo(() => {
+    const baseStatus = getCheckVisualStatus(detail?.checks?.baseStatus);
+    const eventStatus = getEventCheckVisualStatus(detail?.checks);
+
+    if (!selectedOrgTargetId) {
+      return null;
+    }
+    if (baseStatus === 'failed') {
+      return {
+        status: 'failed' as const,
+        title: '目标表格校验失败',
+        description:
+          detail?.checks?.lastErrorMessage ||
+          '系统暂时无法访问目标多维表格，请检查权限后重新校验。',
+        progress: 60,
+      };
+    }
+    if (baseStatus !== 'success') {
+      return {
+        status: 'running' as const,
+        title: '正在校验目标表格',
+        description: '系统正在确认当前飞书账号和应用能否读取所选组织的多维表格。',
+        progress: 60,
+      };
+    }
+    if (eventStatus === 'failed') {
+      return {
+        status: 'failed' as const,
+        title: '事件监听配置失败',
+        description:
+          detail?.checks?.lastErrorMessage ||
+          '目标表格已通过校验，但事件订阅或长连接暂时未能建立。',
+        progress: 80,
+      };
+    }
+    if (eventStatus !== 'success') {
+      return {
+        status: 'running' as const,
+        title: '正在配置自动监听',
+        description: '目标表格已通过校验，系统正在检查权限、订阅妙记事件并建立长连接。',
+        progress: 80,
+      };
+    }
+    return {
+      status: 'success' as const,
+      title: '自动配置已完成',
+      description: '目标表格与事件监听均已就绪，后续会议将自动进入分析流程。',
+      progress: 100,
+    };
+  }, [detail?.checks, selectedOrgTargetId]);
+  const showMobileProcessingVeil = automaticSetupProgress?.status === 'running';
   const completedActionSteps = useMemo(
     () =>
       [Boolean(integration), detail?.authorization?.status === 'authorized', Boolean(selectedOrgTargetId)].filter(Boolean)
@@ -725,12 +1088,13 @@ export default function FeishuConfigWorkspace() {
     if (!integration?.id) return '';
     return [
       integration.id,
-      integration.selectedOrgTargetId || selectedOrgTargetId || 'no-org',
+      integration.selectedOrgTargetId || 'no-org',
       detail?.authorization?.updatedAt ?? 'no-oauth-update',
     ].join(':');
-  }, [detail?.authorization?.updatedAt, integration?.id, integration?.selectedOrgTargetId, selectedOrgTargetId]);
+  }, [detail?.authorization?.updatedAt, integration?.id, integration?.selectedOrgTargetId]);
 
   const handleSelectOrganization = async (orgTargetId: string) => {
+    const previousOrgTargetId = selectedOrgTargetId;
     setSelectedOrgTargetId(orgTargetId);
     setPageError(null);
 
@@ -750,6 +1114,7 @@ export default function FeishuConfigWorkspace() {
       await loadIntegrationDetail(integration.id, { force: true });
       setShowOrgDialog(false);
     } catch (error) {
+      setSelectedOrgTargetId(previousOrgTargetId);
       setPageError(error instanceof Error ? error.message : '保存组织失败。');
     } finally {
       setIsSavingOrganization(false);
@@ -1006,7 +1371,7 @@ export default function FeishuConfigWorkspace() {
   ]);
 
   useEffect(() => {
-    if (!integration?.id || !autoCheckTriggerKey || isRunningChecks) {
+    if (!integration?.id || !autoCheckTriggerKey || isRunningChecks || detail?.checks?.allPassed) {
       return;
     }
 
@@ -1016,7 +1381,7 @@ export default function FeishuConfigWorkspace() {
 
     autoCheckKeyRef.current = autoCheckTriggerKey;
     void runAutomatedChecks(integration.id, { silent: true });
-  }, [autoCheckTriggerKey, integration?.id, isRunningChecks, runAutomatedChecks]);
+  }, [autoCheckTriggerKey, detail?.checks?.allPassed, integration?.id, isRunningChecks, runAutomatedChecks]);
 
   return (
     <Layout>
@@ -1093,14 +1458,8 @@ export default function FeishuConfigWorkspace() {
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>反馈问题</DialogTitle>
-            <DialogDescription className="leading-6">
-              你只需要描述发生了什么。为了方便我们对齐日志排查，系统会自动附带当前账号、集成、组织、页面、步骤和 trace 上下文。
-            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-              建议尽量提到：问题发生在哪一步、你看到了什么现象或报错、它影响了什么。这样我们更容易把你的描述和日志对齐起来。
-            </div>
+          <div>
             <Textarea
               value={feedbackDraft}
               onChange={(event) => setFeedbackDraft(event.target.value)}
@@ -1108,11 +1467,6 @@ export default function FeishuConfigWorkspace() {
               className="min-h-36"
               disabled={isSubmittingFeedback}
             />
-            <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-xs leading-5 text-indigo-900">
-              本次会自动附带：
-              {' '}
-              `userId` / `integrationId` / `orgTargetId` / 当前页面 / 当前步骤 / `setupTraceId`
-            </div>
           </div>
           <DialogFooter>
             <Button
@@ -1137,25 +1491,10 @@ export default function FeishuConfigWorkspace() {
         </DialogContent>
       </Dialog>
 
-      {showCelebration ? (
-        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-slate-950/10 backdrop-blur-[1px]">
-          <div className="relative overflow-hidden rounded-2xl border border-emerald-200 bg-white px-8 py-7 text-center shadow-2xl">
-            {['left-6 top-6 bg-pink-400', 'right-8 top-8 bg-indigo-400', 'left-10 bottom-8 bg-amber-400', 'right-10 bottom-7 bg-emerald-400', 'left-1/2 top-4 bg-sky-400'].map((className) => (
-              <span
-                key={className}
-                className={`absolute h-2.5 w-2.5 rounded-full ${className} animate-ping`}
-              />
-            ))}
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-              <Sparkles className="h-7 w-7" />
-            </div>
-            <div className="text-lg font-semibold text-slate-900">配置完成</div>
-            <p className="mt-2 max-w-sm text-sm leading-6 text-slate-600">
-              系统校验已通过，后续可以自动监听并分析飞书会议。
-            </p>
-          </div>
-        </div>
-      ) : null}
+      {showMobileProcessingVeil ? <MobileProcessingVeil /> : null}
+      {showCelebration ? <MobileCelebrationOverlay /> : null}
+
+      {showCelebration ? <CelebrationDialog /> : null}
 
       <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-6xl flex-col gap-3 py-4 lg:h-[calc(100dvh-4rem)] lg:overflow-hidden lg:py-5">
         <div className="shrink-0 space-y-0.5">
@@ -1195,24 +1534,29 @@ export default function FeishuConfigWorkspace() {
             </div>
           </div>
           <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-xs font-medium text-slate-900">系统校验结果</div>
-              <Badge
-                variant="outline"
-                className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
-              >
-                {displayedChecksPassed ? '全部通过' : '待确认'}
-              </Badge>
-            </div>
-            <div className="mt-2 flex flex-nowrap items-center gap-3 overflow-x-auto pb-1 text-xs whitespace-nowrap">
+            <div className="text-xs font-medium text-slate-900">系统校验结果</div>
+            <div className="mt-2 grid grid-cols-5 gap-1.5">
               {systemCheckItems.map((item) => (
                 <div
                   key={item.label}
-                  className={`flex shrink-0 items-center gap-1.5 ${getCheckStatusTone(item.passed)}`}
+                  title={`${item.label}：${item.value}`}
+                  aria-label={`${item.label}：${item.value}`}
+                  className={`rounded-lg border px-1 py-2 text-center ${getCheckStatusCardTone(item.status)}`}
                 >
-                  <span>{item.label}</span>
-                  <span className="font-medium">{item.value}</span>
+                  <div className="truncate text-[11px] font-medium">{item.shortLabel}</div>
+                  <div className="mt-1 flex justify-center">
+                    <span className={`h-2.5 w-2.5 rounded-full ${getCheckStatusDotTone(item.status)}`} aria-hidden />
+                    <span className="sr-only">{item.value}</span>
+                  </div>
                 </div>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-600">
+              {CHECK_STATUS_LEGEND.map((item) => (
+                <span key={item.status} className="inline-flex items-center gap-1">
+                  <span className={`h-2 w-2 rounded-full ${getCheckStatusDotTone(item.status)}`} aria-hidden />
+                  {item.label}
+                </span>
               ))}
             </div>
           </div>
@@ -1232,7 +1576,7 @@ export default function FeishuConfigWorkspace() {
                   <div className="flex items-center gap-1 text-xs text-slate-500">
                     <span>第 {currentStep} 步</span>
                     <ArrowRight className="h-3 w-3" />
-                    <span>共 4 步</span>
+                    <span>共 5 步</span>
                   </div>
                 </div>
                 <div className="space-y-1">
@@ -1282,30 +1626,30 @@ export default function FeishuConfigWorkspace() {
               <CardContent className="flex h-full min-h-0 flex-col space-y-1.5 p-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-medium text-slate-900">系统校验结果</div>
-                  <div className="flex items-center gap-1.5">
-                    {integration?.id ? (
-                      <Button type="button" variant="ghost" size="sm" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="h-6 px-2 text-xs">
-                        <RefreshCw className={`mr-1 h-3 w-3 ${isRunningChecks ? 'animate-spin' : ''}`} />
-                        刷新
-                      </Button>
-                    ) : null}
-                    <Badge
-                      variant="outline"
-                      className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
-                    >
-                      {displayedChecksPassed ? '全部通过' : '待确认'}
-                    </Badge>
-                  </div>
+                  {integration?.id ? (
+                    <Button type="button" variant="ghost" size="sm" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="h-6 px-2 text-xs">
+                      <RefreshCw className={`mr-1 h-3 w-3 ${isRunningChecks ? 'animate-spin' : ''}`} />
+                      刷新
+                    </Button>
+                  ) : null}
                 </div>
                 <div className="space-y-1 text-xs">
                   {systemCheckItems.map((item) => (
                     <div
                       key={item.label}
-                      className={`flex items-center justify-between ${getCheckStatusTone(item.passed)}`}
+                      className={`flex items-center justify-between ${getCheckStatusTextTone(item.status)}`}
                     >
                       <span>{item.label}</span>
                       <span className="text-xs">{item.value}</span>
                     </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-slate-100 pt-1.5 text-[10px] text-slate-500">
+                  {CHECK_STATUS_LEGEND.map((item) => (
+                    <span key={item.status} className="inline-flex items-center gap-1">
+                      <span className={`h-2 w-2 rounded-full ${getCheckStatusDotTone(item.status)}`} aria-hidden />
+                      {item.label}
+                    </span>
                   ))}
                 </div>
                 {!displayedChecksPassed && detail?.checks?.lastErrorMessage ? (
@@ -1318,18 +1662,6 @@ export default function FeishuConfigWorkspace() {
                     配置已完成，后续可以实现飞书会议的自动监听与分析。
                   </div>
                 ) : null}
-                {user ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsFeedbackDialogOpen(true)}
-                    className="mt-auto w-full"
-                  >
-                    <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-                    反馈问题
-                  </Button>
-                ) : null}
               </CardContent>
             </Card>
           </aside>
@@ -1337,18 +1669,35 @@ export default function FeishuConfigWorkspace() {
           <div className="flex min-h-0 flex-col">
             <Card className="min-h-0 flex-1">
               <CardContent className="flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3">
+                {user || feedbackSuccessMessage ? (
+                  <div className="hidden shrink-0 items-center gap-3 lg:flex">
+                    {feedbackSuccessMessage ? (
+                      <div className="min-w-0 flex-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                        {feedbackSuccessMessage}
+                      </div>
+                    ) : (
+                      <div className="flex-1" />
+                    )}
+                    {user ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsFeedbackDialogOpen(true)}
+                        className="shrink-0"
+                      >
+                        <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+                        反馈问题
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {authLoading ? (
                   <div className="space-y-3">
                     <Skeleton className="h-48 w-full" />
                   </div>
                 ) : (
                   <>
-                    {feedbackSuccessMessage ? (
-                      <div className="hidden shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 lg:block">
-                        {feedbackSuccessMessage}
-                      </div>
-                    ) : null}
-
                     <div id="step-create-app" className={getStepPanelClassName(createStepIsActive)}>
                       <StepHeader
                         step={1}
@@ -1362,7 +1711,6 @@ export default function FeishuConfigWorkspace() {
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-medium text-indigo-900">飞书创建链接已就绪</div>
-                                  <p className="mt-1 text-xs leading-4 text-slate-600">再次点击右侧按钮，会直接跳转到飞书继续完成应用创建。页面会在后台持续等待创建结果。</p>
                                 </div>
                                 <Button type="button" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => openActionLink(verificationUrl)}>
                                   前往飞书创建
@@ -1554,6 +1902,92 @@ export default function FeishuConfigWorkspace() {
                         )}
                       </CardContent>
                     </div>
+
+                    {automaticSetupProgress ? (
+                      <div
+                        id="step-checks"
+                        role="status"
+                        aria-live="polite"
+                        className={`hidden rounded-xl border p-4 lg:block ${
+                          automaticSetupProgress.status === 'success'
+                            ? 'border-emerald-200 bg-emerald-50'
+                            : automaticSetupProgress.status === 'failed'
+                              ? 'border-red-200 bg-red-50'
+                              : 'border-indigo-200 bg-indigo-50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <div
+                              className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                                automaticSetupProgress.status === 'success'
+                                  ? 'bg-emerald-100 text-emerald-600'
+                                  : automaticSetupProgress.status === 'failed'
+                                    ? 'bg-red-100 text-red-600'
+                                    : 'bg-indigo-100 text-indigo-600'
+                              }`}
+                            >
+                              {automaticSetupProgress.status === 'success' ? (
+                                <Check className="h-5 w-5" />
+                              ) : automaticSetupProgress.status === 'failed' ? (
+                                <AlertCircle className="h-5 w-5" />
+                              ) : (
+                                <RefreshCw className="h-5 w-5 animate-spin" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div
+                                className={`text-sm font-semibold ${
+                                  automaticSetupProgress.status === 'success'
+                                    ? 'text-emerald-900'
+                                    : automaticSetupProgress.status === 'failed'
+                                      ? 'text-red-900'
+                                      : 'text-indigo-900'
+                                }`}
+                              >
+                                {automaticSetupProgress.title}
+                              </div>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">
+                                {automaticSetupProgress.description}
+                              </p>
+                            </div>
+                          </div>
+                          {automaticSetupProgress.status === 'running' ? (
+                            <Badge className="shrink-0 bg-indigo-100 text-indigo-700">系统处理中</Badge>
+                          ) : null}
+                          {automaticSetupProgress.status === 'failed' && integration?.id ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void runAutomatedChecks(integration.id)}
+                              disabled={isRunningChecks}
+                              className="shrink-0 border-red-200 bg-white text-red-700 hover:bg-red-50"
+                            >
+                              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${isRunningChecks ? 'animate-spin' : ''}`} />
+                              重新检查
+                            </Button>
+                          ) : null}
+                        </div>
+                        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/80">
+                          <div
+                            className={`h-full rounded-full transition-all duration-700 ${
+                              automaticSetupProgress.status === 'success'
+                                ? 'bg-emerald-500'
+                                : automaticSetupProgress.status === 'failed'
+                                  ? 'bg-red-500'
+                                  : 'bg-indigo-500'
+                            }`}
+                            style={{ width: `${automaticSetupProgress.progress}%` }}
+                          />
+                        </div>
+                        {automaticSetupProgress.status === 'running' ? (
+                          <p className="mt-2 text-[11px] text-slate-500">
+                            无需继续操作，请保持页面打开；全部完成后系统会自动提示。
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                   </>
                 )}
