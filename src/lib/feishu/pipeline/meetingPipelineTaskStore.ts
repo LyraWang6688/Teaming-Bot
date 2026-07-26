@@ -18,6 +18,8 @@ export type MeetingPipelineTaskStatus =
 export type MeetingPipelineTaskPayload = {
   reportUrl?: string;
   meetingName?: string;
+  skippedReason?: 'integration_inactive';
+  skippedAt?: string;
   target?: {
     projectId: string;
     orgTargetId: string;

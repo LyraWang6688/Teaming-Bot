@@ -502,6 +502,56 @@ export default function FeishuConfigWorkspace() {
   );
 
   const setupComplete = eventSubscriptionPassed;
+  const automaticSetupProgress = useMemo(() => {
+    const baseStatus = getCheckVisualStatus(detail?.checks?.baseStatus);
+    const eventStatus = getEventCheckVisualStatus(detail?.checks);
+
+    if (!selectedOrgTargetId) {
+      return null;
+    }
+    if (baseStatus === 'failed') {
+      return {
+        status: 'failed' as const,
+        title: '目标表格校验失败',
+        description:
+          detail?.checks?.lastErrorMessage ||
+          '系统暂时无法访问目标多维表格，请检查权限后重新校验。',
+        progress: 60,
+      };
+    }
+    if (baseStatus !== 'success') {
+      return {
+        status: 'running' as const,
+        title: '正在校验目标表格',
+        description: '系统正在确认当前飞书账号和应用能否读取所选组织的多维表格。',
+        progress: 60,
+      };
+    }
+    if (eventStatus === 'failed') {
+      return {
+        status: 'failed' as const,
+        title: '事件监听配置失败',
+        description:
+          detail?.checks?.lastErrorMessage ||
+          '目标表格已通过校验，但事件订阅或长连接暂时未能建立。',
+        progress: 80,
+      };
+    }
+    if (eventStatus !== 'success') {
+      return {
+        status: 'running' as const,
+        title: '正在配置自动监听',
+        description: '目标表格已通过校验，系统正在检查权限、订阅妙记事件并建立长连接。',
+        progress: 80,
+      };
+    }
+    return {
+      status: 'success' as const,
+      title: '自动配置已完成',
+      description: '目标表格与事件监听均已就绪，后续会议将自动进入分析流程。',
+      progress: 100,
+    };
+  }, [detail?.checks, selectedOrgTargetId]);
   const completedActionSteps = useMemo(
     () =>
       [Boolean(integration), detail?.authorization?.status === 'authorized', Boolean(selectedOrgTargetId)].filter(Boolean)
@@ -1603,6 +1653,92 @@ export default function FeishuConfigWorkspace() {
                         )}
                       </CardContent>
                     </div>
+
+                    {automaticSetupProgress ? (
+                      <div
+                        id="step-checks"
+                        role="status"
+                        aria-live="polite"
+                        className={`hidden rounded-xl border p-4 lg:block ${
+                          automaticSetupProgress.status === 'success'
+                            ? 'border-emerald-200 bg-emerald-50'
+                            : automaticSetupProgress.status === 'failed'
+                              ? 'border-red-200 bg-red-50'
+                              : 'border-indigo-200 bg-indigo-50'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex min-w-0 items-start gap-3">
+                            <div
+                              className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${
+                                automaticSetupProgress.status === 'success'
+                                  ? 'bg-emerald-100 text-emerald-600'
+                                  : automaticSetupProgress.status === 'failed'
+                                    ? 'bg-red-100 text-red-600'
+                                    : 'bg-indigo-100 text-indigo-600'
+                              }`}
+                            >
+                              {automaticSetupProgress.status === 'success' ? (
+                                <Check className="h-5 w-5" />
+                              ) : automaticSetupProgress.status === 'failed' ? (
+                                <AlertCircle className="h-5 w-5" />
+                              ) : (
+                                <RefreshCw className="h-5 w-5 animate-spin" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div
+                                className={`text-sm font-semibold ${
+                                  automaticSetupProgress.status === 'success'
+                                    ? 'text-emerald-900'
+                                    : automaticSetupProgress.status === 'failed'
+                                      ? 'text-red-900'
+                                      : 'text-indigo-900'
+                                }`}
+                              >
+                                {automaticSetupProgress.title}
+                              </div>
+                              <p className="mt-1 text-xs leading-5 text-slate-600">
+                                {automaticSetupProgress.description}
+                              </p>
+                            </div>
+                          </div>
+                          {automaticSetupProgress.status === 'running' ? (
+                            <Badge className="shrink-0 bg-indigo-100 text-indigo-700">系统处理中</Badge>
+                          ) : null}
+                          {automaticSetupProgress.status === 'failed' && integration?.id ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void runAutomatedChecks(integration.id)}
+                              disabled={isRunningChecks}
+                              className="shrink-0 border-red-200 bg-white text-red-700 hover:bg-red-50"
+                            >
+                              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${isRunningChecks ? 'animate-spin' : ''}`} />
+                              重新检查
+                            </Button>
+                          ) : null}
+                        </div>
+                        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/80">
+                          <div
+                            className={`h-full rounded-full transition-all duration-700 ${
+                              automaticSetupProgress.status === 'success'
+                                ? 'bg-emerald-500'
+                                : automaticSetupProgress.status === 'failed'
+                                  ? 'bg-red-500'
+                                  : 'bg-indigo-500'
+                            }`}
+                            style={{ width: `${automaticSetupProgress.progress}%` }}
+                          />
+                        </div>
+                        {automaticSetupProgress.status === 'running' ? (
+                          <p className="mt-2 text-[11px] text-slate-500">
+                            无需继续操作，请保持页面打开；全部完成后系统会自动提示。
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
 
                   </>
                 )}
