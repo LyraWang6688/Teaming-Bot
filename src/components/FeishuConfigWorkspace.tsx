@@ -126,8 +126,15 @@ type ActiveOrgTargetsResponse = {
   targets: OrgTargetView[];
 };
 
+type PendingAppRegistrationSession = {
+  sessionToken: string;
+  verificationUrl: string;
+  expiresAt: string;
+};
+
 const INTEGRATION_LIST_CACHE_TTL_MS = 3_000;
 const INTEGRATION_DETAIL_CACHE_TTL_MS = 1_500;
+const APP_REGISTRATION_SESSION_STORAGE_KEY = 'feishu-config:app-registration-session';
 const FAILED_CHECK_STATUSES = new Set([
   'denied',
   'error',
@@ -368,6 +375,50 @@ function createSetupTraceId() {
     return crypto.randomUUID();
   }
   return `setup-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function readPendingAppRegistrationSession(): PendingAppRegistrationSession | null {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.sessionStorage.getItem(APP_REGISTRATION_SESSION_STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<PendingAppRegistrationSession>;
+    if (
+      typeof parsed.sessionToken !== 'string' ||
+      typeof parsed.verificationUrl !== 'string' ||
+      typeof parsed.expiresAt !== 'string'
+    ) {
+      window.sessionStorage.removeItem(APP_REGISTRATION_SESSION_STORAGE_KEY);
+      return null;
+    }
+
+    const expiresAt = new Date(parsed.expiresAt);
+    if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
+      window.sessionStorage.removeItem(APP_REGISTRATION_SESSION_STORAGE_KEY);
+      return null;
+    }
+
+    return {
+      sessionToken: parsed.sessionToken,
+      verificationUrl: parsed.verificationUrl,
+      expiresAt: parsed.expiresAt,
+    };
+  } catch {
+    window.sessionStorage.removeItem(APP_REGISTRATION_SESSION_STORAGE_KEY);
+    return null;
+  }
+}
+
+function writePendingAppRegistrationSession(session: PendingAppRegistrationSession) {
+  if (typeof window === 'undefined') return;
+  window.sessionStorage.setItem(APP_REGISTRATION_SESSION_STORAGE_KEY, JSON.stringify(session));
+}
+
+function clearPendingAppRegistrationSession() {
+  if (typeof window === 'undefined') return;
+  window.sessionStorage.removeItem(APP_REGISTRATION_SESSION_STORAGE_KEY);
 }
 
 function StepHeader(props: {
@@ -640,6 +691,7 @@ export default function FeishuConfigWorkspace() {
   const [feedbackSuccessMessage, setFeedbackSuccessMessage] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const authorizePollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeAppRegistrationSessionRef = useRef<string | null>(null);
 
   const getSetupTraceId = useCallback(() => {
     if (!setupTraceIdRef.current) {
@@ -653,7 +705,14 @@ export default function FeishuConfigWorkspace() {
     'x-setup-trace-id': getSetupTraceId(),
   }), [getSetupTraceId]);
 
-  const openActionLink = useCallback((url: string) => {
+  const openActionLink = useCallback((url: string, options?: { newTab?: boolean }) => {
+    if (options?.newTab) {
+      const popup = window.open(url, '_blank', 'noopener,noreferrer');
+      if (popup) {
+        popup.opener = null;
+        return;
+      }
+    }
     window.location.href = url;
   }, []);
 
@@ -1078,11 +1137,103 @@ export default function FeishuConfigWorkspace() {
     [integration, loadIntegrationList, loadIntegrationSnapshot]
   );
 
+  const stopCreateAppPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    activeAppRegistrationSessionRef.current = null;
+  }, []);
+
+  const startCreateAppPolling = useCallback(
+    (session: PendingAppRegistrationSession) => {
+      stopCreateAppPolling();
+      activeAppRegistrationSessionRef.current = session.sessionToken;
+      setVerificationUrl(session.verificationUrl);
+
+      const poll = async () => {
+        try {
+          const pollRes = await fetch('/api/feishu/integrations/register/poll', {
+            method: 'POST',
+            headers: setupHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ sessionToken: session.sessionToken }),
+          });
+          const pollData = await pollRes.json();
+          const status = pollData?.data?.status || pollData?.status;
+
+          if (status === 'completed') {
+            stopCreateAppPolling();
+            clearPendingAppRegistrationSession();
+            setVerificationUrl(null);
+            const completedIntegration = pollData?.data?.integration as IntegrationView | undefined;
+            const completedIntegrationId = pollData?.data?.integrationId as string | undefined;
+            if (completedIntegration) {
+              setIntegration(completedIntegration);
+            }
+            if (completedIntegrationId) {
+              await loadIntegrationDetail(completedIntegrationId, { force: true });
+            } else {
+              await loadIntegrationDetail(null, { force: true, refreshList: true });
+            }
+          } else if (
+            status === 'failed' ||
+            status === 'error' ||
+            status === 'denied' ||
+            status === 'expired'
+          ) {
+            stopCreateAppPolling();
+            clearPendingAppRegistrationSession();
+            setVerificationUrl(null);
+            setPageError(pollData?.data?.error || pollData?.error || '创建失败');
+          }
+        } catch (e) {
+          logClientMonitor('warn', 'feishu_config_workspace', 'register_poll_request_failed', {
+            ...toClientErrorContext(e),
+            setupTraceId: getSetupTraceId(),
+          });
+        }
+      };
+
+      void poll();
+      pollRef.current = setInterval(() => {
+        void poll();
+      }, 3000);
+    },
+    [getSetupTraceId, loadIntegrationDetail, setupHeaders, stopCreateAppPolling]
+  );
+
   useEffect(() => {
     if (user) {
       void loadIntegrationDetail(requestedIntegrationId);
     }
   }, [loadIntegrationDetail, requestedIntegrationId, user]);
+
+  useEffect(() => {
+    if (!user || integration) {
+      return;
+    }
+
+    const pendingSession = readPendingAppRegistrationSession();
+    if (!pendingSession) {
+      return;
+    }
+
+    if (activeAppRegistrationSessionRef.current === pendingSession.sessionToken) {
+      return;
+    }
+
+    startCreateAppPolling(pendingSession);
+  }, [integration, startCreateAppPolling, user]);
+
+  useEffect(() => {
+    return () => {
+      stopCreateAppPolling();
+      if (authorizePollRef.current) {
+        clearTimeout(authorizePollRef.current);
+        authorizePollRef.current = null;
+      }
+    };
+  }, [stopCreateAppPolling]);
 
   const autoCheckTriggerKey = useMemo(() => {
     if (!integration?.id) return '';
@@ -1125,6 +1276,8 @@ export default function FeishuConfigWorkspace() {
     setIsCreatingApp(true);
     setPageError(null);
     setVerificationUrl(null);
+    clearPendingAppRegistrationSession();
+    stopCreateAppPolling();
     try {
       const result = await parseJsonResponse<{
         verificationUrl: string;
@@ -1138,55 +1291,13 @@ export default function FeishuConfigWorkspace() {
       
       setVerificationUrl(result.verificationUrl);
       setUser(result.user);
-      
-      const intervalMs = 3000;
-      
-      const poll = async () => {
-        try {
-          const pollRes = await fetch('/api/feishu/integrations/register/poll', {
-            method: 'POST',
-            headers: setupHeaders({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ sessionToken: result.sessionToken }),
-          });
-          const pollData = await pollRes.json();
-          const status = pollData?.data?.status || pollData?.status;
-          
-          if (status === 'completed') {
-            if (pollRef.current) {
-              clearInterval(pollRef.current);
-              pollRef.current = null;
-            }
-            setVerificationUrl(null);
-            const completedIntegration = pollData?.data?.integration as IntegrationView | undefined;
-            const completedIntegrationId = pollData?.data?.integrationId as string | undefined;
-            if (completedIntegration) {
-              setIntegration(completedIntegration);
-            }
-            if (completedIntegrationId) {
-              await loadIntegrationDetail(completedIntegrationId, { force: true });
-            }
-          } else if (
-            status === 'failed' ||
-            status === 'error' ||
-            status === 'denied' ||
-            status === 'expired'
-          ) {
-            if (pollRef.current) {
-              clearInterval(pollRef.current);
-              pollRef.current = null;
-            }
-            setVerificationUrl(null);
-            setPageError(pollData?.data?.error || pollData?.error || '创建失败');
-          }
-        } catch (e) {
-          logClientMonitor('warn', 'feishu_config_workspace', 'register_poll_request_failed', {
-            ...toClientErrorContext(e),
-            setupTraceId: getSetupTraceId(),
-          });
-        }
+      const pendingSession = {
+        sessionToken: result.sessionToken,
+        verificationUrl: result.verificationUrl,
+        expiresAt: result.expiresAt,
       };
-      
-      pollRef.current = setInterval(poll, intervalMs);
+      writePendingAppRegistrationSession(pendingSession);
+      startCreateAppPolling(pendingSession);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : '创建应用失败。');
     } finally {
@@ -1712,7 +1823,7 @@ export default function FeishuConfigWorkspace() {
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-medium text-indigo-900">飞书创建链接已就绪</div>
                                 </div>
-                                <Button type="button" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => openActionLink(verificationUrl)}>
+                                <Button type="button" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => openActionLink(verificationUrl, { newTab: true })}>
                                   前往飞书创建
                                 </Button>
                               </div>
@@ -1795,7 +1906,7 @@ export default function FeishuConfigWorkspace() {
                                     )}
                                   </div>
                                   <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-                                    <Button type="button" size="sm" onClick={() => openActionLink(authorizeUrl)} className="w-full sm:w-auto">
+                                    <Button type="button" size="sm" onClick={() => openActionLink(authorizeUrl, { newTab: true })} className="w-full sm:w-auto">
                                       前往飞书授权
                                     </Button>
                                     <Button
