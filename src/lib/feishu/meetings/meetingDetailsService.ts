@@ -1,32 +1,12 @@
 import { FeishuOpenApiError } from '../common/openapi';
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { callFeishuIntegrationUserOpenApi } from '../integration/integrationOpenApi';
-import {
-  getLatestFeishuAuthorization,
-  type FeishuIntegrationContext,
-  writeAuditLog,
-} from '../integration/integrationStore';
-import {
-  MEETING_DETAIL_STATUS,
-  MeetingDetailsError,
-  type MeetingDetails,
-  type MeetingDetailStatus,
-} from './meetingDetailsTypes';
-
-type RawMeetingUser = {
-  id?: unknown;
-};
+import { type FeishuIntegrationContext, writeAuditLog } from '../integration/integrationStore';
+import { MeetingDetailsError, type MeetingDetails } from './meetingDetailsTypes';
 
 type RawMeeting = {
   id?: unknown;
   topic?: unknown;
-  url?: unknown;
-  status?: unknown;
-  create_time?: unknown;
-  start_time?: unknown;
-  end_time?: unknown;
-  host_user?: RawMeetingUser;
-  note_id?: unknown;
 };
 
 type MeetingDetailsResponse = {
@@ -37,52 +17,13 @@ function asString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-function fromUnixSeconds(value: unknown): Date | null {
-  const normalized =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && value.trim()
-        ? Number(value)
-        : Number.NaN;
-
-  if (!Number.isFinite(normalized) || normalized <= 0) {
-    return null;
-  }
-
-  const date = new Date(normalized * 1000);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function mapMeetingStatus(value: unknown): MeetingDetailStatus {
-  const normalized = typeof value === 'number' ? value : Number(value);
-  if (normalized === 1) return MEETING_DETAIL_STATUS.calling;
-  if (normalized === 2) return MEETING_DETAIL_STATUS.ongoing;
-  if (normalized === 3) return MEETING_DETAIL_STATUS.ended;
-  return MEETING_DETAIL_STATUS.unknown;
-}
-
 function mapMeetingDetails(
   meetingId: string,
-  meeting: RawMeeting,
-  authorizedOpenId: string | null,
-  authorizedUserName: string | null
+  meeting: RawMeeting
 ): MeetingDetails {
-  const hostOpenId = asString(meeting.host_user?.id);
-
   return {
     meetingId: asString(meeting.id) || meetingId,
     topic: asString(meeting.topic),
-    meetingUrl: asString(meeting.url),
-    status: mapMeetingStatus(meeting.status),
-    createdAt: fromUnixSeconds(meeting.create_time),
-    startedAt: fromUnixSeconds(meeting.start_time),
-    endedAt: fromUnixSeconds(meeting.end_time),
-    hostOpenId,
-    hostName:
-      hostOpenId && authorizedOpenId && hostOpenId === authorizedOpenId
-        ? authorizedUserName
-        : null,
-    noteId: asString(meeting.note_id),
   };
 }
 
@@ -123,19 +64,14 @@ export async function fetchMeetingDetails(
 
   try {
     const query = new URLSearchParams({
-      with_participants: 'false',
-      with_meeting_ability: 'false',
       user_id_type: 'open_id',
       query_mode: '0',
     });
-    const [response, authorization] = await Promise.all([
-      callFeishuIntegrationUserOpenApi<MeetingDetailsResponse>(
-        integration,
-        'GET',
-        `/vc/v1/meetings/${encodeURIComponent(meetingId)}?${query.toString()}`
-      ),
-      getLatestFeishuAuthorization(integration.id),
-    ]);
+    const response = await callFeishuIntegrationUserOpenApi<MeetingDetailsResponse>(
+      integration,
+      'GET',
+      `/vc/v1/meetings/${encodeURIComponent(meetingId)}?${query.toString()}`
+    );
 
     if (!response.meeting) {
       throw new MeetingDetailsError(
@@ -144,12 +80,7 @@ export async function fetchMeetingDetails(
       );
     }
 
-    const details = mapMeetingDetails(
-      meetingId,
-      response.meeting,
-      authorization?.authorizedOpenId || null,
-      authorization?.authorizedUserName || null
-    );
+    const details = mapMeetingDetails(meetingId, response.meeting);
 
     await writeAuditLog({
       userId: integration.userId,
@@ -160,8 +91,6 @@ export async function fetchMeetingDetails(
       metadata: {
         meetingId,
         hasTopic: Boolean(details.topic),
-        hasMeetingTime: Boolean(details.startedAt || details.endedAt),
-        hasResolvedHostName: Boolean(details.hostName),
         durationMs: Date.now() - startedAt,
       },
     });
@@ -170,8 +99,6 @@ export async function fetchMeetingDetails(
       integrationId: integration.id,
       meetingId,
       hasTopic: Boolean(details.topic),
-      hasMeetingTime: Boolean(details.startedAt || details.endedAt),
-      hasResolvedHostName: Boolean(details.hostName),
       durationMs: Date.now() - startedAt,
     });
     return details;

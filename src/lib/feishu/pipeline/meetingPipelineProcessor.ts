@@ -105,7 +105,6 @@ const PIPELINE_RETRY_DELAY_MS = 30_000;
 const ENABLE_STARTUP_RECOVERY =
   process.env.FEISHU_ENABLE_STARTUP_RECOVERY !== 'false';
 const STARTUP_RECOVERY_LIMIT = 50;
-const REPORT_TIME_ZONE = 'Asia/Shanghai';
 
 let hasStartedRecoveryScan = false;
 
@@ -118,44 +117,13 @@ function getTargetFromPayload(payload: Record<string, unknown>): string | undefi
   return asString(target.orgTargetId);
 }
 
-function formatMeetingDateTime(value: Date): string {
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone: REPORT_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(value);
-}
-
-function formatMeetingTime(startedAt: Date | null, endedAt: Date | null): string | undefined {
-  if (!startedAt && !endedAt) {
-    return undefined;
-  }
-
-  if (startedAt && endedAt) {
-    return `${formatMeetingDateTime(startedAt)}–${formatMeetingDateTime(endedAt)}`;
-  }
-
-  return formatMeetingDateTime((startedAt || endedAt) as Date);
-}
-
 function buildMeetingBaseFields(
   context: Pick<MinuteGeneratedSource, 'meetingDetails'>
 ): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   const meetingName = context.meetingDetails?.topic;
-  const meetingTime = formatMeetingTime(
-    context.meetingDetails?.startedAt || null,
-    context.meetingDetails?.endedAt || null
-  );
-  const hostName = context.meetingDetails?.hostName;
 
   if (meetingName) fields['会议名称'] = meetingName;
-  if (meetingTime) fields['会议时间'] = meetingTime;
-  if (hostName) fields['主持人'] = hostName;
   return fields;
 }
 
@@ -904,8 +872,6 @@ async function completeMeetingAnalysis(
       integration: context.integration,
       meetingId: context.meetingId,
       meetingName: context.meetingDetails?.topic ?? null,
-      startedAt: context.meetingDetails?.startedAt || null,
-      endedAt: context.meetingDetails?.endedAt || null,
       recordId: record.recordId,
       reportUrl,
     });
@@ -1016,11 +982,6 @@ async function ensureMinuteRecord(
     return upsertMeetingWaitingRecord(config, {
       meetingId: context.meetingId,
       meetingName: context.meetingDetails?.topic || undefined,
-      meetingTime: formatMeetingTime(
-        context.meetingDetails?.startedAt || null,
-        context.meetingDetails?.endedAt || null
-      ),
-      hostName: context.meetingDetails?.hostName || undefined,
     });
   }
 

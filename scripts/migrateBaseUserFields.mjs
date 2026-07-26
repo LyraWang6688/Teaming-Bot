@@ -9,8 +9,6 @@ import {
 
 const REQUIRED_FIELDS = [
   { fieldName: '会议名称', type: 1 },
-  { fieldName: '会议时间', type: 1 },
-  { fieldName: '主持人', type: 1 },
 ];
 const INTERNAL_FIELDS = new Set(['JSON数据', '错误信息']);
 

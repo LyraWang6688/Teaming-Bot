@@ -31,16 +31,7 @@ function meetingDetailsFields(details?: MeetingDetails | null) {
     return {};
   }
 
-  return {
-    hostOpenId: details.hostOpenId,
-    hostName: details.hostName,
-    meetingUrl: details.meetingUrl,
-    meetingStatus: details.status,
-    meetingCreatedAt: details.createdAt,
-    meetingStartedAt: details.startedAt,
-    meetingEndedAt: details.endedAt,
-    noteId: details.noteId,
-  };
+  return {};
 }
 
 export async function getMeetingRecordByIntegrationAndMeeting(
