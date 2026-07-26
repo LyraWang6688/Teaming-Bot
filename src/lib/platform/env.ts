@@ -45,5 +45,10 @@ export function getAppEncryptionKey(): string {
 }
 
 export function getDefaultFeishuOauthScope(): string {
-  return (process.env.FEISHU_USER_OAUTH_SCOPE || FEISHU_REQUIRED_USER_SCOPE).trim();
+  const configuredScopes = (process.env.FEISHU_USER_OAUTH_SCOPE || '')
+    .split(/\s+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  const requiredScopes = FEISHU_REQUIRED_USER_SCOPE.split(/\s+/).filter(Boolean);
+  return Array.from(new Set([...requiredScopes, ...configuredScopes])).join(' ');
 }

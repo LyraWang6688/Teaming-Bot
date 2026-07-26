@@ -7,7 +7,37 @@ import {
   writeAuditLog,
 } from '../integration/integrationStore';
 
-function buildReportCardContent(meetingId: string, reportUrl: string): string {
+const REPORT_TIME_ZONE = 'Asia/Shanghai';
+
+function formatMeetingDateTime(value: Date): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: REPORT_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(value);
+}
+
+function formatMeetingTime(startedAt: Date | null, endedAt: Date | null): string {
+  if (startedAt && endedAt) {
+    return `${formatMeetingDateTime(startedAt)}–${formatMeetingDateTime(endedAt)}`;
+  }
+  if (startedAt || endedAt) {
+    return formatMeetingDateTime((startedAt || endedAt) as Date);
+  }
+  return '时间待同步';
+}
+
+function buildReportCardContent(options: {
+  meetingName: string;
+  startedAt: Date | null;
+  endedAt: Date | null;
+  reportUrl: string;
+}): string {
+  const { meetingName, startedAt, endedAt, reportUrl } = options;
   return JSON.stringify({
     config: {
       wide_screen_mode: true,
@@ -22,7 +52,10 @@ function buildReportCardContent(meetingId: string, reportUrl: string): string {
     elements: [
       {
         tag: 'markdown',
-          content: `**会议ID：**${meetingId}`,
+        content: [
+          `**会议名称：**${meetingName}`,
+          `**会议时间：**${formatMeetingTime(startedAt, endedAt)}`,
+        ].join('\n'),
       },
       {
         tag: 'action',
@@ -45,10 +78,21 @@ function buildReportCardContent(meetingId: string, reportUrl: string): string {
 export async function sendMeetingReportNotification(options: {
   integration: FeishuIntegrationContext;
   meetingId: string;
+  meetingName: string;
+  startedAt: Date | null;
+  endedAt: Date | null;
   recordId: string;
   reportUrl: string;
 }): Promise<void> {
-  const { integration, meetingId, recordId, reportUrl } = options;
+  const {
+    integration,
+    meetingId,
+    meetingName,
+    startedAt,
+    endedAt,
+    recordId,
+    reportUrl,
+  } = options;
   const authorization = await getLatestFeishuAuthorization(integration.id);
   const authorizedOpenId = authorization?.authorizedOpenId || null;
   const maskedAuthorizedOpenId = maskSecret(authorizedOpenId);
@@ -99,7 +143,12 @@ export async function sendMeetingReportNotification(options: {
       data: {
         receive_id: authorizedOpenId,
         msg_type: 'interactive',
-          content: buildReportCardContent(meetingId, reportUrl),
+        content: buildReportCardContent({
+          meetingName,
+          startedAt,
+          endedAt,
+          reportUrl,
+        }),
       },
     });
 

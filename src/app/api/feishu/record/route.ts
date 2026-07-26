@@ -11,6 +11,7 @@ import {
 import { getFeishuIntegrationContextById } from '@/lib/feishu/integration/integrationStore';
 import { getOrgTargetContextById } from '@/lib/feishu/projects/projectConfigStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
+import { getMeetingRecordByLegacyReference } from '@/lib/reports/meetingReportStore';
 
 export async function GET(request: NextRequest) {
   try {
@@ -35,6 +36,29 @@ export async function GET(request: NextRequest) {
         { error: '缺少 orgTargetId 参数，无法定位对应组织的多维表格。' },
         { status: 400 }
       );
+    }
+
+    const persisted = await getMeetingRecordByLegacyReference(integrationId, recordId);
+    if (persisted?.analysisResult) {
+      logRuntimeMonitor('info', 'feishu_record_api', 'legacy_report_loaded_from_database', {
+        recordId,
+        integrationId,
+        orgTargetId,
+        reportPublicId: persisted.reportPublicId,
+        meetingRecordId: persisted.id,
+      });
+      return NextResponse.json({
+        success: true,
+        data: {
+          recordId,
+          meetingId: persisted.feishuMeetingId,
+          processStatus: persisted.status,
+          summary: persisted.analysisSummary,
+          reportUrl: persisted.reportUrl,
+          analysisData: persisted.analysisResult,
+          reportPublicId: persisted.reportPublicId,
+        },
+      });
     }
 
     const integration = await getFeishuIntegrationContextById(integrationId);
