@@ -22,6 +22,7 @@ import {
   type FeishuIntegrationContext,
   getFeishuIntegrationContextById,
 } from '../integration/integrationStore';
+import { isFeishuIntegrationActive } from '../integration/integrationActivationService';
 import {
   completeMeetingPipelineTask,
   failMeetingPipelineTask,
@@ -865,6 +866,23 @@ export async function runMeetingPipelineTask(taskId: string) {
       taskId: task.id,
       integrationId: task.integrationId,
       meetingId: task.feishuMeetingId,
+    });
+    return;
+  }
+
+  if (!(await isFeishuIntegrationActive(integration.id))) {
+    await completeMeetingPipelineTask(task.id, {
+      payload: {
+        skippedReason: 'integration_inactive',
+        skippedAt: new Date().toISOString(),
+      },
+    });
+    logFeishuMonitor('info', 'inactive_integration_task_skipped', {
+      taskId: task.id,
+      integrationId: integration.id,
+      meetingId: task.feishuMeetingId,
+      eventId: task.eventId,
+      message: '任务所属集成已被同一 Union ID 和组织下的更新集成取代。',
     });
     return;
   }
