@@ -1213,7 +1213,9 @@ export async function runMeetingPipelineTask(taskId: string) {
     return;
   }
 
-  const integration = await getFeishuIntegrationContextById(task.integrationId);
+  const integration = await getFeishuIntegrationContextById(task.integrationId, {
+    includeDeleted: true,
+  });
   if (!integration) {
     await failMeetingPipelineTask(task.id, {
       currentStage: task.currentStage as typeof FEISHU_PROCESS_STATUS[keyof typeof FEISHU_PROCESS_STATUS],

@@ -61,7 +61,9 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const integration = await getFeishuIntegrationContextById(integrationId);
+    const integration = await getFeishuIntegrationContextById(integrationId, {
+      includeDeleted: true,
+    });
     if (!integration) {
       return NextResponse.json({ error: '未找到对应的飞书集成配置' }, { status: 404 });
     }

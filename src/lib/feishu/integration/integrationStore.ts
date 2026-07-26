@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
 import { getDb } from '@/lib/db/client';
 import {
   feishuAuditLogs,
@@ -6,6 +6,7 @@ import {
   feishuIntegrationChecks,
   feishuIntegrations,
   feishuOauthStates,
+  users,
   type FeishuAuthorizationRow,
   type FeishuIntegrationCheckRow,
   type FeishuIntegrationRow,
@@ -94,6 +95,14 @@ export type FeishuCheckStatusView = {
   lastErrorType: string | null;
   lastErrorMessage: string | null;
   details: Record<string, unknown>;
+};
+
+export type FeishuIntegrationCleanupResult = {
+  integrationId: string;
+  userId: string;
+  selectedOrgTargetId: string | null;
+  feishuUnionId: string | null;
+  reason: 'stale_incomplete' | 'superseded_inactive';
 };
 
 type CreateIntegrationInput = {
@@ -421,13 +430,17 @@ export async function getUserFeishuIntegrationContext(
 }
 
 export async function getFeishuIntegrationContextById(
-  integrationId: string
+  integrationId: string,
+  options: { includeDeleted?: boolean } = {}
 ): Promise<FeishuIntegrationContext | null> {
   const db = getDb();
+  const whereClause = options.includeDeleted
+    ? eq(feishuIntegrations.id, integrationId)
+    : and(eq(feishuIntegrations.id, integrationId), isNull(feishuIntegrations.deletedAt));
   const [row] = await db
     .select()
     .from(feishuIntegrations)
-    .where(and(eq(feishuIntegrations.id, integrationId), isNull(feishuIntegrations.deletedAt)))
+    .where(whereClause)
     .limit(1);
 
   return row ? mapIntegrationContext(row) : null;
@@ -464,6 +477,135 @@ export async function listActiveFeishuIntegrationContextsWithBase(): Promise<Fei
     .orderBy(desc(feishuIntegrations.updatedAt));
 
   return rows.map(mapIntegrationContext);
+}
+
+export async function cleanupStaleIncompleteFeishuIntegrations(options: {
+  cutoff: Date;
+}): Promise<FeishuIntegrationCleanupResult[]> {
+  const db = getDb();
+  const candidates = await db
+    .select({
+      integrationId: feishuIntegrations.id,
+      userId: feishuIntegrations.userId,
+      selectedOrgTargetId: feishuIntegrations.selectedOrgTargetId,
+      feishuUnionId: users.feishuUnionId,
+    })
+    .from(feishuIntegrations)
+    .leftJoin(users, eq(feishuIntegrations.userId, users.id))
+    .where(
+      and(
+        isNull(feishuIntegrations.deletedAt),
+        isNull(feishuIntegrations.initializedAt),
+        eq(feishuIntegrations.status, 'draft'),
+        lt(feishuIntegrations.updatedAt, options.cutoff)
+      )
+    );
+
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const now = new Date();
+  const integrationIds = candidates.map((candidate) => candidate.integrationId);
+  await db
+    .update(feishuIntegrations)
+    .set({
+      deletedAt: now,
+      isActive: false,
+      updatedAt: now,
+    })
+    .where(inArray(feishuIntegrations.id, integrationIds));
+
+  await Promise.all(
+    candidates.map((candidate) =>
+      writeAuditLog({
+        userId: candidate.userId,
+        integrationId: candidate.integrationId,
+        action: 'integration.cleanup.stale_incomplete',
+        result: 'success',
+        summary: '定时清理长时间未完成初始化的飞书集成',
+        metadata: {
+          selectedOrgTargetId: candidate.selectedOrgTargetId,
+          feishuUnionId: candidate.feishuUnionId,
+          cutoff: options.cutoff.toISOString(),
+        },
+      })
+    )
+  );
+
+  return candidates.map((candidate) => ({
+    integrationId: candidate.integrationId,
+    userId: candidate.userId,
+    selectedOrgTargetId: candidate.selectedOrgTargetId,
+    feishuUnionId: candidate.feishuUnionId,
+    reason: 'stale_incomplete',
+  }));
+}
+
+export async function cleanupSupersededInactiveFeishuIntegrations(options: {
+  cutoff: Date;
+}): Promise<FeishuIntegrationCleanupResult[]> {
+  const db = getDb();
+  const candidates = await db
+    .select({
+      integrationId: feishuIntegrations.id,
+      userId: feishuIntegrations.userId,
+      selectedOrgTargetId: feishuIntegrations.selectedOrgTargetId,
+      feishuUnionId: users.feishuUnionId,
+      supersededByIntegrationId: feishuIntegrations.supersededByIntegrationId,
+    })
+    .from(feishuIntegrations)
+    .leftJoin(users, eq(feishuIntegrations.userId, users.id))
+    .where(
+      and(
+        isNull(feishuIntegrations.deletedAt),
+        eq(feishuIntegrations.isActive, false),
+        isNotNull(feishuIntegrations.selectedOrgTargetId),
+        isNotNull(feishuIntegrations.supersededByIntegrationId),
+        lt(feishuIntegrations.updatedAt, options.cutoff)
+      )
+    );
+
+  if (candidates.length === 0) {
+    return [];
+  }
+
+  const now = new Date();
+  const integrationIds = candidates.map((candidate) => candidate.integrationId);
+  await db
+    .update(feishuIntegrations)
+    .set({
+      deletedAt: now,
+      isActive: false,
+      updatedAt: now,
+    })
+    .where(inArray(feishuIntegrations.id, integrationIds));
+
+  await Promise.all(
+    candidates.map((candidate) =>
+      writeAuditLog({
+        userId: candidate.userId,
+        integrationId: candidate.integrationId,
+        action: 'integration.cleanup.superseded_inactive',
+        result: 'success',
+        summary: '定时清理同一 Union ID 与组织下已失活的飞书集成',
+        metadata: {
+          selectedOrgTargetId: candidate.selectedOrgTargetId,
+          feishuUnionId: candidate.feishuUnionId,
+          supersededByIntegrationId: candidate.supersededByIntegrationId,
+          cutoff: options.cutoff.toISOString(),
+        },
+      })
+    )
+  );
+
+  return candidates.map((candidate) => ({
+    integrationId: candidate.integrationId,
+    userId: candidate.userId,
+    selectedOrgTargetId: candidate.selectedOrgTargetId,
+    feishuUnionId: candidate.feishuUnionId,
+    reason: 'superseded_inactive',
+  }));
 }
 
 export async function getLatestFeishuAuthorization(
