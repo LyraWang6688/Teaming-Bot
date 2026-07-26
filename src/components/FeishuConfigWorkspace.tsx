@@ -19,7 +19,6 @@ import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -40,6 +39,7 @@ import {
 } from 'lucide-react';
 
 type StepDisplayStatus = 'completed' | 'current' | 'pending';
+type CheckVisualStatus = 'pending' | 'success' | 'failed';
 
 type AuthUser = {
   id: string;
@@ -127,6 +127,22 @@ type ActiveOrgTargetsResponse = {
 
 const INTEGRATION_LIST_CACHE_TTL_MS = 3_000;
 const INTEGRATION_DETAIL_CACHE_TTL_MS = 1_500;
+const FAILED_CHECK_STATUSES = new Set([
+  'denied',
+  'error',
+  'expired',
+  'failed',
+  'invalid',
+  'reauthorization_required',
+]);
+const CHECK_STATUS_LEGEND: Array<{
+  status: CheckVisualStatus;
+  label: string;
+}> = [
+  { status: 'pending', label: '尚未完成' },
+  { status: 'success', label: '校验通过' },
+  { status: 'failed', label: '校验失败' },
+];
 
 function formatDateTime(value: string | null) {
   if (!value) return '未设置';
@@ -136,25 +152,6 @@ function formatDateTime(value: string | null) {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(date);
-}
-
-function getStatusLabel(status: string | null | undefined) {
-  switch (status) {
-    case 'authorized':
-    case 'oauth_authorized':
-      return '已授权';
-    case 'passed':
-    case 'success':
-      return '正常';
-    case 'pending':
-      return '待完成';
-    case 'draft':
-      return '未完成';
-    case 'failed':
-      return '有问题';
-    default:
-      return status || '未设置';
-  }
 }
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {
@@ -217,12 +214,68 @@ function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
   );
 }
 
-function getCheckStatusTone(passed: boolean) {
-  return passed ? 'text-emerald-600' : 'text-amber-600';
+function getCheckVisualStatus(
+  status: string | null | undefined,
+  successStatuses: string[] = ['success']
+): CheckVisualStatus {
+  if (status && successStatuses.includes(status)) return 'success';
+  if (status && FAILED_CHECK_STATUSES.has(status)) return 'failed';
+  return 'pending';
 }
 
-function getCheckStatusLabel(passed: boolean) {
-  return passed ? '已通过' : '待确认';
+function getEventCheckVisualStatus(checks: CheckStatusView | null | undefined): CheckVisualStatus {
+  const statuses = [
+    checks?.permissionStatus,
+    checks?.minuteSubscriptionStatus,
+    checks?.eventSubscriptionStatus,
+  ];
+  if (statuses.every((status) => status === 'success')) return 'success';
+  if (statuses.some((status) => getCheckVisualStatus(status) === 'failed')) return 'failed';
+  return 'pending';
+}
+
+function getCheckStatusLabel(status: CheckVisualStatus) {
+  switch (status) {
+    case 'success':
+      return '校验通过';
+    case 'failed':
+      return '校验失败';
+    default:
+      return '尚未完成';
+  }
+}
+
+function getCheckStatusTextTone(status: CheckVisualStatus) {
+  switch (status) {
+    case 'success':
+      return 'text-emerald-700';
+    case 'failed':
+      return 'text-red-700';
+    default:
+      return 'text-amber-700';
+  }
+}
+
+function getCheckStatusCardTone(status: CheckVisualStatus) {
+  switch (status) {
+    case 'success':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+    case 'failed':
+      return 'border-red-200 bg-red-50 text-red-700';
+    default:
+      return 'border-amber-200 bg-amber-50 text-amber-700';
+  }
+}
+
+function getCheckStatusDotTone(status: CheckVisualStatus) {
+  switch (status) {
+    case 'success':
+      return 'bg-emerald-500';
+    case 'failed':
+      return 'bg-red-500';
+    default:
+      return 'bg-amber-400';
+  }
 }
 
 function createSetupTraceId() {
@@ -405,49 +458,47 @@ export default function FeishuConfigWorkspace() {
     [detail?.checks]
   );
   const systemCheckItems = useMemo(
-    () => [
-      {
-        label: '组织配置',
-        value: selectedOrgTarget
-          ? selectedOrgTarget.orgName
-          : getCheckStatusLabel(Boolean(selectedOrgTargetId)),
-        passed: Boolean(selectedOrgTargetId),
-      },
-      {
-        label: '应用凭证',
-        value: getCheckStatusLabel(detail?.checks?.appCredentialStatus === 'success'),
-        passed: detail?.checks?.appCredentialStatus === 'success',
-      },
-      {
-        label: '用户授权',
-        value: getCheckStatusLabel(detail?.checks?.oauthStatus === 'authorized'),
-        passed: detail?.checks?.oauthStatus === 'authorized',
-      },
-      {
-        label: '目标表格',
-        value:
-          detail?.checks?.baseStatus === 'success'
-            ? '可访问'
-            : getStatusLabel(detail?.checks?.baseStatus),
-        passed: detail?.checks?.baseStatus === 'success',
-      },
-      {
-        label: '事件监听',
-        value: eventSubscriptionPassed
-          ? '已就绪'
-          : getStatusLabel(detail?.checks?.eventSubscriptionStatus),
-        passed: eventSubscriptionPassed,
-      },
-    ],
-    [
-      detail?.checks?.appCredentialStatus,
-      detail?.checks?.baseStatus,
-      detail?.checks?.eventSubscriptionStatus,
-      detail?.checks?.oauthStatus,
-      eventSubscriptionPassed,
-      selectedOrgTarget,
-      selectedOrgTargetId,
-    ]
+    () => {
+      const organizationStatus: CheckVisualStatus = selectedOrgTargetId ? 'success' : 'pending';
+      const appCredentialStatus = getCheckVisualStatus(detail?.checks?.appCredentialStatus);
+      const oauthStatus = getCheckVisualStatus(detail?.checks?.oauthStatus, ['authorized', 'success']);
+      const baseStatus = getCheckVisualStatus(detail?.checks?.baseStatus);
+      const eventStatus = getEventCheckVisualStatus(detail?.checks);
+
+      return [
+        {
+          label: '组织配置',
+          shortLabel: '组织',
+          status: organizationStatus,
+          value: getCheckStatusLabel(organizationStatus),
+        },
+        {
+          label: '应用凭证',
+          shortLabel: '应用',
+          status: appCredentialStatus,
+          value: getCheckStatusLabel(appCredentialStatus),
+        },
+        {
+          label: '用户授权',
+          shortLabel: '授权',
+          status: oauthStatus,
+          value: getCheckStatusLabel(oauthStatus),
+        },
+        {
+          label: '目标表格',
+          shortLabel: '表格',
+          status: baseStatus,
+          value: getCheckStatusLabel(baseStatus),
+        },
+        {
+          label: '事件监听',
+          shortLabel: '监听',
+          status: eventStatus,
+          value: getCheckStatusLabel(eventStatus),
+        },
+      ];
+    },
+    [detail?.checks, selectedOrgTargetId]
   );
 
   const setupComplete = eventSubscriptionPassed;
@@ -1093,14 +1144,8 @@ export default function FeishuConfigWorkspace() {
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>反馈问题</DialogTitle>
-            <DialogDescription className="leading-6">
-              你只需要描述发生了什么。为了方便我们对齐日志排查，系统会自动附带当前账号、集成、组织、页面、步骤和 trace 上下文。
-            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-600">
-              建议尽量提到：问题发生在哪一步、你看到了什么现象或报错、它影响了什么。这样我们更容易把你的描述和日志对齐起来。
-            </div>
+          <div>
             <Textarea
               value={feedbackDraft}
               onChange={(event) => setFeedbackDraft(event.target.value)}
@@ -1108,11 +1153,6 @@ export default function FeishuConfigWorkspace() {
               className="min-h-36"
               disabled={isSubmittingFeedback}
             />
-            <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-3 text-xs leading-5 text-indigo-900">
-              本次会自动附带：
-              {' '}
-              `userId` / `integrationId` / `orgTargetId` / 当前页面 / 当前步骤 / `setupTraceId`
-            </div>
           </div>
           <DialogFooter>
             <Button
@@ -1195,24 +1235,29 @@ export default function FeishuConfigWorkspace() {
             </div>
           </div>
           <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-xs font-medium text-slate-900">系统校验结果</div>
-              <Badge
-                variant="outline"
-                className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
-              >
-                {displayedChecksPassed ? '全部通过' : '待确认'}
-              </Badge>
-            </div>
-            <div className="mt-2 flex flex-nowrap items-center gap-3 overflow-x-auto pb-1 text-xs whitespace-nowrap">
+            <div className="text-xs font-medium text-slate-900">系统校验结果</div>
+            <div className="mt-2 grid grid-cols-5 gap-1.5">
               {systemCheckItems.map((item) => (
                 <div
                   key={item.label}
-                  className={`flex shrink-0 items-center gap-1.5 ${getCheckStatusTone(item.passed)}`}
+                  title={`${item.label}：${item.value}`}
+                  aria-label={`${item.label}：${item.value}`}
+                  className={`rounded-lg border px-1 py-2 text-center ${getCheckStatusCardTone(item.status)}`}
                 >
-                  <span>{item.label}</span>
-                  <span className="font-medium">{item.value}</span>
+                  <div className="truncate text-[11px] font-medium">{item.shortLabel}</div>
+                  <div className="mt-1 flex justify-center">
+                    <span className={`h-2.5 w-2.5 rounded-full ${getCheckStatusDotTone(item.status)}`} aria-hidden />
+                    <span className="sr-only">{item.value}</span>
+                  </div>
                 </div>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-slate-600">
+              {CHECK_STATUS_LEGEND.map((item) => (
+                <span key={item.status} className="inline-flex items-center gap-1">
+                  <span className={`h-2 w-2 rounded-full ${getCheckStatusDotTone(item.status)}`} aria-hidden />
+                  {item.label}
+                </span>
               ))}
             </div>
           </div>
@@ -1232,7 +1277,7 @@ export default function FeishuConfigWorkspace() {
                   <div className="flex items-center gap-1 text-xs text-slate-500">
                     <span>第 {currentStep} 步</span>
                     <ArrowRight className="h-3 w-3" />
-                    <span>共 4 步</span>
+                    <span>共 5 步</span>
                   </div>
                 </div>
                 <div className="space-y-1">
@@ -1282,30 +1327,30 @@ export default function FeishuConfigWorkspace() {
               <CardContent className="flex h-full min-h-0 flex-col space-y-1.5 p-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-sm font-medium text-slate-900">系统校验结果</div>
-                  <div className="flex items-center gap-1.5">
-                    {integration?.id ? (
-                      <Button type="button" variant="ghost" size="sm" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="h-6 px-2 text-xs">
-                        <RefreshCw className={`mr-1 h-3 w-3 ${isRunningChecks ? 'animate-spin' : ''}`} />
-                        刷新
-                      </Button>
-                    ) : null}
-                    <Badge
-                      variant="outline"
-                      className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
-                    >
-                      {displayedChecksPassed ? '全部通过' : '待确认'}
-                    </Badge>
-                  </div>
+                  {integration?.id ? (
+                    <Button type="button" variant="ghost" size="sm" onClick={() => void runAutomatedChecks(integration.id)} disabled={isRunningChecks} className="h-6 px-2 text-xs">
+                      <RefreshCw className={`mr-1 h-3 w-3 ${isRunningChecks ? 'animate-spin' : ''}`} />
+                      刷新
+                    </Button>
+                  ) : null}
                 </div>
                 <div className="space-y-1 text-xs">
                   {systemCheckItems.map((item) => (
                     <div
                       key={item.label}
-                      className={`flex items-center justify-between ${getCheckStatusTone(item.passed)}`}
+                      className={`flex items-center justify-between ${getCheckStatusTextTone(item.status)}`}
                     >
                       <span>{item.label}</span>
                       <span className="text-xs">{item.value}</span>
                     </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-t border-slate-100 pt-1.5 text-[10px] text-slate-500">
+                  {CHECK_STATUS_LEGEND.map((item) => (
+                    <span key={item.status} className="inline-flex items-center gap-1">
+                      <span className={`h-2 w-2 rounded-full ${getCheckStatusDotTone(item.status)}`} aria-hidden />
+                      {item.label}
+                    </span>
                   ))}
                 </div>
                 {!displayedChecksPassed && detail?.checks?.lastErrorMessage ? (
@@ -1318,18 +1363,6 @@ export default function FeishuConfigWorkspace() {
                     配置已完成，后续可以实现飞书会议的自动监听与分析。
                   </div>
                 ) : null}
-                {user ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setIsFeedbackDialogOpen(true)}
-                    className="mt-auto w-full"
-                  >
-                    <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-                    反馈问题
-                  </Button>
-                ) : null}
               </CardContent>
             </Card>
           </aside>
@@ -1337,18 +1370,35 @@ export default function FeishuConfigWorkspace() {
           <div className="flex min-h-0 flex-col">
             <Card className="min-h-0 flex-1">
               <CardContent className="flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3">
+                {user || feedbackSuccessMessage ? (
+                  <div className="hidden shrink-0 items-center gap-3 lg:flex">
+                    {feedbackSuccessMessage ? (
+                      <div className="min-w-0 flex-1 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                        {feedbackSuccessMessage}
+                      </div>
+                    ) : (
+                      <div className="flex-1" />
+                    )}
+                    {user ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsFeedbackDialogOpen(true)}
+                        className="shrink-0"
+                      >
+                        <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+                        反馈问题
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
                 {authLoading ? (
                   <div className="space-y-3">
                     <Skeleton className="h-48 w-full" />
                   </div>
                 ) : (
                   <>
-                    {feedbackSuccessMessage ? (
-                      <div className="hidden shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 lg:block">
-                        {feedbackSuccessMessage}
-                      </div>
-                    ) : null}
-
                     <div id="step-create-app" className={getStepPanelClassName(createStepIsActive)}>
                       <StepHeader
                         step={1}
@@ -1362,7 +1412,6 @@ export default function FeishuConfigWorkspace() {
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-medium text-indigo-900">飞书创建链接已就绪</div>
-                                  <p className="mt-1 text-xs leading-4 text-slate-600">再次点击右侧按钮，会直接跳转到飞书继续完成应用创建。页面会在后台持续等待创建结果。</p>
                                 </div>
                                 <Button type="button" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => openActionLink(verificationUrl)}>
                                   前往飞书创建
