@@ -17,7 +17,6 @@ type UpsertMeetingRecordInput = {
   projectId?: string | null;
   orgTargetId?: string | null;
   baseRecordId?: string | null;
-  fallbackTopic?: string | null;
   details?: MeetingDetails | null;
 };
 
@@ -33,7 +32,6 @@ function meetingDetailsFields(details?: MeetingDetails | null) {
   }
 
   return {
-    topic: details.topic,
     hostOpenId: details.hostOpenId,
     hostName: details.hostName,
     meetingUrl: details.meetingUrl,
@@ -107,9 +105,7 @@ export async function upsertMeetingRecord(
     ...(input.orgTargetId ? { orgTargetId: input.orgTargetId } : {}),
     ...(input.baseRecordId ? { baseRecordId: input.baseRecordId } : {}),
     ...(input.minuteToken ? { minuteToken: input.minuteToken } : {}),
-    ...(input.details?.topic || input.fallbackTopic
-      ? { topic: input.details?.topic || input.fallbackTopic }
-      : {}),
+    topic: input.details?.topic ?? null,
     ...detailsFields,
     updatedAt: new Date(),
   };
@@ -124,7 +120,7 @@ export async function upsertMeetingRecord(
       feishuMeetingId: input.meetingId,
       minuteToken: input.minuteToken || null,
       status: 'meeting_ended',
-      topic: input.details?.topic || input.fallbackTopic || null,
+      topic: input.details?.topic ?? null,
       ...detailsFields,
       updatedAt: new Date(),
     })

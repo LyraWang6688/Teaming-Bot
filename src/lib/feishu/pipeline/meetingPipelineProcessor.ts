@@ -83,7 +83,6 @@ type MinuteGeneratedSource = {
   taskId?: string;
   eventType?: string;
   meetingId: string;
-  meetingName?: string;
   minuteToken: string;
   attempt: number;
   recordId?: string;
@@ -119,10 +118,6 @@ function getTargetFromPayload(payload: Record<string, unknown>): string | undefi
   return asString(target.orgTargetId);
 }
 
-function getMeetingNameFromPayload(payload: Record<string, unknown>): string | undefined {
-  return asString(payload.meetingName);
-}
-
 function formatMeetingDateTime(value: Date): string {
   return new Intl.DateTimeFormat('zh-CN', {
     timeZone: REPORT_TIME_ZONE,
@@ -148,10 +143,10 @@ function formatMeetingTime(startedAt: Date | null, endedAt: Date | null): string
 }
 
 function buildMeetingBaseFields(
-  context: Pick<MinuteGeneratedSource, 'meetingName' | 'meetingDetails'>
+  context: Pick<MinuteGeneratedSource, 'meetingDetails'>
 ): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
-  const meetingName = context.meetingDetails?.topic || context.meetingName;
+  const meetingName = context.meetingDetails?.topic;
   const meetingTime = formatMeetingTime(
     context.meetingDetails?.startedAt || null,
     context.meetingDetails?.endedAt || null
@@ -174,12 +169,11 @@ async function fetchMeetingDetailsWithFallback(
       error instanceof MeetingDetailsError &&
       (error.code === 'meeting_not_found' || error.code === 'meeting_access_denied')
     ) {
-      logFeishuMonitor('warn', 'meeting_detail_fallback_used', {
+      logFeishuMonitor('warn', 'meeting_detail_unavailable', {
         userId: context.integration.userId,
         integrationId: context.integration.id,
         taskId: context.taskId,
         meetingId: context.meetingId,
-        fallbackMeetingName: context.meetingName || null,
         reasonCode: error.code,
       });
       return null;
@@ -239,14 +233,6 @@ function getMinuteGeneratedEventPayload(event: Record<string, unknown>) {
     minuteSource,
     sourceType,
     minuteToken: asString(event.minute_token) || asString(minute.minute_token) || asString(minute.id),
-    meetingName:
-      asString(event.meeting_name) ||
-      asString(event.meeting_topic) ||
-      asString(event.topic) ||
-      asString(minute.meeting_name) ||
-      asString(minute.meeting_topic) ||
-      asString(minute.title) ||
-      asString(minute.topic),
     meetingId:
       meetingIdFromSource ||
       asString(event.meeting_id) ||
@@ -299,7 +285,6 @@ export async function enqueueFeishuEvent(
   const {
     sourceType,
     minuteToken,
-    meetingName,
     meetingId,
   } = getMinuteGeneratedEventPayload(event);
 
@@ -309,7 +294,6 @@ export async function enqueueFeishuEvent(
     eventType,
     sourceType,
     minuteToken,
-    meetingName,
     meetingId,
   });
 
@@ -350,7 +334,6 @@ export async function enqueueFeishuEvent(
     eventId,
     eventType,
     minuteToken,
-    meetingName,
     meetingId,
     target: targetSnapshot,
   });
@@ -360,7 +343,6 @@ export async function enqueueFeishuEvent(
       integrationId: integration.id,
       taskId: taskResult.task.id,
       minuteToken,
-        meetingName,
       eventId,
       eventType,
       projectId: targetSnapshot?.projectId || null,
@@ -372,7 +354,6 @@ export async function enqueueFeishuEvent(
       integrationId: integration.id,
       taskId: taskResult.task.id,
       minuteToken,
-        meetingName,
       eventId,
       eventType,
       created: taskResult.created,
@@ -412,9 +393,6 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
 
   const meetingDetails = await fetchMeetingDetailsWithFallback(context);
   context.meetingDetails = meetingDetails;
-  if (meetingDetails?.topic) {
-    context.meetingName = meetingDetails.topic;
-  }
 
   const persistedMeeting = await upsertMeetingRecord({
     integration: context.integration,
@@ -423,7 +401,6 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
     projectId: config.orgTarget?.projectId || null,
     orgTargetId: config.orgTarget?.id || null,
     baseRecordId: context.recordId || null,
-    fallbackTopic: context.meetingName || null,
     details: meetingDetails,
   });
   context.meetingRecordId = persistedMeeting.id;
@@ -700,7 +677,6 @@ async function completeMeetingAnalysis(
       projectId: config.orgTarget?.projectId || null,
       orgTargetId: config.orgTarget?.id || null,
       baseRecordId: record.recordId,
-      fallbackTopic: context.meetingName || null,
       details: context.meetingDetails,
     });
     context.meetingRecordId = persisted.id;
@@ -748,8 +724,8 @@ async function completeMeetingAnalysis(
     throw new Error('会议记录缺少 report_public_id，无法生成永久报告链接。');
   }
   const reportUrl = buildPersistentReportUrl(context.reportPublicId);
-  const reportLinkText = context.meetingName
-    ? `${context.meetingName} 会议报告`
+  const reportLinkText = context.meetingDetails?.topic
+    ? `${context.meetingDetails.topic} 会议报告`
     : '会议动力分析报告';
 
   logFeishuMonitor('info', 'meeting_report_persist_started', {
@@ -918,7 +894,6 @@ async function completeMeetingAnalysis(
       baseRecordId: record.recordId,
       minuteToken,
       payload: {
-        meetingName: context.meetingName,
         reportUrl,
       },
     });
@@ -928,7 +903,7 @@ async function completeMeetingAnalysis(
     await sendMeetingReportNotification({
       integration: context.integration,
       meetingId: context.meetingId,
-      meetingName: context.meetingName || context.meetingDetails?.topic || '会议名称待同步',
+      meetingName: context.meetingDetails?.topic ?? null,
       startedAt: context.meetingDetails?.startedAt || null,
       endedAt: context.meetingDetails?.endedAt || null,
       recordId: record.recordId,
@@ -1033,14 +1008,14 @@ async function ensureMinuteRecord(
   config: FeishuBitableAccess,
   context: Pick<
     MinuteGeneratedSource,
-    'meetingId' | 'minuteToken' | 'recordId' | 'meetingName' | 'meetingDetails'
+    'meetingId' | 'minuteToken' | 'recordId' | 'meetingDetails'
   >,
   existing: FeishuMeetingRecord | null
 ): Promise<FeishuMeetingRecord> {
   if (!existing) {
     return upsertMeetingWaitingRecord(config, {
       meetingId: context.meetingId,
-      meetingName: context.meetingName,
+      meetingName: context.meetingDetails?.topic || undefined,
       meetingTime: formatMeetingTime(
         context.meetingDetails?.startedAt || null,
         context.meetingDetails?.endedAt || null
@@ -1152,7 +1127,6 @@ function buildRecoveryContext(
     integration,
     taskId,
     meetingId,
-    meetingName: undefined,
     minuteToken: '',
     attempt,
     recordId: record.recordId,
@@ -1223,7 +1197,6 @@ function buildRecoveryContextFromTask(
     taskId: task.id,
     eventType: task.eventType || undefined,
     meetingId: task.feishuMeetingId,
-    meetingName: getMeetingNameFromPayload(task.payload),
     minuteToken: task.minuteToken || '',
     attempt: task.attemptCount,
     recordId: task.baseRecordId || undefined,

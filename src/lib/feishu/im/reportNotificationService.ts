@@ -32,12 +32,17 @@ function formatMeetingTime(startedAt: Date | null, endedAt: Date | null): string
 }
 
 function buildReportCardContent(options: {
-  meetingName: string;
+  meetingName: string | null;
   startedAt: Date | null;
   endedAt: Date | null;
   reportUrl: string;
 }): string {
   const { meetingName, startedAt, endedAt, reportUrl } = options;
+  const detailLines = [
+    ...(meetingName ? [`**会议名称：**${meetingName}`] : []),
+    `**会议时间：**${formatMeetingTime(startedAt, endedAt)}`,
+  ];
+
   return JSON.stringify({
     config: {
       wide_screen_mode: true,
@@ -52,10 +57,7 @@ function buildReportCardContent(options: {
     elements: [
       {
         tag: 'markdown',
-        content: [
-          `**会议名称：**${meetingName}`,
-          `**会议时间：**${formatMeetingTime(startedAt, endedAt)}`,
-        ].join('\n'),
+        content: detailLines.join('\n'),
       },
       {
         tag: 'action',
@@ -78,7 +80,7 @@ function buildReportCardContent(options: {
 export async function sendMeetingReportNotification(options: {
   integration: FeishuIntegrationContext;
   meetingId: string;
-  meetingName: string;
+  meetingName: string | null;
   startedAt: Date | null;
   endedAt: Date | null;
   recordId: string;
