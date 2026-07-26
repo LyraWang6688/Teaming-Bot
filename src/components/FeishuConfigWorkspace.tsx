@@ -150,8 +150,8 @@ const MOBILE_PROCESSING_BLOBS = [
     key: 'north-west',
     className: 'left-[8%] top-[-10%]',
     sizeClassName: 'h-44 w-44',
-    color: 'rgba(16, 185, 129, 0.52)',
-    secondaryColor: 'rgba(45, 212, 191, 0.2)',
+    color: 'rgba(59, 130, 246, 0.64)',
+    secondaryColor: 'rgba(96, 165, 250, 0.28)',
     tx: '30vw',
     ty: '34vh',
     scale: '0.52',
@@ -162,8 +162,8 @@ const MOBILE_PROCESSING_BLOBS = [
     key: 'north-east',
     className: 'right-[4%] top-[-8%]',
     sizeClassName: 'h-40 w-40',
-    color: 'rgba(52, 211, 153, 0.48)',
-    secondaryColor: 'rgba(129, 230, 217, 0.16)',
+    color: 'rgba(20, 184, 166, 0.58)',
+    secondaryColor: 'rgba(45, 212, 191, 0.24)',
     tx: '-28vw',
     ty: '30vh',
     scale: '0.56',
@@ -174,8 +174,8 @@ const MOBILE_PROCESSING_BLOBS = [
     key: 'west',
     className: 'left-[-12%] top-[34%]',
     sizeClassName: 'h-52 w-52',
-    color: 'rgba(16, 185, 129, 0.44)',
-    secondaryColor: 'rgba(110, 231, 183, 0.16)',
+    color: 'rgba(99, 102, 241, 0.48)',
+    secondaryColor: 'rgba(129, 140, 248, 0.22)',
     tx: '38vw',
     ty: '0vh',
     scale: '0.46',
@@ -186,8 +186,8 @@ const MOBILE_PROCESSING_BLOBS = [
     key: 'east',
     className: 'right-[-14%] top-[26%]',
     sizeClassName: 'h-48 w-48',
-    color: 'rgba(20, 184, 166, 0.42)',
-    secondaryColor: 'rgba(16, 185, 129, 0.14)',
+    color: 'rgba(14, 165, 233, 0.5)',
+    secondaryColor: 'rgba(56, 189, 248, 0.22)',
     tx: '-34vw',
     ty: '8vh',
     scale: '0.5',
@@ -198,8 +198,8 @@ const MOBILE_PROCESSING_BLOBS = [
     key: 'south-west',
     className: 'bottom-[-12%] left-[6%]',
     sizeClassName: 'h-44 w-44',
-    color: 'rgba(52, 211, 153, 0.5)',
-    secondaryColor: 'rgba(94, 234, 212, 0.16)',
+    color: 'rgba(13, 148, 136, 0.6)',
+    secondaryColor: 'rgba(45, 212, 191, 0.2)',
     tx: '28vw',
     ty: '-26vh',
     scale: '0.58',
@@ -210,8 +210,8 @@ const MOBILE_PROCESSING_BLOBS = [
     key: 'south-east',
     className: 'bottom-[-8%] right-[8%]',
     sizeClassName: 'h-52 w-52',
-    color: 'rgba(5, 150, 105, 0.42)',
-    secondaryColor: 'rgba(52, 211, 153, 0.16)',
+    color: 'rgba(79, 70, 229, 0.42)',
+    secondaryColor: 'rgba(125, 211, 252, 0.18)',
     tx: '-30vw',
     ty: '-30vh',
     scale: '0.48',
@@ -423,9 +423,9 @@ function StepHeader(props: {
 function MobileProcessingVeil() {
   return (
     <div className="pointer-events-none fixed inset-0 z-40 overflow-hidden lg:hidden" aria-hidden>
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(236,253,245,0.2),rgba(255,255,255,0)_58%)]" />
-      <div className="absolute inset-x-[15%] top-[22%] h-44 rounded-full bg-emerald-300/18 blur-3xl mobile-processing-core" />
-      <div className="absolute inset-x-[18%] bottom-[18%] h-32 rounded-full bg-teal-200/14 blur-3xl mobile-processing-core mobile-processing-core-delayed" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(219,234,254,0.4),rgba(255,255,255,0)_58%)]" />
+      <div className="absolute inset-x-[15%] top-[22%] h-44 rounded-full bg-sky-300/24 blur-3xl mobile-processing-core" />
+      <div className="absolute inset-x-[18%] bottom-[18%] h-32 rounded-full bg-indigo-300/18 blur-3xl mobile-processing-core mobile-processing-core-delayed" />
       {MOBILE_PROCESSING_BLOBS.map((blob) => (
         <span
           key={blob.key}
@@ -446,7 +446,7 @@ function MobileProcessingVeil() {
         .mobile-processing-blob {
           animation: mobile-processing-drift var(--processing-duration) ease-in-out infinite;
           animation-delay: var(--processing-delay);
-          opacity: 0.18;
+          opacity: 0.26;
         }
 
         .mobile-processing-core {
@@ -461,12 +461,12 @@ function MobileProcessingVeil() {
           0%,
           100% {
             transform: translate3d(0, 0, 0) scale(1);
-            opacity: 0.12;
+            opacity: 0.2;
           }
           50% {
             transform: translate3d(var(--processing-tx), var(--processing-ty), 0)
               scale(var(--processing-scale));
-            opacity: 0.52;
+            opacity: 0.68;
           }
         }
 
@@ -474,11 +474,11 @@ function MobileProcessingVeil() {
           0%,
           100% {
             transform: scale(0.92);
-            opacity: 0.2;
+            opacity: 0.28;
           }
           50% {
             transform: scale(1.08);
-            opacity: 0.4;
+            opacity: 0.56;
           }
         }
       `}</style>
@@ -570,6 +570,28 @@ function MobileCelebrationOverlay() {
           }
         }
       `}</style>
+    </div>
+  );
+}
+
+function CelebrationDialog() {
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/10 px-4 backdrop-blur-[1px]">
+      <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-emerald-200 bg-white px-6 py-6 text-center shadow-2xl sm:px-8 sm:py-7">
+        {['left-6 top-6 bg-pink-400', 'right-8 top-8 bg-indigo-400', 'left-10 bottom-8 bg-amber-400', 'right-10 bottom-7 bg-emerald-400', 'left-1/2 top-4 bg-sky-400'].map((className) => (
+          <span
+            key={className}
+            className={`absolute h-2.5 w-2.5 rounded-full ${className} animate-ping`}
+          />
+        ))}
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+          <Sparkles className="h-7 w-7" />
+        </div>
+        <div className="text-lg font-semibold text-slate-900">配置完成</div>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          系统校验已通过，后续可以自动监听并分析飞书会议。
+        </p>
+      </div>
     </div>
   );
 }
@@ -1067,10 +1089,9 @@ export default function FeishuConfigWorkspace() {
     return [
       integration.id,
       integration.selectedOrgTargetId || 'no-org',
-      integration.updatedAt || 'no-integration-update',
       detail?.authorization?.updatedAt ?? 'no-oauth-update',
     ].join(':');
-  }, [detail?.authorization?.updatedAt, integration?.id, integration?.selectedOrgTargetId, integration?.updatedAt]);
+  }, [detail?.authorization?.updatedAt, integration?.id, integration?.selectedOrgTargetId]);
 
   const handleSelectOrganization = async (orgTargetId: string) => {
     const previousOrgTargetId = selectedOrgTargetId;
@@ -1350,7 +1371,7 @@ export default function FeishuConfigWorkspace() {
   ]);
 
   useEffect(() => {
-    if (!integration?.id || !autoCheckTriggerKey || isRunningChecks) {
+    if (!integration?.id || !autoCheckTriggerKey || isRunningChecks || detail?.checks?.allPassed) {
       return;
     }
 
@@ -1360,7 +1381,7 @@ export default function FeishuConfigWorkspace() {
 
     autoCheckKeyRef.current = autoCheckTriggerKey;
     void runAutomatedChecks(integration.id, { silent: true });
-  }, [autoCheckTriggerKey, integration?.id, isRunningChecks, runAutomatedChecks]);
+  }, [autoCheckTriggerKey, detail?.checks?.allPassed, integration?.id, isRunningChecks, runAutomatedChecks]);
 
   return (
     <Layout>
@@ -1473,25 +1494,7 @@ export default function FeishuConfigWorkspace() {
       {showMobileProcessingVeil ? <MobileProcessingVeil /> : null}
       {showCelebration ? <MobileCelebrationOverlay /> : null}
 
-      {showCelebration ? (
-        <div className="pointer-events-none fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/10 backdrop-blur-[1px] lg:flex">
-          <div className="relative overflow-hidden rounded-2xl border border-emerald-200 bg-white px-8 py-7 text-center shadow-2xl">
-            {['left-6 top-6 bg-pink-400', 'right-8 top-8 bg-indigo-400', 'left-10 bottom-8 bg-amber-400', 'right-10 bottom-7 bg-emerald-400', 'left-1/2 top-4 bg-sky-400'].map((className) => (
-              <span
-                key={className}
-                className={`absolute h-2.5 w-2.5 rounded-full ${className} animate-ping`}
-              />
-            ))}
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-              <Sparkles className="h-7 w-7" />
-            </div>
-            <div className="text-lg font-semibold text-slate-900">配置完成</div>
-            <p className="mt-2 max-w-sm text-sm leading-6 text-slate-600">
-              系统校验已通过，后续可以自动监听并分析飞书会议。
-            </p>
-          </div>
-        </div>
-      ) : null}
+      {showCelebration ? <CelebrationDialog /> : null}
 
       <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-6xl flex-col gap-3 py-4 lg:h-[calc(100dvh-4rem)] lg:overflow-hidden lg:py-5">
         <div className="shrink-0 space-y-0.5">
