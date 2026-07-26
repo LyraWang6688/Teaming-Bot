@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import Image from 'next/image';
 import Layout from '@/components/Layout';
 import {
   AlertDialog,
@@ -39,11 +38,9 @@ import {
   Shield,
   Sparkles,
   User,
-  QrCode,
 } from 'lucide-react';
 
 type StepDisplayStatus = 'completed' | 'current' | 'pending';
-type ActiveQrDialog = 'registration' | 'authorization' | null;
 
 type AuthUser = {
   id: string;
@@ -322,10 +319,8 @@ export default function FeishuConfigWorkspace() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [showCelebration, setShowCelebration] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [registrationQrUrl, setRegistrationQrUrl] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
-  const [activeQrDialog, setActiveQrDialog] = useState<ActiveQrDialog>(null);
   const [showOrgDialog, setShowOrgDialog] = useState(false);
   const [authorizePollStatus, setAuthorizePollStatus] = useState<string>('idle');
   const [isFeedbackDialogOpen, setIsFeedbackDialogOpen] = useState(false);
@@ -346,6 +341,10 @@ export default function FeishuConfigWorkspace() {
     ...extra,
     'x-setup-trace-id': getSetupTraceId(),
   }), [getSetupTraceId]);
+
+  const openActionLink = useCallback((url: string) => {
+    window.location.href = url;
+  }, []);
 
   const currentStep = useMemo(() => {
     if (!user) return 1;
@@ -458,8 +457,6 @@ export default function FeishuConfigWorkspace() {
       description: '后续可以自动监听并分析飞书会议。',
     };
   }, [detail?.authorization?.status, detail?.checks?.lastErrorMessage, integration, selectedOrgTargetId, setupComplete, user]);
-
-  const activeRegistrationQrUrl = verificationUrl || registrationQrUrl;
 
   const selectedOrgTarget = useMemo(
     () => activeOrgTargets?.targets.find((target) => target.id === selectedOrgTargetId) || null,
@@ -741,9 +738,7 @@ export default function FeishuConfigWorkspace() {
   const handleCreateApp = async () => {
     setIsCreatingApp(true);
     setPageError(null);
-    setRegistrationQrUrl(null);
     setVerificationUrl(null);
-    setActiveQrDialog(null);
     try {
       const result = await parseJsonResponse<{
         verificationUrl: string;
@@ -756,8 +751,6 @@ export default function FeishuConfigWorkspace() {
       }));
       
       setVerificationUrl(result.verificationUrl);
-      setRegistrationQrUrl(result.verificationUrl);
-      setActiveQrDialog('registration');
       setUser(result.user);
       
       const intervalMs = 3000;
@@ -777,8 +770,6 @@ export default function FeishuConfigWorkspace() {
               clearInterval(pollRef.current);
               pollRef.current = null;
             }
-            setActiveQrDialog(null);
-            setRegistrationQrUrl(null);
             setVerificationUrl(null);
             const completedIntegration = pollData?.data?.integration as IntegrationView | undefined;
             const completedIntegrationId = pollData?.data?.integrationId as string | undefined;
@@ -798,8 +789,7 @@ export default function FeishuConfigWorkspace() {
               clearInterval(pollRef.current);
               pollRef.current = null;
             }
-            setRegistrationQrUrl(null);
-            setActiveQrDialog(null);
+            setVerificationUrl(null);
             setPageError(pollData?.data?.error || pollData?.error || '创建失败');
           }
         } catch (e) {
@@ -823,7 +813,6 @@ export default function FeishuConfigWorkspace() {
     setIsAuthorizing(true);
     setPageError(null);
     setAuthorizeUrl(null);
-    setActiveQrDialog(null);
     setAuthorizePollStatus('idle');
     try {
       const result = await parseJsonResponse<{ authorizationUrl: string; expiresIn: number }>(
@@ -835,7 +824,6 @@ export default function FeishuConfigWorkspace() {
       );
 
       setAuthorizeUrl(result.authorizationUrl);
-      setActiveQrDialog('authorization');
       setAuthorizePollStatus('pending');
 
       if (authorizePollRef.current) {
@@ -856,11 +844,11 @@ export default function FeishuConfigWorkspace() {
 
             if (pollResult.status === 'completed') {
               setAuthorizePollStatus('completed');
-              setActiveQrDialog(null);
+              setAuthorizeUrl(null);
               await loadIntegrationDetail(integration.id, { force: true });
             } else if (pollResult.status === 'denied' || pollResult.status === 'expired' || pollResult.status === 'error') {
               setAuthorizePollStatus(pollResult.status);
-              setActiveQrDialog(null);
+              setAuthorizeUrl(null);
               setPageError(pollResult.error || '授权失败');
             } else {
               scheduleAuthorizePoll();
@@ -1028,94 +1016,6 @@ export default function FeishuConfigWorkspace() {
             <AlertDialogAction onClick={() => setPageError(null)}>
               我知道了
             </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={activeQrDialog === 'registration' && Boolean(activeRegistrationQrUrl)} onOpenChange={(open) => {
-        if (!open) setActiveQrDialog(null);
-      }}>
-        <AlertDialogContent className="sm:max-w-xl">
-          <AlertDialogHeader>
-            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
-              <QrCode className="h-5 w-5" />
-            </div>
-            <AlertDialogTitle>创建飞书应用</AlertDialogTitle>
-            <AlertDialogDescription className="text-sm leading-6 text-slate-600">
-              你可以使用飞书扫码，也可以直接打开链接完成应用创建。请在飞书页面显示的有效期内完成确认，创建成功后本页会自动进入用户授权步骤。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {activeRegistrationQrUrl ? (
-            <div className="grid gap-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 sm:grid-cols-[160px_minmax(0,1fr)]">
-              <div className="mx-auto rounded-xl border bg-white p-3 shadow-sm">
-                <Image
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=${encodeURIComponent(activeRegistrationQrUrl)}`}
-                  alt="创建应用二维码"
-                  width={144}
-                  height={144}
-                  unoptimized
-                  className="h-36 w-36"
-                />
-              </div>
-              <div className="space-y-2 text-sm text-slate-700">
-                <div className="font-medium text-slate-900">扫码或打开链接</div>
-                <p className="leading-6">按飞书页面提示完成应用创建和权限配置。系统会在后台轮询创建结果。</p>
-                <a href={activeRegistrationQrUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800">
-                  打开链接
-                </a>
-                <p className="text-xs leading-5 text-slate-500">如果二维码过期，请关闭弹窗后重新点击“创建应用”。</p>
-              </div>
-            </div>
-          ) : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setActiveQrDialog(null)}>稍后处理</AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={activeQrDialog === 'authorization' && Boolean(authorizeUrl)} onOpenChange={(open) => {
-        if (!open) setActiveQrDialog(null);
-      }}>
-        <AlertDialogContent className="sm:max-w-xl">
-          <AlertDialogHeader>
-            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
-              <Shield className="h-5 w-5" />
-            </div>
-            <AlertDialogTitle>完成用户授权</AlertDialogTitle>
-            <AlertDialogDescription className="text-sm leading-6 text-slate-600">
-              你可以使用飞书扫码，也可以直接打开链接授权妙记和多维表格访问权限。授权完成后系统会自动更新状态。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {authorizeUrl ? (
-            <div className="grid gap-4 rounded-xl border border-indigo-100 bg-indigo-50 p-4 sm:grid-cols-[160px_minmax(0,1fr)]">
-              <div className="mx-auto rounded-xl border bg-white p-3 shadow-sm">
-                <Image
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=148x148&data=${encodeURIComponent(authorizeUrl)}`}
-                  alt="授权二维码"
-                  width={144}
-                  height={144}
-                  unoptimized
-                  className="h-36 w-36"
-                />
-              </div>
-              <div className="space-y-2 text-sm text-slate-700">
-                <div className="font-medium text-slate-900">扫码或打开链接</div>
-                <p className="leading-6">确认授权后，系统会持续等待飞书返回授权结果。</p>
-                <a href={authorizeUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800">
-                  打开链接
-                </a>
-                {authorizePollStatus === 'pending' ? (
-                  <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                    等待授权确认
-                  </div>
-                ) : null}
-                <p className="text-xs leading-5 text-slate-500">如果授权链接失效，请关闭弹窗后重新发起授权。</p>
-              </div>
-            </div>
-          ) : null}
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setActiveQrDialog(null)}>稍后处理</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1434,15 +1334,14 @@ export default function FeishuConfigWorkspace() {
                       <CardContent className="min-h-0 flex-1 px-0 pb-0 pt-0">
                         {!integration ? (
                           <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3">
-                            {registrationQrUrl ? (
+                            {verificationUrl ? (
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                 <div className="min-w-0 flex-1">
-                                  <div className="text-sm font-medium text-indigo-900">创建二维码已生成</div>
-                                  <p className="mt-1 text-xs leading-4 text-slate-600">请在弹窗中扫码，页面会自动等待创建结果。</p>
+                                  <div className="text-sm font-medium text-indigo-900">飞书创建链接已就绪</div>
+                                  <p className="mt-1 text-xs leading-4 text-slate-600">再次点击右侧按钮，会直接跳转到飞书继续完成应用创建。页面会在后台持续等待创建结果。</p>
                                 </div>
-                                <Button type="button" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => setActiveQrDialog('registration')}>
-                                  <QrCode className="mr-2 h-4 w-4" />
-                                  查看二维码
+                                <Button type="button" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => openActionLink(verificationUrl)}>
+                                  前往飞书继续
                                 </Button>
                               </div>
                             ) : (
@@ -1509,7 +1408,7 @@ export default function FeishuConfigWorkspace() {
                               {authorizeUrl ? (
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                   <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-medium text-indigo-900">授权二维码已生成</div>
+                                    <div className="text-sm font-medium text-indigo-900">授权链接已就绪</div>
                                     {authorizePollStatus === 'pending' && (
                                       <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                                         <RefreshCw className="h-3.5 w-3.5 animate-spin" />
@@ -1524,16 +1423,14 @@ export default function FeishuConfigWorkspace() {
                                     )}
                                   </div>
                                   <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-                                    <Button type="button" size="sm" onClick={() => setActiveQrDialog('authorization')} className="w-full sm:w-auto">
-                                      <QrCode className="mr-2 h-4 w-4" />
-                                      查看二维码
+                                    <Button type="button" size="sm" onClick={() => openActionLink(authorizeUrl)} className="w-full sm:w-auto">
+                                      前往飞书授权
                                     </Button>
                                     <Button
                                       variant="outline"
                                       size="sm"
                                       onClick={() => {
                                         setAuthorizeUrl(null);
-                                        setActiveQrDialog(null);
                                         setAuthorizePollStatus('idle');
                                         if (authorizePollRef.current) {
                                           clearTimeout(authorizePollRef.current);
