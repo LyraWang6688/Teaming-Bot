@@ -1066,12 +1066,14 @@ export default function FeishuConfigWorkspace() {
     if (!integration?.id) return '';
     return [
       integration.id,
-      integration.selectedOrgTargetId || selectedOrgTargetId || 'no-org',
+      integration.selectedOrgTargetId || 'no-org',
+      integration.updatedAt || 'no-integration-update',
       detail?.authorization?.updatedAt ?? 'no-oauth-update',
     ].join(':');
-  }, [detail?.authorization?.updatedAt, integration?.id, integration?.selectedOrgTargetId, selectedOrgTargetId]);
+  }, [detail?.authorization?.updatedAt, integration?.id, integration?.selectedOrgTargetId, integration?.updatedAt]);
 
   const handleSelectOrganization = async (orgTargetId: string) => {
+    const previousOrgTargetId = selectedOrgTargetId;
     setSelectedOrgTargetId(orgTargetId);
     setPageError(null);
 
@@ -1091,6 +1093,7 @@ export default function FeishuConfigWorkspace() {
       await loadIntegrationDetail(integration.id, { force: true });
       setShowOrgDialog(false);
     } catch (error) {
+      setSelectedOrgTargetId(previousOrgTargetId);
       setPageError(error instanceof Error ? error.message : '保存组织失败。');
     } finally {
       setIsSavingOrganization(false);
