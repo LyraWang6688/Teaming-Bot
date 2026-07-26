@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import Layout from '@/components/Layout';
 import {
   AlertDialog,
@@ -31,7 +31,6 @@ import {
   AlertCircle,
   ArrowRight,
   Check,
-  LogOut,
   MessageSquare,
   RefreshCw,
   Rocket,
@@ -285,7 +284,6 @@ function StepHeader(props: {
 
 export default function FeishuConfigWorkspace() {
   const pathname = usePathname();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const requestedIntegrationId = searchParams.get('integrationId');
   const autoCheckKeyRef = useRef<string | null>(null);
@@ -318,7 +316,6 @@ export default function FeishuConfigWorkspace() {
 
   const [pageError, setPageError] = useState<string | null>(null);
   const [showCelebration, setShowCelebration] = useState(false);
-  const [isSigningOut, setIsSigningOut] = useState(false);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const [showOrgDialog, setShowOrgDialog] = useState(false);
@@ -398,9 +395,59 @@ export default function FeishuConfigWorkspace() {
     return steps;
   }, [selectedOrgTargetId, integration, detail?.authorization?.status, detail?.checks, eventSubscriptionPassed]);
 
+  const selectedOrgTarget = useMemo(
+    () => activeOrgTargets?.targets.find((target) => target.id === selectedOrgTargetId) || null,
+    [activeOrgTargets?.targets, selectedOrgTargetId]
+  );
+
   const displayedChecksPassed = useMemo(
     () => areDisplayedChecksPassed(detail?.checks),
     [detail?.checks]
+  );
+  const systemCheckItems = useMemo(
+    () => [
+      {
+        label: '组织配置',
+        value: selectedOrgTarget
+          ? selectedOrgTarget.orgName
+          : getCheckStatusLabel(Boolean(selectedOrgTargetId)),
+        passed: Boolean(selectedOrgTargetId),
+      },
+      {
+        label: '应用凭证',
+        value: getCheckStatusLabel(detail?.checks?.appCredentialStatus === 'success'),
+        passed: detail?.checks?.appCredentialStatus === 'success',
+      },
+      {
+        label: '用户授权',
+        value: getCheckStatusLabel(detail?.checks?.oauthStatus === 'authorized'),
+        passed: detail?.checks?.oauthStatus === 'authorized',
+      },
+      {
+        label: '目标表格',
+        value:
+          detail?.checks?.baseStatus === 'success'
+            ? '可访问'
+            : getStatusLabel(detail?.checks?.baseStatus),
+        passed: detail?.checks?.baseStatus === 'success',
+      },
+      {
+        label: '事件监听',
+        value: eventSubscriptionPassed
+          ? '已就绪'
+          : getStatusLabel(detail?.checks?.eventSubscriptionStatus),
+        passed: eventSubscriptionPassed,
+      },
+    ],
+    [
+      detail?.checks?.appCredentialStatus,
+      detail?.checks?.baseStatus,
+      detail?.checks?.eventSubscriptionStatus,
+      detail?.checks?.oauthStatus,
+      eventSubscriptionPassed,
+      selectedOrgTarget,
+      selectedOrgTargetId,
+    ]
   );
 
   const setupComplete = eventSubscriptionPassed;
@@ -413,9 +460,9 @@ export default function FeishuConfigWorkspace() {
   const mobileStatusSummary = useMemo(() => {
     if (!user) {
       return {
-        badge: '待登录',
-        title: '先登录并创建应用',
-        description: '从第 1 步开始，系统会在后续自动检查授权、组织和监听状态。',
+        badge: '第 1 步',
+        title: '创建飞书应用',
+        description: '点击“创建应用”，系统会自动建立登录态并继续后续配置。',
       };
     }
 
@@ -457,11 +504,6 @@ export default function FeishuConfigWorkspace() {
       description: '后续可以自动监听并分析飞书会议。',
     };
   }, [detail?.authorization?.status, detail?.checks?.lastErrorMessage, integration, selectedOrgTargetId, setupComplete, user]);
-
-  const selectedOrgTarget = useMemo(
-    () => activeOrgTargets?.targets.find((target) => target.id === selectedOrgTargetId) || null,
-    [activeOrgTargets?.targets, selectedOrgTargetId]
-  );
 
   const createStepIsActive = !integration;
   const authorizeStepIsActive = Boolean(integration && detail?.authorization?.status !== 'authorized');
@@ -687,27 +729,6 @@ export default function FeishuConfigWorkspace() {
       detail?.authorization?.updatedAt ?? 'no-oauth-update',
     ].join(':');
   }, [detail?.authorization?.updatedAt, integration?.id, integration?.selectedOrgTargetId, selectedOrgTargetId]);
-
-  const handleSignOut = async () => {
-    setIsSigningOut(true);
-    setPageError(null);
-    try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      integrationListCacheRef.current = null;
-      integrationListRequestRef.current = null;
-      integrationDetailCacheRef.current = null;
-      integrationDetailRequestRef.current = null;
-      integrationDetailRequestKeyRef.current = null;
-      setUser(null);
-      setIntegration(null);
-      setDetail(null);
-      router.push('/feishu-config');
-    } catch (error) {
-      setPageError(error instanceof Error ? error.message : '退出登录失败。');
-    } finally {
-      setIsSigningOut(false);
-    }
-  };
 
   const handleSelectOrganization = async (orgTargetId: string) => {
     setSelectedOrgTargetId(orgTargetId);
@@ -1154,25 +1175,52 @@ export default function FeishuConfigWorkspace() {
               <div className="mt-2 text-sm font-semibold text-slate-900">{mobileStatusSummary.title}</div>
               <p className="mt-1 text-xs leading-5 text-slate-600">{mobileStatusSummary.description}</p>
             </div>
-            <div className="shrink-0 text-right">
-              <div className="text-[11px] text-slate-500">当前进度</div>
-              <div className="mt-1 text-lg font-semibold text-slate-900">{Math.min(currentStep, 3)}/3</div>
-            </div>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-            <div className="rounded-xl bg-slate-50 px-3 py-2">
-              <div className="text-slate-500">组织</div>
-              <div className="mt-1 truncate font-medium text-slate-900">
-                {selectedOrgTarget ? selectedOrgTarget.orgName : '待选择'}
+            <div className="flex shrink-0 items-start gap-2">
+              {user ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsFeedbackDialogOpen(true)}
+                  className="h-7 px-2 text-xs"
+                >
+                  <MessageSquare className="mr-1 h-3.5 w-3.5" />
+                  反馈问题
+                </Button>
+              ) : null}
+              <div className="text-right">
+                <div className="text-[11px] text-slate-500">当前进度</div>
+                <div className="mt-1 text-lg font-semibold text-slate-900">{Math.min(currentStep, 3)}/3</div>
               </div>
             </div>
-            <div className="rounded-xl bg-slate-50 px-3 py-2">
-              <div className="text-slate-500">系统状态</div>
-              <div className={`mt-1 font-medium ${setupComplete ? 'text-emerald-700' : 'text-indigo-700'}`}>
-                {setupComplete ? '已完成' : displayedChecksPassed ? '检查通过' : '待继续'}
-              </div>
+          </div>
+          <div className="mt-3 rounded-xl bg-slate-50 px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-medium text-slate-900">系统校验结果</div>
+              <Badge
+                variant="outline"
+                className={displayedChecksPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}
+              >
+                {displayedChecksPassed ? '全部通过' : '待确认'}
+              </Badge>
+            </div>
+            <div className="mt-2 flex flex-nowrap items-center gap-3 overflow-x-auto pb-1 text-xs whitespace-nowrap">
+              {systemCheckItems.map((item) => (
+                <div
+                  key={item.label}
+                  className={`flex shrink-0 items-center gap-1.5 ${getCheckStatusTone(item.passed)}`}
+                >
+                  <span>{item.label}</span>
+                  <span className="font-medium">{item.value}</span>
+                </div>
+              ))}
             </div>
           </div>
+          {feedbackSuccessMessage ? (
+            <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              {feedbackSuccessMessage}
+            </div>
+          ) : null}
         </div>
 
         <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
@@ -1250,26 +1298,15 @@ export default function FeishuConfigWorkspace() {
                   </div>
                 </div>
                 <div className="space-y-1 text-xs">
-                  <div className={`flex items-center justify-between ${getCheckStatusTone(Boolean(selectedOrgTargetId))}`}>
-                    <span>组织配置</span>
-                    <span className="text-xs">{selectedOrgTarget ? selectedOrgTarget.orgName : getCheckStatusLabel(Boolean(selectedOrgTargetId))}</span>
-                  </div>
-                  <div className={`flex items-center justify-between ${getCheckStatusTone(detail?.checks?.appCredentialStatus === 'success')}`}>
-                    <span>应用凭证</span>
-                    <span className="text-xs">{getCheckStatusLabel(detail?.checks?.appCredentialStatus === 'success')}</span>
-                  </div>
-                  <div className={`flex items-center justify-between ${getCheckStatusTone(detail?.checks?.oauthStatus === 'authorized')}`}>
-                    <span>用户授权</span>
-                    <span className="text-xs">{getCheckStatusLabel(detail?.checks?.oauthStatus === 'authorized')}</span>
-                  </div>
-                  <div className={`flex items-center justify-between ${getCheckStatusTone(detail?.checks?.baseStatus === 'success')}`}>
-                    <span>目标表格</span>
-                    <span className="text-xs">{detail?.checks?.baseStatus === 'success' ? '可访问' : getStatusLabel(detail?.checks?.baseStatus)}</span>
-                  </div>
-                  <div className={`flex items-center justify-between ${getCheckStatusTone(eventSubscriptionPassed)}`}>
-                    <span>事件监听</span>
-                    <span className="text-xs">{eventSubscriptionPassed ? '已就绪' : getStatusLabel(detail?.checks?.eventSubscriptionStatus)}</span>
-                  </div>
+                  {systemCheckItems.map((item) => (
+                    <div
+                      key={item.label}
+                      className={`flex items-center justify-between ${getCheckStatusTone(item.passed)}`}
+                    >
+                      <span>{item.label}</span>
+                      <span className="text-xs">{item.value}</span>
+                    </div>
+                  ))}
                 </div>
                 {!displayedChecksPassed && detail?.checks?.lastErrorMessage ? (
                   <div className="rounded-md border border-red-100 bg-red-50 p-1.5 text-xs leading-4 text-red-700">
@@ -1281,6 +1318,18 @@ export default function FeishuConfigWorkspace() {
                     配置已完成，后续可以实现飞书会议的自动监听与分析。
                   </div>
                 ) : null}
+                {user ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setIsFeedbackDialogOpen(true)}
+                    className="mt-auto w-full"
+                  >
+                    <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+                    反馈问题
+                  </Button>
+                ) : null}
               </CardContent>
             </Card>
           </aside>
@@ -1290,37 +1339,12 @@ export default function FeishuConfigWorkspace() {
               <CardContent className="flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3">
                 {authLoading ? (
                   <div className="space-y-3">
-                    <Skeleton className="h-8 w-32" />
                     <Skeleton className="h-48 w-full" />
                   </div>
                 ) : (
                   <>
-                    {user ? (
-                    <div className="flex shrink-0 flex-col gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:py-2">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-sm font-medium text-indigo-700">
-                          <User className="h-4 w-4" />
-                        </div>
-                        <div>
-                          <div className="text-sm font-medium text-slate-900">已登录</div>
-                          <div className="text-xs text-slate-500">{user.email || '飞书用户'}</div>
-                        </div>
-                      </div>
-                      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-                        <Button type="button" variant="outline" size="sm" onClick={() => setIsFeedbackDialogOpen(true)} className="w-full sm:w-auto">
-                          <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-                          反馈问题
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={handleSignOut} disabled={isSigningOut} className="w-full sm:w-auto">
-                          <LogOut className="mr-1.5 h-3.5 w-3.5" />
-                          {isSigningOut ? '退出中...' : '退出'}
-                        </Button>
-                      </div>
-                    </div>
-                    ) : null}
-
                     {feedbackSuccessMessage ? (
-                      <div className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                      <div className="hidden shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 lg:block">
                         {feedbackSuccessMessage}
                       </div>
                     ) : null}
@@ -1341,7 +1365,7 @@ export default function FeishuConfigWorkspace() {
                                   <p className="mt-1 text-xs leading-4 text-slate-600">再次点击右侧按钮，会直接跳转到飞书继续完成应用创建。页面会在后台持续等待创建结果。</p>
                                 </div>
                                 <Button type="button" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => openActionLink(verificationUrl)}>
-                                  前往飞书继续
+                                  前往飞书创建
                                 </Button>
                               </div>
                             ) : (
