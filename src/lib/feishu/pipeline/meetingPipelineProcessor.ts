@@ -7,6 +7,7 @@
 
 import { analyzeMeetingText } from '@/services/analysisService';
 import {
+  buildBitablePersonFieldValue,
   createOrgTargetBitableAccess,
   createSelectedOrgTargetBitableAccess,
   type FeishuBitableAccess,
@@ -20,6 +21,7 @@ import {
 import {
   type FeishuIntegrationContext,
   getFeishuIntegrationContextById,
+  getLatestFeishuAuthorizationContext,
   writeAuditLog,
 } from '../integration/integrationStore';
 import { isFeishuIntegrationActive } from '../integration/integrationActivationService';
@@ -118,13 +120,16 @@ function getTargetFromPayload(payload: Record<string, unknown>): string | undefi
   return asString(target.orgTargetId);
 }
 
-function buildMeetingBaseFields(
-  context: Pick<MinuteGeneratedSource, 'meetingDetails'>
-): Record<string, unknown> {
+async function buildMeetingBaseFields(
+  context: Pick<MinuteGeneratedSource, 'integration' | 'meetingDetails'>
+): Promise<Record<string, unknown>> {
   const fields: Record<string, unknown> = {};
   const meetingName = context.meetingDetails?.topic;
+  const authorization = await getLatestFeishuAuthorizationContext(context.integration.id);
 
   if (meetingName) fields['会议名称'] = meetingName;
+  const creatorValue = buildBitablePersonFieldValue(authorization?.authorizedOpenId);
+  if (creatorValue) fields['创建人'] = creatorValue;
   return fields;
 }
 
@@ -790,7 +795,7 @@ async function completeMeetingAnalysis(
         text: reportLinkText,
         link: reportUrl,
       },
-      ...buildMeetingBaseFields(context),
+      ...(await buildMeetingBaseFields(context)),
     });
   } catch (error) {
     await writeAuditLog({
@@ -975,7 +980,7 @@ async function ensureMinuteRecord(
   config: FeishuBitableAccess,
   context: Pick<
     MinuteGeneratedSource,
-    'meetingId' | 'minuteToken' | 'recordId' | 'meetingDetails'
+    'integration' | 'meetingId' | 'minuteToken' | 'recordId' | 'meetingDetails'
   >,
   existing: FeishuMeetingRecord | null
 ): Promise<FeishuMeetingRecord> {
@@ -983,13 +988,16 @@ async function ensureMinuteRecord(
     return upsertMeetingWaitingRecord(config, {
       meetingId: context.meetingId,
       meetingName: context.meetingDetails?.topic || undefined,
+      creatorOpenId: (
+        await getLatestFeishuAuthorizationContext(context.integration.id)
+      )?.authorizedOpenId || null,
     });
   }
 
   const fields: Record<string, unknown> = {
     '会议ID': context.meetingId,
     '处理状态': FEISHU_PROCESS_STATUS.minuteGenerated,
-    ...buildMeetingBaseFields(context),
+    ...(await buildMeetingBaseFields(context)),
   };
 
   await updateMeetingRecordFields(config, existing.recordId, fields);

@@ -9,6 +9,7 @@ import {
 
 const REQUIRED_FIELDS = [
   { fieldName: '会议名称', type: 1 },
+  { fieldName: '创建人', type: 11 },
 ];
 const INTERNAL_FIELDS = new Set(['JSON数据', '错误信息']);
 

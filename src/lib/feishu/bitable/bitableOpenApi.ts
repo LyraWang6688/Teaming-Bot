@@ -43,6 +43,10 @@ type BitableLinkValue = {
   link?: unknown;
 };
 
+type BitablePersonValue = {
+  id: string;
+};
+
 export type FeishuMeetingRecord = {
   recordId: string;
   meetingId?: string;
@@ -301,7 +305,7 @@ export async function createMeetingRecord(
   const result = await callBitableOpenApi<RecordCreateOrGetResult>(
     config,
     'POST',
-    `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records`,
+    `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records?user_id_type=open_id`,
     { fields }
   );
 
@@ -316,9 +320,17 @@ export async function updateMeetingRecordFields(
   await callBitableOpenApi<RecordCreateOrGetResult>(
     config,
     'PUT',
-    `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/${recordId}`,
+    `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/${recordId}?user_id_type=open_id`,
     { fields }
   );
+}
+
+export function buildBitablePersonFieldValue(openId?: string | null): BitablePersonValue[] | undefined {
+  if (!openId) return undefined;
+  const normalized = openId.trim();
+  if (!normalized) return undefined;
+
+  return [{ id: normalized }];
 }
 
 export async function upsertMeetingWaitingRecord(
@@ -326,6 +338,7 @@ export async function upsertMeetingWaitingRecord(
   meeting: {
     meetingId: string;
     meetingName?: string;
+    creatorOpenId?: string | null;
   }
 ): Promise<FeishuMeetingRecord> {
   const existing = await findMeetingRecordByMeetingId(config, meeting.meetingId);
@@ -334,6 +347,8 @@ export async function upsertMeetingWaitingRecord(
     '处理状态': FEISHU_PROCESS_STATUS.minuteGenerated,
   };
   if (meeting.meetingName) fields['会议名称'] = meeting.meetingName;
+  const creatorValue = buildBitablePersonFieldValue(meeting.creatorOpenId);
+  if (creatorValue) fields['创建人'] = creatorValue;
 
   if (existing) {
     await updateMeetingRecordFields(config, existing.recordId, fields);
