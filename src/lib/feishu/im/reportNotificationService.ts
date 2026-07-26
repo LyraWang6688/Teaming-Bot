@@ -7,7 +7,13 @@ import {
   writeAuditLog,
 } from '../integration/integrationStore';
 
-function buildReportCardContent(meetingId: string, reportUrl: string): string {
+function buildReportCardContent(options: {
+  meetingName: string | null;
+  reportUrl: string;
+}): string {
+  const { meetingName, reportUrl } = options;
+  const detailLines = meetingName ? [`**会议名称：**${meetingName}`] : ['会议报告已生成'];
+
   return JSON.stringify({
     config: {
       wide_screen_mode: true,
@@ -22,7 +28,7 @@ function buildReportCardContent(meetingId: string, reportUrl: string): string {
     elements: [
       {
         tag: 'markdown',
-          content: `**会议ID：**${meetingId}`,
+        content: detailLines.join('\n'),
       },
       {
         tag: 'action',
@@ -45,10 +51,17 @@ function buildReportCardContent(meetingId: string, reportUrl: string): string {
 export async function sendMeetingReportNotification(options: {
   integration: FeishuIntegrationContext;
   meetingId: string;
+  meetingName: string | null;
   recordId: string;
   reportUrl: string;
 }): Promise<void> {
-  const { integration, meetingId, recordId, reportUrl } = options;
+  const {
+    integration,
+    meetingId,
+    meetingName,
+    recordId,
+    reportUrl,
+  } = options;
   const authorization = await getLatestFeishuAuthorization(integration.id);
   const authorizedOpenId = authorization?.authorizedOpenId || null;
   const maskedAuthorizedOpenId = maskSecret(authorizedOpenId);
@@ -99,7 +112,10 @@ export async function sendMeetingReportNotification(options: {
       data: {
         receive_id: authorizedOpenId,
         msg_type: 'interactive',
-          content: buildReportCardContent(meetingId, reportUrl),
+        content: buildReportCardContent({
+          meetingName,
+          reportUrl,
+        }),
       },
     });
 

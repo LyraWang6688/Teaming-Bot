@@ -17,7 +17,6 @@ export type MeetingPipelineTaskStatus =
 
 export type MeetingPipelineTaskPayload = {
   reportUrl?: string;
-  meetingName?: string;
   skippedReason?: 'integration_inactive';
   skippedAt?: string;
   target?: {
@@ -36,7 +35,6 @@ type UpsertMeetingPipelineTaskInput = {
   eventId?: string;
   eventType?: string;
   meetingId: string;
-  meetingName?: string;
   minuteToken?: string;
   target?: MeetingPipelineTargetSnapshot;
 };
@@ -138,7 +136,6 @@ export async function upsertMeetingPipelineTaskForMinuteGenerated(
   const existing = await getMeetingPipelineTaskByMeeting(input.integration.id, input.meetingId);
   const payload: MeetingPipelineTaskPayload = {
     ...(input.target ? { target: input.target } : {}),
-    ...(input.meetingName ? { meetingName: input.meetingName } : {}),
   };
 
   if (!existing) {

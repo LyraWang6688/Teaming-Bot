@@ -110,6 +110,10 @@ function ReportContent() {
         }
 
         const reportData = data.data;
+        if (reportData?.reportPublicId) {
+          window.location.replace(`/report/${encodeURIComponent(reportData.reportPublicId)}`);
+          return;
+        }
         setProcessStatus(reportData?.processStatus || null);
         setTopic(reportData?.topic || null);
 

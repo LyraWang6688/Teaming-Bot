@@ -325,6 +325,7 @@ export async function upsertMeetingWaitingRecord(
   config: FeishuBitableAccess,
   meeting: {
     meetingId: string;
+    meetingName?: string;
   }
 ): Promise<FeishuMeetingRecord> {
   const existing = await findMeetingRecordByMeetingId(config, meeting.meetingId);
@@ -332,6 +333,7 @@ export async function upsertMeetingWaitingRecord(
     '会议ID': meeting.meetingId,
     '处理状态': FEISHU_PROCESS_STATUS.minuteGenerated,
   };
+  if (meeting.meetingName) fields['会议名称'] = meeting.meetingName;
 
   if (existing) {
     await updateMeetingRecordFields(config, existing.recordId, fields);

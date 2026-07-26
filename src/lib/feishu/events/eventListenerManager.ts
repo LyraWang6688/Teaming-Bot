@@ -1,6 +1,8 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { logFeishuMonitor } from '../common/monitor';
 import {
+  cleanupStaleIncompleteFeishuIntegrations,
+  cleanupSupersededInactiveFeishuIntegrations,
   getFeishuIntegrationCheckStatus,
   getFeishuIntegrationContextById,
   listActiveFeishuIntegrationContextsWithBase,
@@ -57,7 +59,11 @@ const listeners = new Map<string, ListenerInfo>();
 const EVENT_TYPE = FEISHU_REQUIRED_USER_EVENTS[0];
 const READY_TIMEOUT_MS = 20_000;
 const INACTIVE_LISTENER_SWEEP_INTERVAL_MS = 10_000;
+const INTEGRATION_CLEANUP_SWEEP_INTERVAL_MS = 10 * 60_000;
+const STALE_INCOMPLETE_INTEGRATION_TTL_MS = 6 * 60 * 60_000;
+const SUPERSEDED_INACTIVE_INTEGRATION_TTL_MS = 30 * 60_000;
 let inactiveListenerSweepTimer: ReturnType<typeof setInterval> | null = null;
+let integrationCleanupSweepTimer: ReturnType<typeof setInterval> | null = null;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -610,6 +616,50 @@ async function sweepInactiveListeners(): Promise<void> {
   }
 }
 
+async function sweepStaleFeishuIntegrations(): Promise<void> {
+  const now = Date.now();
+  const [staleIncomplete, staleSuperseded] = await Promise.all([
+    cleanupStaleIncompleteFeishuIntegrations({
+      cutoff: new Date(now - STALE_INCOMPLETE_INTEGRATION_TTL_MS),
+    }),
+    cleanupSupersededInactiveFeishuIntegrations({
+      cutoff: new Date(now - SUPERSEDED_INACTIVE_INTEGRATION_TTL_MS),
+    }),
+  ]);
+
+  const cleanupCandidates = [...staleIncomplete, ...staleSuperseded];
+  if (cleanupCandidates.length === 0) {
+    return;
+  }
+  const uniqueCleanupCandidates = Array.from(
+    new Map(cleanupCandidates.map((candidate) => [candidate.integrationId, candidate])).values()
+  );
+
+  let stoppedListenerCount = 0;
+  uniqueCleanupCandidates.forEach((candidate) => {
+    const listener = listeners.get(candidate.integrationId);
+    if (!listener || listener.state === 'stopped' || listener.stopRequested) return;
+    if (
+      stopListener(candidate.integrationId, {
+        reason: 'integration_deleted',
+        trigger: 'integration_cleanup_sweep',
+        logIfMissing: true,
+      })
+    ) {
+      stoppedListenerCount += 1;
+    }
+  });
+
+  logFeishuMonitor('info', 'feishu_integration_cleanup_completed', {
+    staleIncompleteCount: staleIncomplete.length,
+    supersededInactiveCount: staleSuperseded.length,
+    cleanedCount: uniqueCleanupCandidates.length,
+    stoppedListenerCount,
+    staleIncompleteTtlMs: STALE_INCOMPLETE_INTEGRATION_TTL_MS,
+    supersededInactiveTtlMs: SUPERSEDED_INACTIVE_INTEGRATION_TTL_MS,
+    cleanedIntegrationIds: uniqueCleanupCandidates.map((candidate) => candidate.integrationId),
+  });
+}
 export function startInactiveListenerSweeper(): void {
   if (inactiveListenerSweepTimer) return;
   inactiveListenerSweepTimer = setInterval(() => {
@@ -625,6 +675,22 @@ export function startInactiveListenerSweeper(): void {
   });
 }
 
+export function startFeishuIntegrationCleanupSweeper(): void {
+  if (integrationCleanupSweepTimer) return;
+  integrationCleanupSweepTimer = setInterval(() => {
+    void sweepStaleFeishuIntegrations().catch((error) => {
+      logFeishuMonitor('error', 'feishu_integration_cleanup_failed', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, INTEGRATION_CLEANUP_SWEEP_INTERVAL_MS);
+  integrationCleanupSweepTimer.unref?.();
+  logFeishuMonitor('info', 'feishu_integration_cleanup_sweeper_started', {
+    intervalMs: INTEGRATION_CLEANUP_SWEEP_INTERVAL_MS,
+    staleIncompleteTtlMs: STALE_INCOMPLETE_INTEGRATION_TTL_MS,
+    supersededInactiveTtlMs: SUPERSEDED_INACTIVE_INTEGRATION_TTL_MS,
+  });
+}
 export function getListenerStatus(integrationId: string): ListenerInfo | undefined {
   return listeners.get(integrationId);
 }
