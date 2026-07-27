@@ -724,12 +724,8 @@ export default function FeishuConfigWorkspace() {
       return;
     }
     setPageError(null);
-    const opened = openActionLink(verificationUrl, { newTab: true });
-    if (!opened) {
-      setPageError('当前环境拦截了新窗口，请允许打开新页面后重试。原配置页会保留在当前页面，不会再被跳转走。');
-      return;
-    }
     setHasOpenedVerificationWindow(true);
+    openActionLink(verificationUrl, { newTab: true });
   }, [openActionLink, verificationUrl]);
 
   const currentStep = useMemo(() => {
@@ -1842,11 +1838,11 @@ export default function FeishuConfigWorkspace() {
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-medium text-indigo-900">
-                                    {hasOpenedVerificationWindow ? '已在新页面打开飞书创建' : '飞书创建链接已就绪'}
+                                    {hasOpenedVerificationWindow ? '已发起创建，等待返回结果' : '飞书创建链接已就绪'}
                                   </div>
                                   <p className="mt-1 text-xs leading-4 text-slate-600">
                                     {hasOpenedVerificationWindow
-                                      ? '请在新页面完成飞书应用创建，当前配置页会留在这里自动等待结果。'
+                                      ? '当前配置页会留在这里自动等待后端回传创建成功状态。若新页面没有正常出现，可以点击“重新打开创建页”。'
                                       : '点击按钮后会只在新页面打开飞书创建页，当前配置页不会再被跳转走。'}
                                   </p>
                                 </div>
