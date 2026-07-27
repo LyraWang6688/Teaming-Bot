@@ -1177,16 +1177,19 @@ export default function FeishuConfigWorkspace() {
             stopCreateAppPolling();
             clearPendingAppRegistrationSession();
             setVerificationUrl(null);
-            setHasOpenedVerificationWindow(false);
             const completedIntegration = pollData?.data?.integration as IntegrationView | undefined;
             const completedIntegrationId = pollData?.data?.integrationId as string | undefined;
-            if (completedIntegration) {
-              setIntegration(completedIntegration);
-            }
-            if (completedIntegrationId) {
-              await loadIntegrationDetail(completedIntegrationId, { force: true });
-            } else {
-              await loadIntegrationDetail(null, { force: true, refreshList: true });
+            try {
+              if (completedIntegration) {
+                setIntegration(completedIntegration);
+              }
+              if (completedIntegrationId) {
+                await loadIntegrationDetail(completedIntegrationId, { force: true });
+              } else {
+                await loadIntegrationDetail(null, { force: true, refreshList: true });
+              }
+            } finally {
+              setHasOpenedVerificationWindow(false);
             }
           } else if (
             status === 'failed' ||
@@ -1834,7 +1837,7 @@ export default function FeishuConfigWorkspace() {
                       <CardContent className="min-h-0 flex-1 px-0 pb-0 pt-0">
                         {!integration ? (
                           <div className="rounded-lg border border-dashed border-indigo-200 bg-indigo-50 p-3">
-                            {verificationUrl ? (
+                            {verificationUrl || hasOpenedVerificationWindow ? (
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-medium text-indigo-900">
