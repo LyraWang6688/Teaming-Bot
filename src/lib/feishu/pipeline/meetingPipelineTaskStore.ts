@@ -19,6 +19,9 @@ export type MeetingPipelineTaskPayload = {
   reportUrl?: string;
   skippedReason?: 'integration_inactive';
   skippedAt?: string;
+  telemetry?: {
+    eventReceivedAt?: string;
+  };
   target?: {
     projectId: string;
     orgTargetId: string;
@@ -36,6 +39,7 @@ type UpsertMeetingPipelineTaskInput = {
   eventType?: string;
   meetingId: string;
   minuteToken?: string;
+  eventReceivedAt?: string;
   target?: MeetingPipelineTargetSnapshot;
 };
 
@@ -135,6 +139,13 @@ export async function upsertMeetingPipelineTaskForMinuteGenerated(
   const db = getDb();
   const existing = await getMeetingPipelineTaskByMeeting(input.integration.id, input.meetingId);
   const payload: MeetingPipelineTaskPayload = {
+    ...(input.eventReceivedAt
+      ? {
+          telemetry: {
+            eventReceivedAt: input.eventReceivedAt,
+          },
+        }
+      : {}),
     ...(input.target ? { target: input.target } : {}),
   };
 

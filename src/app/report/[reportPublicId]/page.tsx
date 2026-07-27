@@ -15,6 +15,10 @@ type ReportPageProps = {
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function getNowMs(): number {
+  return Date.now();
+}
+
 export async function generateMetadata({ params }: ReportPageProps): Promise<Metadata> {
   const { reportPublicId } = await params;
   if (!UUID_PATTERN.test(reportPublicId)) {
@@ -32,18 +36,27 @@ export async function generateMetadata({ params }: ReportPageProps): Promise<Met
 }
 
 export default async function PersistentReportPage({ params }: ReportPageProps) {
+  const loadStartedAt = getNowMs();
   const { reportPublicId } = await params;
   if (!UUID_PATTERN.test(reportPublicId)) {
     notFound();
   }
 
+  logRuntimeMonitor('info', 'meeting_report', 'meeting_report_load_started', {
+    reportPublicId,
+  });
+
+  const queryStartedAt = getNowMs();
   const report = await getMeetingReportByPublicId(reportPublicId);
+  const dbQueryDurationMs = getNowMs() - queryStartedAt;
   if (!report || !report.analysisResult || !report.completedAt) {
     logRuntimeMonitor('warn', 'meeting_report', 'meeting_report_not_found', {
       reportPublicId,
       found: Boolean(report),
       status: report?.status || null,
       hasAnalysis: Boolean(report?.analysisResult),
+      dbQueryDurationMs,
+      loadDurationMs: getNowMs() - loadStartedAt,
     });
     notFound();
   }
@@ -55,6 +68,8 @@ export default async function PersistentReportPage({ params }: ReportPageProps) 
     integrationId: report.integrationId,
     projectId: report.projectId,
     orgTargetId: report.orgTargetId,
+    dbQueryDurationMs,
+    loadDurationMs: getNowMs() - loadStartedAt,
   });
 
   return (

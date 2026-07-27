@@ -54,7 +54,7 @@ export async function sendMeetingReportNotification(options: {
   meetingName: string | null;
   recordId: string;
   reportUrl: string;
-}): Promise<void> {
+}): Promise<{ messageId: string | null; durationMs: number }> {
   const {
     integration,
     meetingId,
@@ -62,6 +62,7 @@ export async function sendMeetingReportNotification(options: {
     recordId,
     reportUrl,
   } = options;
+  const startedAt = Date.now();
   const authorization = await getLatestFeishuAuthorization(integration.id);
   const authorizedOpenId = authorization?.authorizedOpenId || null;
   const maskedAuthorizedOpenId = maskSecret(authorizedOpenId);
@@ -97,6 +98,7 @@ export async function sendMeetingReportNotification(options: {
       reportUrl,
       authorizedOpenId: maskedAuthorizedOpenId,
       reason: 'authorized_open_id_missing',
+      durationMs: Date.now() - startedAt,
       ...toErrorContext(error),
     });
     throw error;
@@ -123,6 +125,9 @@ export async function sendMeetingReportNotification(options: {
       throw new Error(response.msg || '飞书消息发送失败');
     }
 
+    const messageId = response.data?.message_id || null;
+    const durationMs = Date.now() - startedAt;
+
     await writeAuditLog({
       userId: integration.userId,
       integrationId: integration.id,
@@ -134,7 +139,7 @@ export async function sendMeetingReportNotification(options: {
         recordId,
         reportUrl,
         authorizedOpenId: maskedAuthorizedOpenId,
-        messageId: response.data?.message_id || null,
+        messageId,
       },
     });
 
@@ -144,8 +149,13 @@ export async function sendMeetingReportNotification(options: {
       recordId,
       reportUrl,
       authorizedOpenId: maskedAuthorizedOpenId,
-      messageId: response.data?.message_id || null,
+      messageId,
+      durationMs,
     });
+    return {
+      messageId,
+      durationMs,
+    };
   } catch (error) {
     await writeAuditLog({
       userId: integration.userId,
@@ -168,6 +178,7 @@ export async function sendMeetingReportNotification(options: {
       recordId,
       reportUrl,
       authorizedOpenId: maskedAuthorizedOpenId,
+      durationMs: Date.now() - startedAt,
       ...toErrorContext(error),
     });
     throw error;

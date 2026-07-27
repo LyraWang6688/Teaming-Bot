@@ -93,6 +93,8 @@ type MinuteGeneratedSource = {
   meetingRecordId?: string;
   reportPublicId?: string;
   meetingDetails?: MeetingDetails | null;
+  eventReceivedAt?: string;
+  taskStartedAt?: string;
 };
 
 const processingMeetingIds = new Map<string, number>();
@@ -118,6 +120,43 @@ function getMeetingPipelineKey(context: Pick<MinuteGeneratedSource, 'meetingId' 
 function getTargetFromPayload(payload: Record<string, unknown>): string | undefined {
   const target = asRecord(payload.target);
   return asString(target.orgTargetId);
+}
+
+function getEventReceivedAtFromPayload(payload: Record<string, unknown>): string | undefined {
+  const telemetry = asRecord(payload.telemetry);
+  return asString(telemetry.eventReceivedAt);
+}
+
+function parseIsoTimestamp(value?: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildPipelineDurationContext(
+  context: Pick<MinuteGeneratedSource, 'eventReceivedAt' | 'taskStartedAt'>,
+  finishedAtMs: number
+): Record<string, number> {
+  const durations: Record<string, number> = {};
+  const eventReceivedAtMs = parseIsoTimestamp(context.eventReceivedAt);
+  const taskStartedAtMs = parseIsoTimestamp(context.taskStartedAt);
+
+  if (eventReceivedAtMs !== null) {
+    durations.eventToNowDurationMs = Math.max(finishedAtMs - eventReceivedAtMs, 0);
+  }
+
+  if (taskStartedAtMs !== null) {
+    durations.processingDurationMs = Math.max(finishedAtMs - taskStartedAtMs, 0);
+  }
+
+  if (eventReceivedAtMs !== null && taskStartedAtMs !== null) {
+    durations.queueDelayMs = Math.max(taskStartedAtMs - eventReceivedAtMs, 0);
+  }
+
+  return durations;
 }
 
 async function buildMeetingBaseFields(
@@ -222,6 +261,7 @@ export async function enqueueFeishuEvent(
 ): Promise<EnqueueResult> {
   const eventId = getEventId(envelope);
   const eventType = getEventType(envelope);
+  const eventReceivedAt = new Date().toISOString();
 
   if (!eventId) {
     return { accepted: false, duplicate: false, eventType };
@@ -269,6 +309,7 @@ export async function enqueueFeishuEvent(
     sourceType,
     minuteToken,
     meetingId,
+    eventReceivedAt,
   });
 
   if (!minuteToken) {
@@ -309,6 +350,7 @@ export async function enqueueFeishuEvent(
     eventType,
     minuteToken,
     meetingId,
+    eventReceivedAt,
     target: targetSnapshot,
   });
 
@@ -462,6 +504,7 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
       recordId: record.recordId,
     });
 
+    const transcriptStartedAt = Date.now();
     const transcript = await fetchTranscriptWithRetries(context);
     await updateMeetingRecordStatus(persistedMeeting.id, {
       status: 'transcript_ready',
@@ -475,6 +518,7 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
       minuteToken: context.minuteToken,
       recordId: record.recordId,
       transcriptLength: transcript.length,
+      durationMs: Date.now() - transcriptStartedAt,
     });
 
     const latestRecord = (await getMeetingRecordForContext(config, context)) || record;
@@ -518,6 +562,7 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
       minuteToken: context.minuteToken,
       recordId: record.recordId,
       attempt: context.attempt,
+      ...buildPipelineDurationContext(context, Date.now()),
       ...toErrorContext(error),
     });
     if (context.taskId) {
@@ -616,6 +661,7 @@ async function completeMeetingAnalysis(
   minuteToken: string,
   context: MinuteGeneratedSource
 ) {
+  const completionStartedAt = Date.now();
   const targetContext = {
     projectId: config.orgTarget?.projectId || null,
     orgTargetId: config.orgTarget?.id || null,
@@ -640,6 +686,7 @@ async function completeMeetingAnalysis(
     ...targetContext,
   });
 
+  const transcriptWriteStartedAt = Date.now();
   await setMeetingProcessStatus(config, record.recordId, FEISHU_PROCESS_STATUS.analyzing, {
     '会议文字稿': transcript,
   });
@@ -667,6 +714,7 @@ async function completeMeetingAnalysis(
     minuteToken,
     recordId: record.recordId,
     transcriptLength: transcript.length,
+    durationMs: Date.now() - transcriptWriteStartedAt,
     ...targetContext,
   });
 
@@ -713,6 +761,7 @@ async function completeMeetingAnalysis(
   });
 
   let persistedReport;
+  const reportPersistStartedAt = Date.now();
   try {
     persistedReport = await persistMeetingReport({
       meetingRecordId: context.meetingRecordId,
@@ -752,6 +801,7 @@ async function completeMeetingAnalysis(
     meetingId: context.meetingId,
     meetingRecordId: persistedReport.id,
     reportPublicId: persistedReport.reportPublicId,
+    durationMs: Date.now() - reportPersistStartedAt,
   });
   await writeAuditLog({
     userId: context.integration.userId,
@@ -787,6 +837,7 @@ async function completeMeetingAnalysis(
     recordId: record.recordId,
     ...targetContext,
   });
+  const baseSyncStartedAt = Date.now();
   try {
     await setMeetingProcessStatus(config, record.recordId, FEISHU_PROCESS_STATUS.completed, {
       '会议文字稿': transcript,
@@ -837,6 +888,7 @@ async function completeMeetingAnalysis(
     meetingRecordId: persistedReport.id,
     reportPublicId: persistedReport.reportPublicId,
     reportUrl,
+    durationMs: Date.now() - baseSyncStartedAt,
     ...targetContext,
   });
   await writeAuditLog({
@@ -855,12 +907,15 @@ async function completeMeetingAnalysis(
     },
   });
 
+  const pipelineCompletedAt = Date.now();
   logFeishuMonitor('info', 'meeting_pipeline_completed', {
     meetingId: context.meetingId,
     minuteToken,
     recordId: record.recordId,
     reportPublicId: persistedReport.reportPublicId,
     reportUrl,
+    completionDurationMs: pipelineCompletedAt - completionStartedAt,
+    ...buildPipelineDurationContext(context, pipelineCompletedAt),
     ...targetContext,
   });
   if (context.taskId) {
@@ -874,12 +929,24 @@ async function completeMeetingAnalysis(
   }
 
   try {
-    await sendMeetingReportNotification({
+    const notificationResult = await sendMeetingReportNotification({
       integration: context.integration,
       meetingId: context.meetingId,
       meetingName: context.meetingDetails?.topic ?? null,
       recordId: record.recordId,
       reportUrl,
+    });
+    logFeishuMonitor('info', 'meeting_pipeline_notification_completed', {
+      integrationId: context.integration.id,
+      meetingId: context.meetingId,
+      minuteToken,
+      recordId: record.recordId,
+      reportPublicId: persistedReport.reportPublicId,
+      reportUrl,
+      messageId: notificationResult.messageId,
+      notificationDurationMs: notificationResult.durationMs,
+      ...buildPipelineDurationContext(context, Date.now()),
+      ...targetContext,
     });
   } catch (error) {
     logFeishuMonitor('warn', 'meeting_pipeline_notification_skipped', {
@@ -1171,6 +1238,8 @@ function buildRecoveryContextFromTask(
     attempt: task.attemptCount,
     recordId: task.baseRecordId || undefined,
     targetOrgTargetId: getTargetFromPayload(task.payload),
+    eventReceivedAt: getEventReceivedAtFromPayload(task.payload),
+    taskStartedAt: task.startedAt?.toISOString(),
   };
 }
 

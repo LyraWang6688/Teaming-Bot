@@ -682,6 +682,7 @@ export default function FeishuConfigWorkspace() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [showCelebration, setShowCelebration] = useState(false);
   const [verificationUrl, setVerificationUrl] = useState<string | null>(null);
+  const [hasOpenedVerificationWindow, setHasOpenedVerificationWindow] = useState(false);
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const [showOrgDialog, setShowOrgDialog] = useState(false);
   const [authorizePollStatus, setAuthorizePollStatus] = useState<string>('idle');
@@ -710,11 +711,26 @@ export default function FeishuConfigWorkspace() {
       const popup = window.open(url, '_blank', 'noopener,noreferrer');
       if (popup) {
         popup.opener = null;
-        return;
+        return true;
       }
+      return false;
     }
     window.location.href = url;
+    return true;
   }, []);
+
+  const handleOpenVerificationWindow = useCallback(() => {
+    if (!verificationUrl) {
+      return;
+    }
+    setPageError(null);
+    const opened = openActionLink(verificationUrl, { newTab: true });
+    if (!opened) {
+      setPageError('当前环境拦截了新窗口，请允许打开新页面后重试。原配置页会保留在当前页面，不会再被跳转走。');
+      return;
+    }
+    setHasOpenedVerificationWindow(true);
+  }, [openActionLink, verificationUrl]);
 
   const currentStep = useMemo(() => {
     if (!user) return 1;
@@ -1165,6 +1181,7 @@ export default function FeishuConfigWorkspace() {
             stopCreateAppPolling();
             clearPendingAppRegistrationSession();
             setVerificationUrl(null);
+            setHasOpenedVerificationWindow(false);
             const completedIntegration = pollData?.data?.integration as IntegrationView | undefined;
             const completedIntegrationId = pollData?.data?.integrationId as string | undefined;
             if (completedIntegration) {
@@ -1184,6 +1201,7 @@ export default function FeishuConfigWorkspace() {
             stopCreateAppPolling();
             clearPendingAppRegistrationSession();
             setVerificationUrl(null);
+            setHasOpenedVerificationWindow(false);
             setPageError(pollData?.data?.error || pollData?.error || '创建失败');
           }
         } catch (e) {
@@ -1222,6 +1240,7 @@ export default function FeishuConfigWorkspace() {
       return;
     }
 
+    setHasOpenedVerificationWindow(true);
     startCreateAppPolling(pendingSession);
   }, [integration, startCreateAppPolling, user]);
 
@@ -1276,6 +1295,7 @@ export default function FeishuConfigWorkspace() {
     setIsCreatingApp(true);
     setPageError(null);
     setVerificationUrl(null);
+    setHasOpenedVerificationWindow(false);
     clearPendingAppRegistrationSession();
     stopCreateAppPolling();
     try {
@@ -1821,11 +1841,37 @@ export default function FeishuConfigWorkspace() {
                             {verificationUrl ? (
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                 <div className="min-w-0 flex-1">
-                                  <div className="text-sm font-medium text-indigo-900">飞书创建链接已就绪</div>
+                                  <div className="text-sm font-medium text-indigo-900">
+                                    {hasOpenedVerificationWindow ? '已在新页面打开飞书创建' : '飞书创建链接已就绪'}
+                                  </div>
+                                  <p className="mt-1 text-xs leading-4 text-slate-600">
+                                    {hasOpenedVerificationWindow
+                                      ? '请在新页面完成飞书应用创建，当前配置页会留在这里自动等待结果。'
+                                      : '点击按钮后会只在新页面打开飞书创建页，当前配置页不会再被跳转走。'}
+                                  </p>
                                 </div>
-                                <Button type="button" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => openActionLink(verificationUrl, { newTab: true })}>
-                                  前往飞书创建
-                                </Button>
+                                <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                                  {!hasOpenedVerificationWindow ? (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      className="w-full shrink-0 sm:w-auto"
+                                      onClick={handleOpenVerificationWindow}
+                                    >
+                                      前往飞书创建
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="w-full shrink-0 sm:w-auto"
+                                      onClick={handleOpenVerificationWindow}
+                                    >
+                                      重新打开创建页
+                                    </Button>
+                                  )}
+                                </div>
                               </div>
                             ) : (
                               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
