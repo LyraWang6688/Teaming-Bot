@@ -26,8 +26,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
+  const meetingAnalysisEnabled = process.env.NEXT_PUBLIC_MEETING_ANALYSIS_ENABLED === 'true';
   const navItems = [
-    { href: '/', label: '会议分析', icon: Upload },
+    ...(meetingAnalysisEnabled
+      ? [{ href: '/', label: '会议分析', icon: Upload }]
+      : []),
     { href: '/feishu-config', label: '飞书配置', icon: Settings },
   ];
   const loginHref = pathname && pathname !== '/login'

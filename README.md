@@ -45,6 +45,8 @@ PROJECT_PUBLIC_URL=https://meeting.bamamei.online
 DATABASE_URL=
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
+# 暂时关闭前端手动会议分析入口；恢复开放时改为 true 并重新构建
+NEXT_PUBLIC_MEETING_ANALYSIS_ENABLED=false
 SUPABASE_SERVICE_ROLE_KEY=
 APP_ENCRYPTION_KEY=
 
@@ -56,9 +58,9 @@ DOUBAO_MODEL=doubao-seed-1-8-251228
 FEISHU_ENABLE_STARTUP_RECOVERY=true
 ```
 
-## 两条可用入口
+## 分析入口
 
-- 手动入口：前端上传 `.txt/.docx`，调用 `/api/analyze/tasks` 创建 `web_analysis_tasks` 任务并轮询结果
+- 手动入口：由 `NEXT_PUBLIC_MEETING_ANALYSIS_ENABLED` 控制。当前默认关闭；开启后可在前端上传 `.txt/.docx`，调用 `/api/analyze/tasks` 创建 `web_analysis_tasks` 任务并轮询结果
 - 自动入口：飞书 SDK 长连接监听 `minutes.minute.generated_v1` 妙记生成事件
 
 两条入口共享同一套分析服务与报告渲染逻辑。

@@ -5,6 +5,7 @@ services:
       args:
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_MEETING_ANALYSIS_ENABLED: ${NEXT_PUBLIC_MEETING_ANALYSIS_ENABLED:-false}
         PROJECT_PUBLIC_URL: ${PROJECT_PUBLIC_URL}
     container_name: meeting-analysis
     restart: unless-stopped
