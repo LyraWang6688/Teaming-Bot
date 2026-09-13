@@ -2,7 +2,6 @@ import { maskSecret } from '@/lib/security/crypto';
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { createFeishuSdkClient } from '../integration/sdkClient';
 import {
-  getLatestFeishuAuthorization,
   type FeishuIntegrationContext,
   writeAuditLog,
 } from '../integration/integrationStore';
@@ -54,6 +53,7 @@ export async function sendMeetingReportNotification(options: {
   meetingName: string | null;
   recordId: string;
   reportUrl: string;
+  organizerOpenId: string | null;
 }): Promise<{ messageId: string | null; durationMs: number }> {
   const {
     integration,
@@ -61,22 +61,21 @@ export async function sendMeetingReportNotification(options: {
     meetingName,
     recordId,
     reportUrl,
+    organizerOpenId,
   } = options;
   const startedAt = Date.now();
-  const authorization = await getLatestFeishuAuthorization(integration.id);
-  const authorizedOpenId = authorization?.authorizedOpenId || null;
-  const maskedAuthorizedOpenId = maskSecret(authorizedOpenId);
+  const maskedOrganizerOpenId = maskSecret(organizerOpenId);
 
   logFeishuMonitor('info', 'report_notification_started', {
     integrationId: integration.id,
     meetingId,
     recordId,
     reportUrl,
-    authorizedOpenId: maskedAuthorizedOpenId,
+    organizerOpenId: maskedOrganizerOpenId,
   });
 
-  if (!authorization || authorization.status !== 'authorized' || !authorizedOpenId) {
-    const error = new Error('当前集成缺少可用的授权用户 open_id，无法发送会议报告通知。');
+  if (!organizerOpenId) {
+    const error = new Error('缺少会议创建人 open_id，无法发送会议报告通知。');
     await writeAuditLog({
       userId: integration.userId,
       integrationId: integration.id,
@@ -87,8 +86,8 @@ export async function sendMeetingReportNotification(options: {
         meetingId,
         recordId,
         reportUrl,
-        authorizedOpenId: maskedAuthorizedOpenId,
-        reason: 'authorized_open_id_missing',
+        organizerOpenId: maskedOrganizerOpenId,
+        reason: 'organizer_open_id_missing',
       },
     });
     logFeishuMonitor('error', 'report_notification_failed', {
@@ -96,8 +95,8 @@ export async function sendMeetingReportNotification(options: {
       meetingId,
       recordId,
       reportUrl,
-      authorizedOpenId: maskedAuthorizedOpenId,
-      reason: 'authorized_open_id_missing',
+      organizerOpenId: maskedOrganizerOpenId,
+      reason: 'organizer_open_id_missing',
       durationMs: Date.now() - startedAt,
       ...toErrorContext(error),
     });
@@ -112,7 +111,7 @@ export async function sendMeetingReportNotification(options: {
         receive_id_type: 'open_id',
       },
       data: {
-        receive_id: authorizedOpenId,
+        receive_id: organizerOpenId,
         msg_type: 'interactive',
         content: buildReportCardContent({
           meetingName,
@@ -138,7 +137,7 @@ export async function sendMeetingReportNotification(options: {
         meetingId,
         recordId,
         reportUrl,
-        authorizedOpenId: maskedAuthorizedOpenId,
+        organizerOpenId: maskedOrganizerOpenId,
         messageId,
       },
     });
@@ -148,7 +147,7 @@ export async function sendMeetingReportNotification(options: {
       meetingId,
       recordId,
       reportUrl,
-      authorizedOpenId: maskedAuthorizedOpenId,
+      organizerOpenId: maskedOrganizerOpenId,
       messageId,
       durationMs,
     });
@@ -167,7 +166,7 @@ export async function sendMeetingReportNotification(options: {
         meetingId,
         recordId,
         reportUrl,
-        authorizedOpenId: maskedAuthorizedOpenId,
+        organizerOpenId: maskedOrganizerOpenId,
         errorType: error instanceof Error ? error.name : 'UnknownError',
       },
     });
@@ -177,7 +176,7 @@ export async function sendMeetingReportNotification(options: {
       meetingId,
       recordId,
       reportUrl,
-      authorizedOpenId: maskedAuthorizedOpenId,
+      organizerOpenId: maskedOrganizerOpenId,
       durationMs: Date.now() - startedAt,
       ...toErrorContext(error),
     });

@@ -1,6 +1,8 @@
 export type MeetingDetails = {
   meetingId: string;
   topic: string | null;
+  organizerOpenId: string | null;
+  hostOpenId: string | null;
 };
 
 export type MeetingDetailsErrorCode =

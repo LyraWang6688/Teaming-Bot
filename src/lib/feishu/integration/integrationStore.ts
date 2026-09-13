@@ -83,6 +83,13 @@ export type FeishuAuthorizationContext = {
   updatedAt: string;
 };
 
+export type InitializedAuthorizedIntegrationMatch = {
+  integrationId: string;
+  userId: string;
+  selectedOrgTargetId: string | null;
+  initializedAt: string;
+};
+
 export type FeishuCheckStatusView = {
   appCredentialStatus: string;
   permissionStatus: string;
@@ -632,6 +639,48 @@ export async function getLatestFeishuAuthorizationContext(
     .limit(1);
 
   return row ? mapAuthorizationContext(row) : null;
+}
+
+export async function findActiveInitializedIntegrationByAuthorizedOpenId(options: {
+  authorizedOpenId: string;
+  selectedOrgTargetId?: string | null;
+}): Promise<InitializedAuthorizedIntegrationMatch | null> {
+  const db = getDb();
+  const filters = [
+    eq(feishuAuthorizations.authorizedOpenId, options.authorizedOpenId),
+    eq(feishuAuthorizations.status, 'authorized'),
+    eq(feishuIntegrations.isActive, true),
+    isNotNull(feishuIntegrations.initializedAt),
+    isNull(feishuIntegrations.deletedAt),
+  ];
+
+  if (options.selectedOrgTargetId) {
+    filters.push(eq(feishuIntegrations.selectedOrgTargetId, options.selectedOrgTargetId));
+  }
+
+  const [row] = await db
+    .select({
+      integrationId: feishuIntegrations.id,
+      userId: feishuIntegrations.userId,
+      selectedOrgTargetId: feishuIntegrations.selectedOrgTargetId,
+      initializedAt: feishuIntegrations.initializedAt,
+    })
+    .from(feishuIntegrations)
+    .innerJoin(feishuAuthorizations, eq(feishuAuthorizations.integrationId, feishuIntegrations.id))
+    .where(and(...filters))
+    .orderBy(desc(feishuIntegrations.updatedAt))
+    .limit(1);
+
+  if (!row?.initializedAt) {
+    return null;
+  }
+
+  return {
+    integrationId: row.integrationId,
+    userId: row.userId,
+    selectedOrgTargetId: row.selectedOrgTargetId,
+    initializedAt: row.initializedAt.toISOString(),
+  };
 }
 
 export async function upsertFeishuAuthorization(

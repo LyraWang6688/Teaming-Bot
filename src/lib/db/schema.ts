@@ -207,6 +207,7 @@ export const meetingRecords = pgTable(
     analysisResult: jsonb('analysis_result').$type<AnalysisResult>(),
     analysisSchemaVersion: integer('analysis_schema_version'),
     analysisSummary: text('analysis_summary'),
+    transcript: text('transcript'),
     transcriptStoredAt: timestamp('transcript_stored_at', { withTimezone: true }),
     analyzedAt: timestamp('analyzed_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),

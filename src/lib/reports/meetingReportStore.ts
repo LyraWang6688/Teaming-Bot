@@ -31,7 +31,10 @@ function meetingDetailsFields(details?: MeetingDetails | null) {
     return {};
   }
 
-  return {};
+  return {
+    organizerOpenId: details.organizerOpenId,
+    hostOpenId: details.hostOpenId,
+  };
 }
 
 export async function getMeetingRecordByIntegrationAndMeeting(
@@ -161,6 +164,33 @@ export async function updateMeetingRecordStatus(
       updatedAt: new Date(),
     })
     .where(eq(meetingRecords.id, meetingRecordId));
+}
+
+/**
+ * 更新会议记录的转写稿字段
+ *
+ * Supabase 作为转写稿的唯一真相源，Base 同步从 Supabase 读取。
+ * 返回更新后的完整行，供调用方同步到 Base。
+ */
+export async function updateMeetingRecordTranscript(
+  meetingRecordId: string,
+  transcript: string
+): Promise<MeetingRecordRow> {
+  const db = getDb();
+  const [row] = await db
+    .update(meetingRecords)
+    .set({
+      transcript,
+      transcriptStoredAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(meetingRecords.id, meetingRecordId))
+    .returning();
+
+  if (!row) {
+    throw new Error('更新会议转写稿失败：会议记录不存在。');
+  }
+  return row;
 }
 
 export async function persistMeetingReport(

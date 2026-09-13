@@ -9,6 +9,7 @@
  * - 分析中：已拿到转录稿，正在执行 Teaming 分析
  * - 已完成：分析结果和报告数据已写回多维表格
  * - 失败：处理失败
+ * - 门槛未通过：会议创建人未在已初始化集成列表中，仅留档 Supabase，不写 Base
  */
 export const FEISHU_PROCESS_STATUS = {
   minuteGenerated: '妙记已生成',
@@ -16,6 +17,7 @@ export const FEISHU_PROCESS_STATUS = {
   analyzing: '分析中',
   completed: '已完成',
   failed: '失败',
+  gatedSkipped: '门槛未通过',
 } as const;
 
 export type FeishuProcessStatus =
@@ -33,4 +35,22 @@ export const FEISHU_STATUS_OPTIONS = [
   { name: FEISHU_PROCESS_STATUS.analyzing, color: 1 },
   { name: FEISHU_PROCESS_STATUS.completed, color: 2 },
   { name: FEISHU_PROCESS_STATUS.failed, color: 3 },
+  { name: FEISHU_PROCESS_STATUS.gatedSkipped, color: 0 },
 ] as const;
+
+/**
+ * 将 Supabase 英文 status 映射为 Base 中文显示值
+ * gatedSkipped 不写入 Base，返回 null
+ */
+export function mapStatusToChinese(status: string | null): string | null {
+  if (!status) return null;
+  const map: Record<string, string> = {
+    meeting_ended: FEISHU_PROCESS_STATUS.minuteGenerated,
+    fetching_transcript: FEISHU_PROCESS_STATUS.fetchingTranscript,
+    analyzing: FEISHU_PROCESS_STATUS.analyzing,
+    completed: FEISHU_PROCESS_STATUS.completed,
+    failed: FEISHU_PROCESS_STATUS.failed,
+    gated_skipped: FEISHU_PROCESS_STATUS.gatedSkipped,
+  };
+  return map[status] ?? null;
+}

@@ -17,7 +17,11 @@ export type MeetingPipelineTaskStatus =
 
 export type MeetingPipelineTaskPayload = {
   reportUrl?: string;
-  skippedReason?: 'integration_inactive';
+  skippedReason?:
+    | 'integration_inactive'
+    | 'meeting_organizer_unresolved'
+    | 'meeting_organizer_not_initialized'
+    | 'meeting_organizer_owned_by_other_integration';
   skippedAt?: string;
   telemetry?: {
     eventReceivedAt?: string;
