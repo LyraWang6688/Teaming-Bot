@@ -51,25 +51,6 @@ function getIntegrationCheckFlights(): Map<string, Promise<IntegrationCheckResul
   return globalStore[CHECK_FLIGHTS_KEY] as Map<string, Promise<IntegrationCheckResult>>;
 }
 
-type BitableAppInfoResult = {
-  app?: {
-    app_token?: string;
-    default_table_id?: string;
-    name?: string;
-    url?: string;
-  };
-};
-
-type BitableFieldListResult = {
-  has_more?: boolean;
-  page_token?: string;
-  items?: Array<{
-    field_id: string;
-    field_name: string;
-    type: number;
-  }>;
-};
-
 type CheckFailure = {
   type: string;
   message: string;
@@ -134,8 +115,7 @@ function isAllChecksPassed(statuses: IntegrationCheckStatuses): boolean {
     statuses.permissionStatus === 'success' &&
     statuses.minuteSubscriptionStatus === 'success' &&
     statuses.eventSubscriptionStatus === 'success' &&
-    statuses.oauthStatus === 'authorized' &&
-    statuses.baseStatus === 'success'
+    statuses.oauthStatus === 'authorized'
   );
 }
 
@@ -146,7 +126,7 @@ function createInitialStatuses(): IntegrationCheckStatuses {
     minuteSubscriptionStatus: 'pending',
     eventSubscriptionStatus: 'pending',
     oauthStatus: 'pending',
-    baseStatus: 'pending',
+    baseStatus: 'success',
   };
 }
 
@@ -203,15 +183,6 @@ function getListenerPrerequisiteFailures(
       code: 'organization_not_selected',
       gate: 'organization',
       message: '尚未选择组织。',
-    });
-  }
-
-  if (statuses.baseStatus !== 'success') {
-    failures.push({
-      code: statuses.baseStatus === 'failed' ? 'base_access_failed' : 'base_access_pending',
-      gate: 'base',
-      status: statuses.baseStatus,
-      message: '目标多维表格尚未通过可访问校验。',
     });
   }
 
@@ -284,33 +255,6 @@ async function subscribeMinuteGeneratedEvent(options: {
     });
     throw error;
   }
-}
-
-async function listAllBitableFields(
-  integration: NonNullable<Awaited<ReturnType<typeof getUserFeishuIntegrationContext>>>,
-  appToken: string,
-  tableId: string
-): Promise<NonNullable<BitableFieldListResult['items']>> {
-  const fields: NonNullable<BitableFieldListResult['items']> = [];
-  let pageToken: string | undefined;
-
-  do {
-    const query = new URLSearchParams({ page_size: '100' });
-    if (pageToken) {
-      query.set('page_token', pageToken);
-    }
-
-    const fieldList = await callFeishuIntegrationUserOpenApi<BitableFieldListResult>(
-      integration,
-      'GET',
-      `/bitable/v1/apps/${appToken}/tables/${tableId}/fields?${query.toString()}`
-    );
-
-    fields.push(...(fieldList.items || []));
-    pageToken = fieldList.has_more ? fieldList.page_token : undefined;
-  } while (pageToken);
-
-  return fields;
 }
 
 async function executeFeishuIntegrationChecks(options: {
@@ -413,9 +357,9 @@ async function executeFeishuIntegrationChecks(options: {
       pending: true,
       provider: 'user_openapi',
       eventKey: MINUTE_GENERATED_EVENT,
-      message: '妙记生成事件会在用户授权、Base 与权限校验通过后订阅。',
+      message: '妙记生成事件会在用户授权与权限校验通过后订阅。',
     },
-    message: '事件长连接会在妙记事件订阅、组织、Base 与用户权限全部通过后启动。',
+    message: '事件长连接会在妙记事件订阅、组织与用户权限全部通过后启动。',
   };
 
   const selectedOrgTarget = integration.selectedOrgTargetId
@@ -429,16 +373,14 @@ async function executeFeishuIntegrationChecks(options: {
       message: '请先选择所在组织。',
     };
     details.base = {
-      ok: false,
-      pending: true,
-      message: '尚未选择组织，无法确定目标多维表格。',
+      ok: true,
+      message: 'Base 校验已跳过，数据源为 Supabase，写入时按需访问多维表格。',
     };
   } else if (!selectedOrgTarget) {
     const failure = {
       type: 'org_target_unavailable',
       message: '所选组织对应的多维表格配置不可用，请联系管理员确认当前项目配置。',
     };
-    statuses.baseStatus = 'failed';
     failures.push(failure);
     details.organization = {
       ok: false,
@@ -446,10 +388,10 @@ async function executeFeishuIntegrationChecks(options: {
       message: failure.message,
     };
     details.base = {
-      ok: false,
-      message: failure.message,
+      ok: true,
+      message: 'Base 校验已跳过。',
     };
-  } else if (statuses.oauthStatus !== 'authorized') {
+  } else {
     details.organization = {
       ok: true,
       projectId: selectedOrgTarget.projectId,
@@ -458,88 +400,12 @@ async function executeFeishuIntegrationChecks(options: {
       orgName: selectedOrgTarget.orgName,
     };
     details.base = {
-      ok: false,
-      pending: true,
+      ok: true,
       appToken: selectedOrgTarget.baseAppToken,
       tableId: selectedOrgTarget.tableId,
       baseUrl: selectedOrgTarget.baseUrl,
-      message: '请先完成飞书用户授权，系统才能检查目标多维表格访问权限。',
+      message: 'Base 校验已跳过，数据源为 Supabase，写入时按需访问多维表格。',
     };
-  } else {
-    try {
-      logRuntimeMonitor('info', 'integration_checks', 'org_target_access_check_started', {
-        userId: options.userId,
-        integrationId: integration.id,
-        projectId: selectedOrgTarget.projectId,
-        orgTargetId: selectedOrgTarget.id,
-        orgKey: selectedOrgTarget.orgKey,
-        orgName: selectedOrgTarget.orgName,
-        tableId: selectedOrgTarget.tableId,
-      });
-
-      const appInfo = await callFeishuIntegrationUserOpenApi<BitableAppInfoResult>(
-        integration,
-        'GET',
-        `/bitable/v1/apps/${selectedOrgTarget.baseAppToken}`
-      );
-      const fields = await listAllBitableFields(
-        integration,
-        selectedOrgTarget.baseAppToken,
-        selectedOrgTarget.tableId
-      );
-      statuses.baseStatus = 'success';
-      details.organization = {
-        ok: true,
-        projectId: selectedOrgTarget.projectId,
-        orgTargetId: selectedOrgTarget.id,
-        orgKey: selectedOrgTarget.orgKey,
-        orgName: selectedOrgTarget.orgName,
-      };
-      details.base = {
-        ok: true,
-        appToken: selectedOrgTarget.baseAppToken,
-        tableId: selectedOrgTarget.tableId,
-        baseUrl: selectedOrgTarget.baseUrl,
-        appName: appInfo.app?.name || null,
-        defaultTableId: appInfo.app?.default_table_id || null,
-        fieldCount: fields.length,
-        validationMode: 'read_access_only',
-        message: '当前授权用户可以访问所选组织对应的多维表格。',
-      };
-
-      logRuntimeMonitor('info', 'integration_checks', 'org_target_access_check_succeeded', {
-        userId: options.userId,
-        integrationId: integration.id,
-        projectId: selectedOrgTarget.projectId,
-        orgTargetId: selectedOrgTarget.id,
-        orgKey: selectedOrgTarget.orgKey,
-        orgName: selectedOrgTarget.orgName,
-        tableId: selectedOrgTarget.tableId,
-        fieldCount: fields.length,
-        appName: appInfo.app?.name || null,
-      });
-    } catch (error) {
-      const failure = pickFailure(error, 'BaseCheckFailed');
-      statuses.baseStatus = 'failed';
-      failures.push(failure);
-      logRuntimeMonitor('error', 'integration_checks', 'org_target_access_check_failed', {
-        userId: options.userId,
-        integrationId: integration.id,
-        projectId: selectedOrgTarget.projectId,
-        orgTargetId: selectedOrgTarget.id,
-        orgKey: selectedOrgTarget.orgKey,
-        orgName: selectedOrgTarget.orgName,
-        tableId: selectedOrgTarget.tableId,
-        ...pickFailure(error, 'BaseCheckFailed'),
-      });
-      details.base = {
-        ok: false,
-        appToken: selectedOrgTarget.baseAppToken,
-        tableId: selectedOrgTarget.tableId,
-        baseUrl: selectedOrgTarget.baseUrl,
-        message: failure.message,
-      };
-    }
   }
 
   const grantedUserScopes = parseScopeList(authorizationContext?.scope);
@@ -548,7 +414,6 @@ async function executeFeishuIntegrationChecks(options: {
 
   if (
     statuses.oauthStatus === 'authorized' &&
-    statuses.baseStatus === 'success' &&
     hasRecordedAuthorizationScope &&
     missingUserScopes.length === 0
   ) {

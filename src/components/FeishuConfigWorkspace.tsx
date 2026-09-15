@@ -265,8 +265,6 @@ function getStepTitle(step: number) {
     case 3:
       return '选择组织';
     case 4:
-      return 'Base 校验';
-    case 5:
       return '事件长连接';
     default:
       return '';
@@ -280,10 +278,8 @@ function getStepDescription(step: number) {
     case 2:
       return '授权访问妙记和多维表格。';
     case 3:
-      return '绑定目标组织表格。';
+      return '绑定目标组织。';
     case 4:
-      return '自动校验目标多维表格可访问。';
-    case 5:
       return '建立消费级事件长连接。';
     default:
       return '';
@@ -299,7 +295,6 @@ function areDisplayedChecksPassed(checks: CheckStatusView | null | undefined) {
     checks &&
     checks.appCredentialStatus === 'success' &&
     checks.oauthStatus === 'authorized' &&
-    checks.baseStatus === 'success' &&
     checks.permissionStatus === 'success' &&
     checks.minuteSubscriptionStatus === 'success' &&
     checks.eventSubscriptionStatus === 'success'
@@ -733,9 +728,8 @@ export default function FeishuConfigWorkspace() {
     if (!integration) return 1;
     if (detail?.authorization?.status !== 'authorized') return 2;
     if (!selectedOrgTargetId) return 3;
-    if (detail?.checks?.baseStatus !== 'success') return 4;
-    return 5;
-  }, [user, integration, detail?.authorization?.status, detail?.checks?.baseStatus, selectedOrgTargetId]);
+    return 4;
+  }, [user, integration, detail?.authorization?.status, selectedOrgTargetId]);
 
   const eventSubscriptionPassed = detail?.checks?.eventSubscriptionStatus === 'success';
 
@@ -765,20 +759,13 @@ export default function FeishuConfigWorkspace() {
       {
         step: 4,
         anchor: 'step-checks',
-        title: 'Base 校验',
-        description: '自动校验可访问',
-        status: detail?.checks?.baseStatus === 'success' ? 'completed' : selectedOrgTargetId ? 'current' : 'pending',
-      },
-      {
-        step: 5,
-        anchor: 'step-checks',
         title: '事件长连接',
         description: '启动事件消费',
-        status: eventSubscriptionPassed ? 'completed' : detail?.checks?.baseStatus === 'success' ? 'current' : 'pending',
+        status: eventSubscriptionPassed ? 'completed' : selectedOrgTargetId ? 'current' : 'pending',
       },
     ];
     return steps;
-  }, [selectedOrgTargetId, integration, detail?.authorization?.status, detail?.checks, eventSubscriptionPassed]);
+  }, [selectedOrgTargetId, integration, detail?.authorization?.status, eventSubscriptionPassed]);
 
   const selectedOrgTarget = useMemo(
     () => activeOrgTargets?.targets.find((target) => target.id === selectedOrgTargetId) || null,
@@ -794,7 +781,6 @@ export default function FeishuConfigWorkspace() {
       const organizationStatus: CheckVisualStatus = selectedOrgTargetId ? 'success' : 'pending';
       const appCredentialStatus = getCheckVisualStatus(detail?.checks?.appCredentialStatus);
       const oauthStatus = getCheckVisualStatus(detail?.checks?.oauthStatus, ['authorized', 'success']);
-      const baseStatus = getCheckVisualStatus(detail?.checks?.baseStatus);
       const eventStatus = getEventCheckVisualStatus(detail?.checks);
 
       return [
@@ -817,12 +803,6 @@ export default function FeishuConfigWorkspace() {
           value: getCheckStatusLabel(oauthStatus),
         },
         {
-          label: '目标表格',
-          shortLabel: '表格',
-          status: baseStatus,
-          value: getCheckStatusLabel(baseStatus),
-        },
-        {
           label: '事件监听',
           shortLabel: '监听',
           status: eventStatus,
@@ -835,29 +815,10 @@ export default function FeishuConfigWorkspace() {
 
   const setupComplete = eventSubscriptionPassed;
   const automaticSetupProgress = useMemo(() => {
-    const baseStatus = getCheckVisualStatus(detail?.checks?.baseStatus);
     const eventStatus = getEventCheckVisualStatus(detail?.checks);
 
     if (!selectedOrgTargetId) {
       return null;
-    }
-    if (baseStatus === 'failed') {
-      return {
-        status: 'failed' as const,
-        title: '目标表格校验失败',
-        description:
-          detail?.checks?.lastErrorMessage ||
-          '系统暂时无法访问目标多维表格，请检查权限后重新校验。',
-        progress: 60,
-      };
-    }
-    if (baseStatus !== 'success') {
-      return {
-        status: 'running' as const,
-        title: '正在校验目标表格',
-        description: '系统正在确认当前飞书账号和应用能否读取所选组织的多维表格。',
-        progress: 60,
-      };
     }
     if (eventStatus === 'failed') {
       return {
@@ -865,7 +826,7 @@ export default function FeishuConfigWorkspace() {
         title: '事件监听配置失败',
         description:
           detail?.checks?.lastErrorMessage ||
-          '目标表格已通过校验，但事件订阅或长连接暂时未能建立。',
+          '事件订阅或长连接暂时未能建立。',
         progress: 80,
       };
     }
@@ -873,14 +834,14 @@ export default function FeishuConfigWorkspace() {
       return {
         status: 'running' as const,
         title: '正在配置自动监听',
-        description: '目标表格已通过校验，系统正在检查权限、订阅妙记事件并建立长连接。',
+        description: '系统正在检查权限、订阅妙记事件并建立长连接。',
         progress: 80,
       };
     }
     return {
       status: 'success' as const,
       title: '自动配置已完成',
-      description: '目标表格与事件监听均已就绪，后续会议将自动进入分析流程。',
+      description: '事件监听已就绪，后续会议将自动进入分析流程。',
       progress: 100,
     };
   }, [detail?.checks, selectedOrgTargetId]);

@@ -1051,6 +1051,7 @@ async function completeMeetingAnalysis(
     // persistedReport 包含 transcript（前面已写入）、analysisSummary、reportUrl、organizerOpenId 等
     await syncMeetingRecordToBase(config, persistedReport, {
       baseRecordId: record.recordId,
+      orgName: config.orgTarget?.orgName,
     });
   } catch (error) {
     await writeAuditLog({
@@ -1270,6 +1271,7 @@ async function ensureMinuteRecord(
   // 2. 从 Supabase 同步到 Base
   const baseRecordId = await syncMeetingRecordToBase(config, supabaseRow, {
     baseRecordId: existing?.recordId || context.recordId || supabaseRow.baseRecordId || null,
+    orgName: config.orgTarget?.orgName,
   });
 
   // 3. 回写 baseRecordId 到 Supabase（如果新创建的）

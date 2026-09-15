@@ -18,11 +18,17 @@ import {
  * Supabase 是唯一真相源，Base 是展示镜像。所有 Base 写入统一走这个映射。
  * 新增 Base 字段时，在 BaseFieldMap 里加一项，在这里补一行即可。
  */
-function mapSupabaseRowToBaseFields(row: MeetingRecordRow): Record<string, unknown> {
+function mapSupabaseRowToBaseFields(
+  row: MeetingRecordRow,
+  orgName?: string | null
+): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
 
   if (row.feishuMeetingId) fields['会议ID'] = row.feishuMeetingId;
   if (row.topic) fields['会议名称'] = row.topic;
+
+  // 数据来源 = 初始化配置时选择的方向（orgTarget.orgName）
+  if (orgName) fields['数据来源'] = [orgName];
 
   // 创建人 = 会议创建人（organizerOpenId）
   // 门槛通过场景下 organizerOpenId = authorizedOpenId，是同一个人
@@ -73,10 +79,10 @@ function mapSupabaseRowToBaseFields(row: MeetingRecordRow): Record<string, unkno
 export async function syncMeetingRecordToBase(
   config: FeishuBitableAccess,
   supabaseRecord: MeetingRecordRow,
-  options?: { baseRecordId?: string | null }
+  options?: { baseRecordId?: string | null; orgName?: string | null }
 ): Promise<string | null> {
   const startedAt = Date.now();
-  const fields = mapSupabaseRowToBaseFields(supabaseRecord);
+  const fields = mapSupabaseRowToBaseFields(supabaseRecord, options?.orgName ?? config.orgTarget?.orgName);
   if (Object.keys(fields).length === 0) {
     logFeishuMonitor('warn', 'base_sync_empty_fields', {
       userId: config.integration.userId,
