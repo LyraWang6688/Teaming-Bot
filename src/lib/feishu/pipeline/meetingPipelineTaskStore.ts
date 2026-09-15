@@ -31,7 +31,6 @@ export type MeetingPipelineTaskPayload = {
     orgTargetId: string;
     orgKey: string;
     orgName: string;
-    tableId: string;
   };
 };
 

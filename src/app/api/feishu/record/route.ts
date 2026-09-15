@@ -1,15 +1,9 @@
 /**
- * 获取多维表格记录 API
- * 根据 recordId 获取会议记录详情
+ * 获取会议记录 API
+ * 根据 recordId 从 Supabase 获取会议记录详情
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  createOrgTargetBitableAccess,
-  getBitableRecord,
-} from '@/lib/feishu/bitable/bitableOpenApi';
-import { getFeishuIntegrationContextById } from '@/lib/feishu/integration/integrationStore';
-import { getOrgTargetContextById } from '@/lib/feishu/projects/projectConfigStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { getMeetingRecordByLegacyReference } from '@/lib/reports/meetingReportStore';
 
@@ -19,7 +13,7 @@ export async function GET(request: NextRequest) {
     const recordId = searchParams.get('recordId');
     const integrationId = searchParams.get('integrationId');
     const orgTargetId = searchParams.get('orgTargetId');
-    
+
     if (!recordId) {
       return NextResponse.json({ error: '缺少 recordId 参数' }, { status: 400 });
     }
@@ -33,7 +27,7 @@ export async function GET(request: NextRequest) {
 
     if (!orgTargetId) {
       return NextResponse.json(
-        { error: '缺少 orgTargetId 参数，无法定位对应组织的多维表格。' },
+        { error: '缺少 orgTargetId 参数，无法定位对应组织。' },
         { status: 400 }
       );
     }
@@ -61,58 +55,23 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const integration = await getFeishuIntegrationContextById(integrationId, {
-      includeDeleted: true,
-    });
-    if (!integration) {
-      return NextResponse.json({ error: '未找到对应的飞书集成配置' }, { status: 404 });
-    }
-
-    const orgTarget = await getOrgTargetContextById(orgTargetId);
-    if (!orgTarget) {
-      logRuntimeMonitor('warn', 'feishu_record_api', 'report_record_load_org_target_missing', {
-        recordId,
-        integrationId,
-        orgTargetId,
-      });
-      return NextResponse.json({ error: '未找到对应的组织目标表配置' }, { status: 404 });
-    }
-
-    const config = createOrgTargetBitableAccess(integration, orgTarget);
-
-    logRuntimeMonitor('info', 'feishu_record_api', 'report_record_load_started', {
+    logRuntimeMonitor('info', 'feishu_record_api', 'report_not_ready', {
       recordId,
       integrationId,
-      orgTargetId: orgTarget.id,
-      projectId: orgTarget.projectId,
-      orgKey: orgTarget.orgKey,
-      orgName: orgTarget.orgName,
-      tableId: orgTarget.tableId,
-      mode: 'org_target',
+      orgTargetId,
+      meetingRecordId: persisted?.id,
+      status: persisted?.status,
     });
 
-    const record = await getBitableRecord(config, recordId);
-
-    logRuntimeMonitor('info', 'feishu_record_api', 'report_record_load_succeeded', {
-      recordId,
-      integrationId,
-      orgTargetId: orgTarget.id,
-      projectId: orgTarget.projectId,
-      orgKey: orgTarget.orgKey,
-      orgName: orgTarget.orgName,
-      tableId: orgTarget.tableId,
-    });
-    
     return NextResponse.json({
-      success: true,
-      data: record,
-      // 兼容旧首页读取逻辑；新报告页只读取 data.analysisData。
-      record: {
-        ...record,
-        analysisJson: record.analysisData,
+      success: false,
+      data: {
+        recordId,
+        meetingId: persisted?.feishuMeetingId,
+        processStatus: persisted?.status || 'pending',
+        message: '会议分析尚未完成，请稍后重试。',
       },
     });
-    
   } catch (error: unknown) {
     const { searchParams } = new URL(request.url);
     logRuntimeMonitor('error', 'feishu_record_api', 'record_get_failed', {

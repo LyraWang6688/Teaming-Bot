@@ -298,10 +298,9 @@ async function getMeetingBitableAccess(context: {
 }): Promise<FeishuBitableAccess> {
   if (context.targetOrgTargetId) {
     const orgTarget = await getOrgTargetContextById(context.targetOrgTargetId);
-    if (!orgTarget) {
-      throw new Error('任务绑定的组织目标表配置不存在，无法继续处理。');
+    if (orgTarget) {
+      return createOrgTargetBitableAccess(context.integration, orgTarget);
     }
-    return createOrgTargetBitableAccess(context.integration, orgTarget);
   }
 
   return createSelectedOrgTargetBitableAccess(context.integration);
@@ -486,7 +485,6 @@ export async function enqueueFeishuEvent(
         orgTargetId: targetAccess.orgTarget.id,
         orgKey: targetAccess.orgTarget.orgKey,
         orgName: targetAccess.orgTarget.orgName,
-        tableId: targetAccess.orgTarget.tableId,
       }
     : undefined;
 
@@ -500,7 +498,7 @@ export async function enqueueFeishuEvent(
     orgTargetId: targetSnapshot?.orgTargetId || null,
     orgKey: targetSnapshot?.orgKey || null,
     orgName: targetSnapshot?.orgName || null,
-    tableId: targetSnapshot?.tableId || null,
+    tableId: targetAccess.tableId,
   });
 
   const taskResult = await upsertMeetingPipelineTaskForMinuteGenerated({
@@ -601,7 +599,7 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
     orgTargetId: config.orgTarget?.id || null,
     orgKey: config.orgTarget?.orgKey || null,
     orgName: config.orgTarget?.orgName || null,
-    tableId: config.orgTarget?.tableId || config.tableId,
+    tableId: config.tableId,
   };
 
   logFeishuMonitor('info', 'meeting_pipeline_target_resolved', {
@@ -869,7 +867,7 @@ async function completeMeetingAnalysis(
     orgTargetId: config.orgTarget?.id || null,
     orgKey: config.orgTarget?.orgKey || null,
     orgName: config.orgTarget?.orgName || null,
-    tableId: config.orgTarget?.tableId || config.tableId,
+    tableId: config.tableId,
   };
 
   if (context.taskId) {

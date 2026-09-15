@@ -52,3 +52,12 @@ export function getDefaultFeishuOauthScope(): string {
   const requiredScopes = FEISHU_REQUIRED_USER_SCOPE.split(/\s+/).filter(Boolean);
   return Array.from(new Set([...requiredScopes, ...configuredScopes])).join(' ');
 }
+
+export function getFeishuBitableAppToken(): string {
+  return getRequiredValue('FEISHU_BITABLE_APP_TOKEN', process.env.FEISHU_BITABLE_APP_TOKEN);
+}
+
+export function getFeishuBitableTableId(): string {
+  return getRequiredValue('FEISHU_BITABLE_TABLE_ID', process.env.FEISHU_BITABLE_TABLE_ID);
+}
+

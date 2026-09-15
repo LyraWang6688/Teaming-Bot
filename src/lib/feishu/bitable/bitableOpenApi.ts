@@ -9,6 +9,7 @@ import {
 } from '../projects/projectConfigStore';
 import { FEISHU_PROCESS_STATUS, type FeishuProcessStatus } from '../pipeline/status';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
+import { getFeishuBitableAppToken, getFeishuBitableTableId } from '@/lib/platform/env';
 
 type RecordFields = Record<string, unknown>;
 
@@ -63,13 +64,19 @@ export type FeishuBitableAccess = FeishuBitableConfig & {
   orgTarget?: FeishuOrgTargetContext;
 };
 
+function getGlobalBitableConfig(): FeishuBitableConfig {
+  return {
+    appToken: getFeishuBitableAppToken(),
+    tableId: getFeishuBitableTableId(),
+  };
+}
+
 export function createOrgTargetBitableAccess(
   integration: FeishuIntegrationContext,
   orgTarget: FeishuOrgTargetContext
 ): FeishuBitableAccess {
   return {
-    appToken: orgTarget.baseAppToken,
-    tableId: orgTarget.tableId,
+    ...getGlobalBitableConfig(),
     integration,
     orgTarget,
   };
@@ -79,8 +86,13 @@ export async function createSelectedOrgTargetBitableAccess(
   integration: FeishuIntegrationContext,
   options?: { allowDisabled?: boolean }
 ): Promise<FeishuBitableAccess> {
+  const baseConfig = getGlobalBitableConfig();
+
   if (!integration.selectedOrgTargetId) {
-    throw new Error('请先选择所在组织，系统才能确定写入的多维表格。');
+    return {
+      ...baseConfig,
+      integration,
+    };
   }
 
   const orgTarget = options?.allowDisabled
@@ -88,7 +100,10 @@ export async function createSelectedOrgTargetBitableAccess(
     : await getEnabledOrgTargetContextById(integration.selectedOrgTargetId);
 
   if (!orgTarget) {
-    throw new Error('当前组织对应的多维表格配置不可用，请联系管理员确认项目配置。');
+    return {
+      ...baseConfig,
+      integration,
+    };
   }
 
   return createOrgTargetBitableAccess(integration, orgTarget);

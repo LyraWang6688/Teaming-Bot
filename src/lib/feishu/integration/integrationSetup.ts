@@ -401,10 +401,7 @@ async function executeFeishuIntegrationChecks(options: {
     };
     details.base = {
       ok: true,
-      appToken: selectedOrgTarget.baseAppToken,
-      tableId: selectedOrgTarget.tableId,
-      baseUrl: selectedOrgTarget.baseUrl,
-      message: 'Base 校验已跳过，数据源为 Supabase，写入时按需访问多维表格。',
+      message: 'Base 写入统一使用全局配置（环境变量 FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_TABLE_ID），数据源为 Supabase。',
     };
   }
 
