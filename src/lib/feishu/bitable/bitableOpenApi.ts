@@ -3,6 +3,7 @@ import type { FeishuBitableConfig } from '../common/config';
 import { callFeishuIntegrationUserOpenApi } from '../integration/integrationOpenApi';
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import {
+  getActiveFeishuProject,
   getEnabledOrgTargetContextById,
   getOrgTargetContextById,
   type FeishuOrgTargetContext,
@@ -64,19 +65,27 @@ export type FeishuBitableAccess = FeishuBitableConfig & {
   orgTarget?: FeishuOrgTargetContext;
 };
 
-function getGlobalBitableConfig(): FeishuBitableConfig {
+async function getGlobalBitableConfig(): Promise<FeishuBitableConfig> {
+  const activeProject = await getActiveFeishuProject();
+  if (activeProject?.bitableAppToken && activeProject?.bitableTableId) {
+    return {
+      appToken: activeProject.bitableAppToken,
+      tableId: activeProject.bitableTableId,
+    };
+  }
+
   return {
     appToken: getFeishuBitableAppToken(),
     tableId: getFeishuBitableTableId(),
   };
 }
 
-export function createOrgTargetBitableAccess(
+export async function createOrgTargetBitableAccess(
   integration: FeishuIntegrationContext,
   orgTarget: FeishuOrgTargetContext
-): FeishuBitableAccess {
+): Promise<FeishuBitableAccess> {
   return {
-    ...getGlobalBitableConfig(),
+    ...(await getGlobalBitableConfig()),
     integration,
     orgTarget,
   };
@@ -86,7 +95,7 @@ export async function createSelectedOrgTargetBitableAccess(
   integration: FeishuIntegrationContext,
   options?: { allowDisabled?: boolean }
 ): Promise<FeishuBitableAccess> {
-  const baseConfig = getGlobalBitableConfig();
+  const baseConfig = await getGlobalBitableConfig();
 
   if (!integration.selectedOrgTargetId) {
     return {

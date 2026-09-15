@@ -170,7 +170,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         projectId: selectedTarget?.projectId || null,
         orgKey: selectedTarget?.orgKey || null,
         orgName: selectedTarget?.orgName || null,
-        tableId: selectedTarget?.tableId || null,
       });
 
       await upsertFeishuIntegrationCheckStatus({

@@ -6,15 +6,15 @@ import {
   type FeishuProjectOrgTargetRow,
   type FeishuProjectRow,
 } from '@/lib/db/schema';
-import { decrypt, maskSecret } from '@/lib/security/crypto';
+import { decrypt } from '@/lib/security/crypto';
 
 export type FeishuProjectView = {
   id: string;
   projectKey: string;
   name: string;
   status: string;
-  startsAt: string | null;
-  endsAt: string | null;
+  bitableAppToken: string | null;
+  bitableTableId: string | null;
 };
 
 export type FeishuOrgTargetView = {
@@ -22,26 +22,15 @@ export type FeishuOrgTargetView = {
   projectId: string;
   orgKey: string;
   orgName: string;
-  tableId: string;
-  baseUrl: string;
   enabled: boolean;
-  masked: {
-    baseAppToken: string | null;
-  };
 };
 
-export type FeishuOrgTargetContext = FeishuOrgTargetView & {
-  baseAppToken: string;
-};
+export type FeishuOrgTargetContext = FeishuOrgTargetView;
 
 export type ActiveProjectOrgTargets = {
   project: FeishuProjectView | null;
   targets: FeishuOrgTargetView[];
 };
-
-function toIsoString(value: Date | null): string | null {
-  return value ? value.toISOString() : null;
-}
 
 function mapProject(row: FeishuProjectRow): FeishuProjectView {
   return {
@@ -49,33 +38,23 @@ function mapProject(row: FeishuProjectRow): FeishuProjectView {
     projectKey: row.projectKey,
     name: row.name,
     status: row.status,
-    startsAt: toIsoString(row.startsAt),
-    endsAt: toIsoString(row.endsAt),
+    bitableAppToken: row.bitableAppTokenEncrypted ? decrypt(row.bitableAppTokenEncrypted) : null,
+    bitableTableId: row.bitableTableId,
   };
 }
 
 function mapTarget(row: FeishuProjectOrgTargetRow): FeishuOrgTargetView {
-  const baseAppToken = decrypt(row.baseAppTokenEncrypted);
-
   return {
     id: row.id,
     projectId: row.projectId,
     orgKey: row.orgKey,
     orgName: row.orgName,
-    tableId: row.tableId,
-    baseUrl: row.baseUrl,
     enabled: row.enabled,
-    masked: {
-      baseAppToken: maskSecret(baseAppToken),
-    },
   };
 }
 
 function mapTargetContext(row: FeishuProjectOrgTargetRow): FeishuOrgTargetContext {
-  return {
-    ...mapTarget(row),
-    baseAppToken: decrypt(row.baseAppTokenEncrypted),
-  };
+  return mapTarget(row);
 }
 
 export async function getActiveFeishuProject(): Promise<FeishuProjectView | null> {

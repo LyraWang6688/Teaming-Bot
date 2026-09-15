@@ -33,7 +33,6 @@ function meetingDetailsFields(details?: MeetingDetails | null) {
 
   return {
     organizerOpenId: details.organizerOpenId,
-    hostOpenId: details.hostOpenId,
   };
 }
 

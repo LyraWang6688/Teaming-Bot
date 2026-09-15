@@ -83,22 +83,24 @@ function normalizeConfig(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('项目配置必须是 JSON 对象。');
   const projectKey = String(raw.projectKey || '').trim();
   const projectName = String(raw.projectName || raw.name || '').trim();
+  const baseUrl = String(raw.baseUrl || '').trim();
   const targets = Array.isArray(raw.organizationTargets) ? raw.organizationTargets : [];
 
   if (!projectKey) throw new Error('配置缺少 projectKey。');
   if (!projectName) throw new Error('配置缺少 projectName。');
+  if (!baseUrl) throw new Error('配置缺少 baseUrl（项目级别的多维表格链接）。');
   if (targets.length === 0) throw new Error('配置缺少 organizationTargets。');
 
   return {
     projectKey,
     projectName,
+    baseUrl,
     status: String(raw.status || 'active').trim(),
     startsAt: raw.startsAt ? new Date(raw.startsAt) : null,
     endsAt: raw.endsAt ? new Date(raw.endsAt) : null,
     organizationTargets: targets.map((target, index) => ({
       orgKey: String(target.orgKey || '').trim(),
       orgName: String(target.orgName || '').trim(),
-      baseUrl: String(target.baseUrl || '').trim(),
       enabled: target.enabled !== false,
       index,
     })),
@@ -112,8 +114,6 @@ async function main() {
   }
 
   const config = normalizeConfig(JSON.parse(readFileSync(resolve(process.cwd(), configPath), 'utf8')));
-  const successful = [];
-  const failed = [];
 
   logImportMonitor('info', 'project_config_import_started', {
     configPath,
@@ -123,50 +123,12 @@ async function main() {
     targetCount: config.organizationTargets.length,
   });
 
+  const { appToken, tableId } = parseBaseUrl(config.baseUrl);
+
   for (const target of config.organizationTargets) {
-    try {
-      if (!target.orgKey || !target.orgName || !target.baseUrl) {
-        throw new Error(`第 ${target.index + 1} 个组织配置缺少 orgKey、orgName 或 baseUrl。`);
-      }
-
-      const { appToken, tableId } = parseBaseUrl(target.baseUrl);
-      successful.push({
-        ...target,
-        appToken,
-        tableId,
-      });
-    } catch (error) {
-      logImportMonitor('warn', 'project_config_target_parse_failed', {
-        projectKey: config.projectKey,
-        orgKey: target.orgKey || null,
-        orgName: target.orgName || null,
-        reason: error instanceof Error ? error.message : String(error),
-      });
-      failed.push({
-        orgKey: target.orgKey,
-        orgName: target.orgName,
-        reason: error instanceof Error ? error.message : String(error),
-      });
+    if (!target.orgKey || !target.orgName) {
+      throw new Error(`第 ${target.index + 1} 个组织配置缺少 orgKey 或 orgName。`);
     }
-  }
-
-  if (successful.length === 0) {
-    logImportMonitor('error', 'project_config_import_failed_no_successful_targets', {
-      projectKey: config.projectKey,
-      projectName: config.projectName,
-      failedCount: failed.length,
-      failedTargets: failed.map((item) => ({
-        orgKey: item.orgKey || null,
-        orgName: item.orgName || null,
-        reason: item.reason,
-      })),
-    });
-    console.error('项目配置导入失败：没有任何组织通过校验。');
-    for (const item of failed) {
-      console.error(`- ${item.orgName || item.orgKey || '未知组织'}：${item.reason}`);
-    }
-    process.exitCode = 1;
-    return;
   }
 
   const pool = new Pool({ connectionString: requiredEnv('DATABASE_URL') });
@@ -183,44 +145,39 @@ async function main() {
 
     const projectResult = await client.query(
       `
-        insert into feishu_projects (project_key, name, status, starts_at, ends_at, updated_at)
-        values ($1, $2, $3, $4, $5, now())
+        insert into feishu_projects (project_key, name, status, starts_at, ends_at, bitable_app_token_encrypted, bitable_table_id, updated_at)
+        values ($1, $2, $3, $4, $5, $6, $7, now())
         on conflict (project_key)
         do update set
           name = excluded.name,
           status = excluded.status,
           starts_at = excluded.starts_at,
           ends_at = excluded.ends_at,
+          bitable_app_token_encrypted = excluded.bitable_app_token_encrypted,
+          bitable_table_id = excluded.bitable_table_id,
           updated_at = now()
         returning id
       `,
-      [config.projectKey, config.projectName, config.status, config.startsAt, config.endsAt]
+      [config.projectKey, config.projectName, config.status, config.startsAt, config.endsAt, encrypt(appToken), tableId]
     );
 
     const projectId = projectResult.rows[0].id;
-    const successfulOrgKeys = successful.map((target) => target.orgKey);
-    const failedOrgKeys = failed.map((target) => target.orgKey).filter(Boolean);
+    const orgKeys = config.organizationTargets.map((target) => target.orgKey);
 
-    for (const target of successful) {
+    for (const target of config.organizationTargets) {
       await client.query(
         `
           insert into feishu_project_org_targets (
             project_id,
             org_key,
             org_name,
-            base_app_token_encrypted,
-            table_id,
-            base_url,
             enabled,
             updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, now())
+          values ($1, $2, $3, $4, now())
           on conflict (project_id, org_key)
           do update set
             org_name = excluded.org_name,
-            base_app_token_encrypted = excluded.base_app_token_encrypted,
-            table_id = excluded.table_id,
-            base_url = excluded.base_url,
             enabled = excluded.enabled,
             updated_at = now()
         `,
@@ -228,15 +185,12 @@ async function main() {
           projectId,
           target.orgKey,
           target.orgName,
-          encrypt(target.appToken),
-          target.tableId,
-          target.baseUrl,
           target.enabled,
         ]
       );
     }
 
-    if (successfulOrgKeys.length > 0) {
+    if (orgKeys.length > 0) {
       await client.query(
         `
           update feishu_project_org_targets
@@ -244,50 +198,23 @@ async function main() {
           where project_id = $1
             and org_key <> all($2::text[])
         `,
-        [projectId, successfulOrgKeys]
-      );
-    }
-
-    if (failedOrgKeys.length > 0) {
-      await client.query(
-        `
-          update feishu_project_org_targets
-          set enabled = false, updated_at = now()
-          where project_id = $1
-            and org_key = any($2::text[])
-        `,
-        [projectId, failedOrgKeys]
+        [projectId, orgKeys]
       );
     }
 
     await client.query('commit');
 
-    logImportMonitor(failed.length > 0 ? 'warn' : 'info', failed.length > 0 ? 'project_config_import_partial_completed' : 'project_config_import_completed', {
+    logImportMonitor('info', 'project_config_import_completed', {
       projectKey: config.projectKey,
       projectName: config.projectName,
       projectId,
-      successfulCount: successful.length,
-      failedCount: failed.length,
-      successfulTargets: successful.map((item) => ({
-        orgKey: item.orgKey,
-        orgName: item.orgName,
-        tableId: item.tableId,
-      })),
-      failedTargets: failed.map((item) => ({
-        orgKey: item.orgKey || null,
-        orgName: item.orgName || null,
-        reason: item.reason,
-      })),
+      tableId,
+      targetCount: config.organizationTargets.length,
     });
 
     console.log(`项目 ${config.projectName} 导入完成。`);
-    console.log(`成功组织：${successful.map((item) => item.orgName).join('、')}`);
-    if (failed.length > 0) {
-      console.log('失败组织：');
-      for (const item of failed) {
-        console.log(`- ${item.orgName || item.orgKey}：${item.reason}`);
-      }
-    }
+    console.log(`多维表格：${tableId}`);
+    console.log(`组织：${config.organizationTargets.map((item) => item.orgName).join('、')}`);
   } catch (error) {
     await client.query('rollback');
     throw error;
