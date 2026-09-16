@@ -911,9 +911,9 @@ async function completeMeetingAnalysis(
 
   // 2. 从 Supabase 同步到 Base（展示镜像）
   // 「创建人」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
+  // 「处理状态」不再在中间态写入 Base，Base 只展示终态（已完成/失败），中间态只保留在 Supabase
   const authorizationContext = await getLatestFeishuAuthorizationContext(context.integration.id);
   await syncPartialFieldsToBase(config, record.recordId, {
-    '处理状态': FEISHU_PROCESS_STATUS.analyzing,
     '会议文字稿': transcript,
     '创建人': authorizationContext?.authorizedUserName ?? supabaseRow.organizerOpenId ?? undefined,
   });
@@ -1516,6 +1516,70 @@ export async function runMeetingPipelineTask(taskId: string) {
     });
     return;
   }
+
+  // === Supabase-first 恢复路径 ===
+  // 设计原则：Supabase 是唯一真相源，Base 只是展示镜像。pipeline 恢复时先查 Supabase，
+  // 如果 status='analyzing' 且 transcript 已存在，直接走分析，跳过 Base 查询。
+  // 这避免了 Base 镜像缺失导致恢复失败的问题（如手动测试场景或 Base 同步延迟）。
+  try {
+    const supabaseRecord = await getMeetingRecordByIntegrationAndMeeting(
+      integration.id,
+      task.feishuMeetingId
+    );
+
+    if (supabaseRecord?.status === 'analyzing' && supabaseRecord.transcript?.trim()) {
+      // Supabase 已有 transcript 且 status='analyzing' → 直接走分析
+      const config = await getMeetingBitableAccess({
+        integration,
+        targetOrgTargetId: getTargetFromPayload(task.payload),
+      });
+
+      const record: FeishuMeetingRecord = {
+        recordId: supabaseRecord.baseRecordId || task.baseRecordId || '',
+        meetingId: task.feishuMeetingId,
+        processStatus: FEISHU_PROCESS_STATUS.analyzing,
+        analysisData: supabaseRecord.analysisResult,
+        transcript: supabaseRecord.transcript,
+      };
+
+      const context = buildRecoveryContextFromTask(task, integration);
+      if (!context) {
+        await failMeetingPipelineTask(task.id, {
+          currentStage: task.currentStage as typeof FEISHU_PROCESS_STATUS[keyof typeof FEISHU_PROCESS_STATUS],
+          attemptCount: task.attemptCount,
+          errorType: 'TaskPayloadIncomplete',
+          errorMessage: '会议任务缺少恢复所需的 payload 信息。',
+        });
+        return;
+      }
+
+      logFeishuMonitor('info', 'supabase_first_recovery_invoked', {
+        taskId: task.id,
+        integrationId: integration.id,
+        meetingId: task.feishuMeetingId,
+        transcriptSource: 'recovered-from-supabase',
+        transcriptLength: supabaseRecord.transcript.length,
+      });
+
+      await completeMeetingAnalysis(
+        config,
+        record,
+        supabaseRecord.transcript,
+        'recovered-from-supabase',
+        context
+      );
+      return;
+    }
+  } catch (error) {
+    logFeishuMonitor('warn', 'supabase_first_recovery_failed', {
+      taskId: task.id,
+      integrationId: integration.id,
+      meetingId: task.feishuMeetingId,
+      ...toErrorContext(error),
+    });
+    // 失败时继续走原逻辑
+  }
+  // === Supabase-first 恢复路径结束 ===
 
   if (task.baseRecordId) {
     try {

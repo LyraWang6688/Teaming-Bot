@@ -1,6 +1,6 @@
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { FeishuOpenApiError } from '../common/openapi';
-import { mapStatusToChinese } from '../pipeline/status';
+import { FEISHU_PROCESS_STATUS } from '../pipeline/status';
 import { buildPersistentReportUrl } from '@/lib/reports/reportUrl';
 import type { MeetingRecordRow } from '@/lib/db/schema';
 
@@ -10,6 +10,17 @@ import {
   type FeishuBitableAccess,
   updateMeetingRecordFields,
 } from './bitableOpenApi';
+
+/**
+ * 将 Supabase 的英文 status 映射为 Base 「处理状态」字段的中文值。
+ * Base 只展示终态：已完成 / 失败。中间态（meeting_ended/fetching_transcript/analyzing/gated_skipped）
+ * 只保留在 Supabase，不写入 Base，符合「Supabase 是真相源，Base 是展示镜像」原则。
+ */
+function mapSupabaseStatusToBaseTerminalStatus(supabaseStatus: string | null): string | null {
+  if (supabaseStatus === 'completed') return FEISHU_PROCESS_STATUS.completed; // '已完成'
+  if (supabaseStatus === 'failed') return FEISHU_PROCESS_STATUS.failed;       // '失败'
+  return null;
+}
 
 /**
  * Base 字段映射：从 Supabase meeting_records 行映射为 Base 记录字段
@@ -40,9 +51,10 @@ function mapSupabaseRowToBaseFields(
   const creatorName = organizerName || row.organizerOpenId;
   if (creatorName) fields['创建人'] = creatorName;
 
-  // 处理状态：英文 status → 中文显示值
-  const processStatus = mapStatusToChinese(row.status);
-  if (processStatus) fields['处理状态'] = processStatus;
+  // 处理状态：Base 只展示终态（已完成/失败），中间态只存 Supabase
+  // 这符合「Supabase 是真相源，Base 是展示镜像」的设计原则
+  const baseProcessStatus = mapSupabaseStatusToBaseTerminalStatus(row.status);
+  if (baseProcessStatus) fields['处理状态'] = baseProcessStatus;
 
   // 会议文字稿
   if (row.transcript) fields['会议文字稿'] = row.transcript;

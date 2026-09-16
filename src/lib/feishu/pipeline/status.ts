@@ -28,20 +28,3 @@ export const FEISHU_ACTIVE_PROCESS_STATUSES: FeishuProcessStatus[] = [
   FEISHU_PROCESS_STATUS.fetchingTranscript,
   FEISHU_PROCESS_STATUS.analyzing,
 ];
-
-/**
- * 将 Supabase 英文 status 映射为 Base 中文显示值
- * gatedSkipped 不写入 Base，返回 null
- */
-export function mapStatusToChinese(status: string | null): string | null {
-  if (!status) return null;
-  const map: Record<string, string> = {
-    meeting_ended: FEISHU_PROCESS_STATUS.minuteGenerated,
-    fetching_transcript: FEISHU_PROCESS_STATUS.fetchingTranscript,
-    analyzing: FEISHU_PROCESS_STATUS.analyzing,
-    completed: FEISHU_PROCESS_STATUS.completed,
-    failed: FEISHU_PROCESS_STATUS.failed,
-    gated_skipped: FEISHU_PROCESS_STATUS.gatedSkipped,
-  };
-  return map[status] ?? null;
-}
