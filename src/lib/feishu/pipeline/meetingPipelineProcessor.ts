@@ -1373,88 +1373,6 @@ function toBusinessErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function buildRecoveryContext(
-  record: FeishuMeetingRecord,
-  integration: FeishuIntegrationContext,
-  taskId?: string,
-  targetOrgTargetId?: string,
-  attempt = 0
-): MinuteGeneratedSource | null {
-  const meetingId = asString(record.meetingId);
-
-  if (!meetingId) {
-    return null;
-  }
-
-  return {
-    integration,
-    taskId,
-    meetingId,
-    minuteToken: '',
-    attempt,
-    recordId: record.recordId,
-    targetOrgTargetId,
-  };
-}
-
-async function resumeMeetingRecord(
-  record: FeishuMeetingRecord,
-  integration: FeishuIntegrationContext,
-  taskId?: string,
-  targetOrgTargetId?: string,
-  attempt = 0
-) {
-  const context = buildRecoveryContext(
-    record,
-    integration,
-    taskId,
-    targetOrgTargetId,
-    attempt
-  );
-  if (!context) {
-    logFeishuMonitor('warn', 'startup_recovery_record_skipped', {
-      recordId: record.recordId,
-      reason: '缺少 meetingId',
-      processStatus: record.processStatus,
-    });
-    return;
-  }
-
-  try {
-    if (asString(record.processStatus) === FEISHU_PROCESS_STATUS.analyzing) {
-      // 从 Supabase 读取 transcript（真相源），而非 Base record
-      const supabaseRecord = await getMeetingRecordByIntegrationAndMeeting(
-        context.integration.id,
-        context.meetingId
-      );
-      const recoveredTranscript = supabaseRecord?.transcript?.trim();
-      if (recoveredTranscript) {
-        const config = await getMeetingBitableAccess(context);
-        await completeMeetingAnalysis(
-          config,
-          record,
-          recoveredTranscript,
-          'recovered-from-supabase',
-          context
-        );
-        return;
-      }
-    }
-
-    await processMinuteGeneratedAttempt(context);
-  } catch (error) {
-    logFeishuMonitor('error', 'meeting_pipeline_preparation_failed', {
-      userId: context.integration.userId,
-      integrationId: context.integration.id,
-      taskId: context.taskId,
-      meetingId: context.meetingId,
-      attempt: context.attempt,
-      ...toErrorContext(error),
-    });
-    await scheduleOrFailMeetingPipelineTask(context, error);
-  }
-}
-
 function buildRecoveryContextFromTask(
   task: NonNullable<Awaited<ReturnType<typeof getMeetingPipelineTaskById>>>,
   integration: FeishuIntegrationContext
@@ -1580,31 +1498,6 @@ export async function runMeetingPipelineTask(taskId: string) {
     // 失败时继续走原逻辑
   }
   // === Supabase-first 恢复路径结束 ===
-
-  if (task.baseRecordId) {
-    try {
-      const config = await getMeetingBitableAccess({
-        integration,
-        targetOrgTargetId: getTargetFromPayload(task.payload),
-      });
-      const record = await getBitableRecord(config, task.baseRecordId);
-      await resumeMeetingRecord(
-        record,
-        integration,
-        task.id,
-        getTargetFromPayload(task.payload),
-        task.attemptCount
-      );
-      return;
-    } catch (error) {
-      logFeishuMonitor('warn', 'meeting_pipeline_task_record_reload_failed', {
-        taskId: task.id,
-        integrationId: integration.id,
-        baseRecordId: task.baseRecordId,
-        ...toErrorContext(error),
-      });
-    }
-  }
 
   const context = buildRecoveryContextFromTask(task, integration);
   if (!context) {
