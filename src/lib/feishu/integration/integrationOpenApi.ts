@@ -212,3 +212,86 @@ export async function downloadFeishuIntegrationUserOpenApiFile(
     : Buffer.from(new Uint8Array(response));
   await writeFile(targetPath, content);
 }
+
+// ----------------------------------------------------------------------------
+// 应用身份（tenant_access_token）调用层
+//
+// 适用场景：多维表格读写、应用权限范围内的资源访问等不依赖用户授权的操作。
+// 与 user_access_token 路径相比，本路径不调用 getValidIntegrationUserAuthorization，
+// 完全基于应用凭证（appId + appSecret）走飞书 SDK 默认的 tenant_access_token。
+// ----------------------------------------------------------------------------
+async function requestFeishuIntegrationTenantOpenApi<T>(
+  integration: FeishuIntegrationContext,
+  method: HttpMethod,
+  path: string,
+  data?: Record<string, unknown>,
+  responseType: 'json' | 'text' | 'arraybuffer' = 'json'
+): Promise<T> {
+  const startedAt = Date.now();
+  const client = createFeishuSdkClient(integration);
+  const { normalizedPath, params } = splitPathAndParams(path);
+
+  logRuntimeMonitor('info', 'integration_openapi', 'integration_tenant_sdk_request_started', {
+    integrationId: integration.id,
+    method,
+    path: normalizedPath,
+    stage: 'sdk_openapi_request',
+    identity: 'tenant',
+  });
+
+  try {
+    // 不传 lark.withUserAccessToken，SDK 默认使用 tenant_access_token（应用身份）
+    const response = await client.request<FeishuEnvelope<T> | T>(
+      {
+        method,
+        url: normalizedPath,
+        params,
+        data: method === 'GET' || method === 'DELETE' ? undefined : data,
+        responseType,
+        timeout: 60_000,
+      }
+    );
+
+    logRuntimeMonitor(
+      'info',
+      'integration_openapi',
+      'integration_tenant_sdk_request_completed',
+      {
+        integrationId: integration.id,
+        method,
+        path: normalizedPath,
+        stage: 'sdk_openapi_request',
+        identity: 'tenant',
+        durationMs: Date.now() - startedAt,
+      }
+    );
+
+    if (responseType !== 'json') {
+      return response as T;
+    }
+    return unwrapFeishuResponse(response, method, normalizedPath);
+  } catch (error) {
+    const mapped = mapSdkError(error, method, normalizedPath);
+    logRuntimeMonitor('error', 'integration_openapi', 'integration_tenant_sdk_request_failed', {
+      integrationId: integration.id,
+      method,
+      path: normalizedPath,
+      stage: 'sdk_openapi_request',
+      identity: 'tenant',
+      durationMs: Date.now() - startedAt,
+      errorCode: mapped.code,
+      statusCode: mapped.statusCode,
+      ...toRuntimeErrorContext(mapped),
+    });
+    throw mapped;
+  }
+}
+
+export async function callFeishuIntegrationTenantOpenApi<T = unknown>(
+  integration: FeishuIntegrationContext,
+  method: HttpMethod,
+  path: string,
+  data?: Record<string, unknown>
+): Promise<T> {
+  return requestFeishuIntegrationTenantOpenApi<T>(integration, method, path, data);
+}

@@ -1,6 +1,6 @@
 import type { AnalysisResult } from '@/types';
 import type { FeishuBitableConfig } from '../common/config';
-import { callFeishuIntegrationUserOpenApi } from '../integration/integrationOpenApi';
+import { callFeishuIntegrationTenantOpenApi } from '../integration/integrationOpenApi';
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import {
   getActiveFeishuProject,
@@ -124,7 +124,9 @@ async function callBitableOpenApi<T = unknown>(
   path: string,
   data?: Record<string, unknown>
 ): Promise<T> {
-  return callFeishuIntegrationUserOpenApi<T>(config.integration, method, path, data);
+  // Base 读写统一走应用身份（tenant_access_token），
+  // 不依赖用户 OAuth token，避免用户 token 失效导致 Base 同步失败。
+  return callFeishuIntegrationTenantOpenApi<T>(config.integration, method, path, data);
 }
 
 function extractBitableText(value: unknown): string | undefined {

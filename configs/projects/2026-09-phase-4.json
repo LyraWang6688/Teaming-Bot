@@ -1,0 +1,28 @@
+{
+  "projectKey": "2026-09-phase-4",
+  "projectName": "2026-09 第四期",
+  "status": "active",
+  "baseUrl": "https://my.feishu.cn/base/UJ6ebt6QOalLHbsOj9CckZGenQg?table=tblcxtTdozugCRwz",
+  "organizationTargets": [
+    {
+      "orgKey": "brand_communication",
+      "orgName": "品牌传播",
+      "enabled": true
+    },
+    {
+      "orgKey": "relationship_management",
+      "orgName": "关系管理",
+      "enabled": true
+    },
+    {
+      "orgKey": "project_proposal",
+      "orgName": "项目立项书",
+      "enabled": true
+    },
+    {
+      "orgKey": "web_application",
+      "orgName": "网页应用",
+      "enabled": true
+    }
+  ]
+}
