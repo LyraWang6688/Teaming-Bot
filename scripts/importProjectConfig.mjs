@@ -96,8 +96,6 @@ function normalizeConfig(raw) {
     projectName,
     baseUrl,
     status: String(raw.status || 'active').trim(),
-    startsAt: raw.startsAt ? new Date(raw.startsAt) : null,
-    endsAt: raw.endsAt ? new Date(raw.endsAt) : null,
     organizationTargets: targets.map((target, index) => ({
       orgKey: String(target.orgKey || '').trim(),
       orgName: String(target.orgName || '').trim(),
@@ -189,20 +187,18 @@ async function main() {
 
     const projectResult = await client.query(
       `
-        insert into feishu_projects (project_key, name, status, starts_at, ends_at, bitable_app_token_encrypted, bitable_table_id, updated_at)
-        values ($1, $2, $3, $4, $5, $6, $7, now())
+        insert into feishu_projects (project_key, name, status, bitable_app_token_encrypted, bitable_table_id, updated_at)
+        values ($1, $2, $3, $4, $5, now())
         on conflict (project_key)
         do update set
           name = excluded.name,
           status = excluded.status,
-          starts_at = excluded.starts_at,
-          ends_at = excluded.ends_at,
           bitable_app_token_encrypted = excluded.bitable_app_token_encrypted,
           bitable_table_id = excluded.bitable_table_id,
           updated_at = now()
         returning id
       `,
-      [config.projectKey, config.projectName, config.status, config.startsAt, config.endsAt, encrypt(appToken), tableId]
+      [config.projectKey, config.projectName, config.status, encrypt(appToken), tableId]
     );
 
     const projectId = projectResult.rows[0].id;
