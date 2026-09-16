@@ -85,8 +85,8 @@ export async function syncMeetingRecordToBase(
   const fields = mapSupabaseRowToBaseFields(supabaseRecord, options?.orgName ?? config.orgTarget?.orgName);
   if (Object.keys(fields).length === 0) {
     logFeishuMonitor('warn', 'base_sync_empty_fields', {
-      userId: config.integration.userId,
-      integrationId: config.integration.id,
+      userId: config.userId,
+      integrationId: config.integrationId,
       meetingRecordId: supabaseRecord.id,
       durationMs: Date.now() - startedAt,
     });
@@ -101,8 +101,8 @@ export async function syncMeetingRecordToBase(
       // 已知 recordId：直接更新
       await updateMeetingRecordFields(config, knownRecordId, fields);
       logFeishuMonitor('info', 'base_sync_updated', {
-        userId: config.integration.userId,
-        integrationId: config.integration.id,
+        userId: config.userId,
+        integrationId: config.integrationId,
         meetingRecordId: supabaseRecord.id,
         baseRecordId: knownRecordId,
         durationMs: Date.now() - startedAt,
@@ -115,8 +115,8 @@ export async function syncMeetingRecordToBase(
     if (existing) {
       await updateMeetingRecordFields(config, existing.recordId, fields);
       logFeishuMonitor('info', 'base_sync_updated_by_lookup', {
-        userId: config.integration.userId,
-        integrationId: config.integration.id,
+        userId: config.userId,
+        integrationId: config.integrationId,
         meetingRecordId: supabaseRecord.id,
         baseRecordId: existing.recordId,
         durationMs: Date.now() - startedAt,
@@ -126,8 +126,8 @@ export async function syncMeetingRecordToBase(
 
     const created = await createMeetingRecord(config, fields);
     logFeishuMonitor('info', 'base_sync_created', {
-      userId: config.integration.userId,
-      integrationId: config.integration.id,
+      userId: config.userId,
+      integrationId: config.integrationId,
       meetingRecordId: supabaseRecord.id,
       baseRecordId: created.recordId,
       durationMs: Date.now() - startedAt,
@@ -136,8 +136,8 @@ export async function syncMeetingRecordToBase(
   } catch (error) {
     const mapped = error instanceof FeishuOpenApiError ? error : (error instanceof Error ? error : new Error(String(error)));
     logFeishuMonitor('error', 'base_sync_failed', {
-      userId: config.integration.userId,
-      integrationId: config.integration.id,
+      userId: config.userId,
+      integrationId: config.integrationId,
       meetingRecordId: supabaseRecord.id,
       meetingId: supabaseRecord.feishuMeetingId,
       durationMs: Date.now() - startedAt,
@@ -161,16 +161,16 @@ export async function syncPartialFieldsToBase(
   try {
     await updateMeetingRecordFields(config, baseRecordId, partialFields);
     logFeishuMonitor('info', 'base_partial_sync_succeeded', {
-      userId: config.integration.userId,
-      integrationId: config.integration.id,
+      userId: config.userId,
+      integrationId: config.integrationId,
       baseRecordId,
       durationMs: Date.now() - startedAt,
     });
   } catch (error) {
     const mapped = error instanceof FeishuOpenApiError ? error : (error instanceof Error ? error : new Error(String(error)));
     logFeishuMonitor('error', 'base_partial_sync_failed', {
-      userId: config.integration.userId,
-      integrationId: config.integration.id,
+      userId: config.userId,
+      integrationId: config.integrationId,
       baseRecordId,
       durationMs: Date.now() - startedAt,
       ...toErrorContext(mapped),

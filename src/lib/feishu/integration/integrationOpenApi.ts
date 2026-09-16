@@ -2,7 +2,7 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { isAbsolute, join } from 'path';
 import { writeFile } from 'fs/promises';
 import type { FeishuIntegrationContext } from './integrationStore';
-import { createFeishuSdkClient } from './sdkClient';
+import { createFeishuSdkClient, getGlobalBaseAppSdkClient } from './sdkClient';
 import { getValidIntegrationUserAuthorization } from './tokenService';
 import { FeishuOpenApiError } from '../common/openapi';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
@@ -294,4 +294,79 @@ export async function callFeishuIntegrationTenantOpenApi<T = unknown>(
   data?: Record<string, unknown>
 ): Promise<T> {
   return requestFeishuIntegrationTenantOpenApi<T>(integration, method, path, data);
+}
+
+// ----------------------------------------------------------------------------
+// 全局 Base 应用身份（tenant_access_token）调用层
+//
+// 适用场景：多维表格读写。使用平台级独立飞书应用（与集成应用相互独立），
+// 凭证来自环境变量 FEISHU_BASE_APP_ID / FEISHU_BASE_APP_SECRET。
+// 所有项目共享同一个 Base 读写应用，避免每个集成都要单独添加为多维表格协作者。
+// ----------------------------------------------------------------------------
+async function requestGlobalBaseAppTenantOpenApi<T>(
+  method: HttpMethod,
+  path: string,
+  data?: Record<string, unknown>,
+  responseType: 'json' | 'text' | 'arraybuffer' = 'json'
+): Promise<T> {
+  const startedAt = Date.now();
+  const client = getGlobalBaseAppSdkClient();
+  const { normalizedPath, params } = splitPathAndParams(path);
+
+  logRuntimeMonitor('info', 'integration_openapi', 'global_base_app_sdk_request_started', {
+    method,
+    path: normalizedPath,
+    stage: 'sdk_openapi_request',
+    identity: 'global_base_app',
+  });
+
+  try {
+    const response = await client.request<FeishuEnvelope<T> | T>({
+      method,
+      url: normalizedPath,
+      params,
+      data: method === 'GET' || method === 'DELETE' ? undefined : data,
+      responseType,
+      timeout: 60_000,
+    });
+
+    logRuntimeMonitor(
+      'info',
+      'integration_openapi',
+      'global_base_app_sdk_request_completed',
+      {
+        method,
+        path: normalizedPath,
+        stage: 'sdk_openapi_request',
+        identity: 'global_base_app',
+        durationMs: Date.now() - startedAt,
+      }
+    );
+
+    if (responseType !== 'json') {
+      return response as T;
+    }
+    return unwrapFeishuResponse(response, method, normalizedPath);
+  } catch (error) {
+    const mapped = mapSdkError(error, method, normalizedPath);
+    logRuntimeMonitor('error', 'integration_openapi', 'global_base_app_sdk_request_failed', {
+      method,
+      path: normalizedPath,
+      stage: 'sdk_openapi_request',
+      identity: 'global_base_app',
+      durationMs: Date.now() - startedAt,
+      errorCode: mapped.code,
+      statusCode: mapped.statusCode,
+      ...toRuntimeErrorContext(mapped),
+    });
+    throw mapped;
+  }
+}
+
+export async function callGlobalBaseAppTenantOpenApi<T = unknown>(
+  method: HttpMethod,
+  path: string,
+  data?: Record<string, unknown>
+): Promise<T> {
+  return requestGlobalBaseAppTenantOpenApi<T>(method, path, data);
 }

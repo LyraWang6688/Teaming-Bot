@@ -61,3 +61,21 @@ export function getFeishuBitableTableId(): string {
   return getRequiredValue('FEISHU_BITABLE_TABLE_ID', process.env.FEISHU_BITABLE_TABLE_ID);
 }
 
+/**
+ * 全局 Base 读写专用飞书应用凭证（平台级配置）。
+ *
+ * 所有项目的 Base 读写统一使用这一个飞书应用（tenant_access_token），
+ * 与集成初始化时创建的应用（用于 OAuth / 事件订阅 / IM 推送）相互独立。
+ *
+ * 该应用需要在飞书开发者后台：
+ *   1. 开启 bitable:app 应用权限
+ *   2. 被添加为目标多维表格的协作者（可编辑）
+ */
+export function getFeishuBaseAppId(): string {
+  return getRequiredValue('FEISHU_BASE_APP_ID', process.env.FEISHU_BASE_APP_ID);
+}
+
+export function getFeishuBaseAppSecret(): string {
+  return getRequiredValue('FEISHU_BASE_APP_SECRET', process.env.FEISHU_BASE_APP_SECRET);
+}
+

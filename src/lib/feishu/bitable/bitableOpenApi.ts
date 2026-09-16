@@ -1,6 +1,6 @@
 import type { AnalysisResult } from '@/types';
 import type { FeishuBitableConfig } from '../common/config';
-import { callFeishuIntegrationTenantOpenApi } from '../integration/integrationOpenApi';
+import { callGlobalBaseAppTenantOpenApi } from '../integration/integrationOpenApi';
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import {
   getActiveFeishuProject,
@@ -61,8 +61,11 @@ export type FeishuMeetingRecord = {
 };
 
 export type FeishuBitableAccess = FeishuBitableConfig & {
-  integration: FeishuIntegrationContext;
   orgTarget?: FeishuOrgTargetContext;
+  /** 触发本次 Base 写入的集成 ID（仅用于日志/审计，不参与 API 调用） */
+  integrationId: string;
+  /** 触发本次 Base 写入的用户 ID（仅用于日志/审计，不参与 API 调用） */
+  userId: string;
 };
 
 async function getGlobalBitableConfig(): Promise<FeishuBitableConfig> {
@@ -81,18 +84,19 @@ async function getGlobalBitableConfig(): Promise<FeishuBitableConfig> {
 }
 
 export async function createOrgTargetBitableAccess(
-  integration: FeishuIntegrationContext,
+  integration: Pick<FeishuIntegrationContext, 'id' | 'userId' | 'selectedOrgTargetId'>,
   orgTarget: FeishuOrgTargetContext
 ): Promise<FeishuBitableAccess> {
   return {
     ...(await getGlobalBitableConfig()),
-    integration,
+    integrationId: integration.id,
+    userId: integration.userId,
     orgTarget,
   };
 }
 
 export async function createSelectedOrgTargetBitableAccess(
-  integration: FeishuIntegrationContext,
+  integration: Pick<FeishuIntegrationContext, 'id' | 'userId' | 'selectedOrgTargetId'>,
   options?: { allowDisabled?: boolean }
 ): Promise<FeishuBitableAccess> {
   const baseConfig = await getGlobalBitableConfig();
@@ -100,7 +104,8 @@ export async function createSelectedOrgTargetBitableAccess(
   if (!integration.selectedOrgTargetId) {
     return {
       ...baseConfig,
-      integration,
+      integrationId: integration.id,
+      userId: integration.userId,
     };
   }
 
@@ -111,7 +116,8 @@ export async function createSelectedOrgTargetBitableAccess(
   if (!orgTarget) {
     return {
       ...baseConfig,
-      integration,
+      integrationId: integration.id,
+      userId: integration.userId,
     };
   }
 
@@ -119,14 +125,15 @@ export async function createSelectedOrgTargetBitableAccess(
 }
 
 async function callBitableOpenApi<T = unknown>(
-  config: FeishuBitableAccess,
+  _config: FeishuBitableAccess,
   method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
   data?: Record<string, unknown>
 ): Promise<T> {
-  // Base 读写统一走应用身份（tenant_access_token），
-  // 不依赖用户 OAuth token，避免用户 token 失效导致 Base 同步失败。
-  return callFeishuIntegrationTenantOpenApi<T>(config.integration, method, path, data);
+  // Base 读写统一走平台级独立飞书应用（tenant_access_token），
+  // 凭证来自环境变量 FEISHU_BASE_APP_ID / FEISHU_BASE_APP_SECRET，
+  // 与集成初始化创建的应用（用于 OAuth / 事件订阅 / IM 推送）相互独立。
+  return callGlobalBaseAppTenantOpenApi<T>(method, path, data);
 }
 
 function extractBitableText(value: unknown): string | undefined {
