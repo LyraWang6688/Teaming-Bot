@@ -45,10 +45,6 @@ type BitableLinkValue = {
   link?: unknown;
 };
 
-type BitablePersonValue = {
-  id: string;
-};
-
 export type FeishuMeetingRecord = {
   recordId: string;
   meetingId?: string;
@@ -313,14 +309,6 @@ export async function updateMeetingRecordFields(
     `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/${recordId}?user_id_type=open_id`,
     { fields }
   );
-}
-
-export function buildBitablePersonFieldValue(openId?: string | null): BitablePersonValue[] | undefined {
-  if (!openId) return undefined;
-  const normalized = openId.trim();
-  if (!normalized) return undefined;
-
-  return [{ id: normalized }];
 }
 
 export async function setMeetingProcessStatus(

@@ -50,6 +50,7 @@ export async function GET(request: NextRequest) {
           summary: persisted.analysisSummary,
           reportUrl: persisted.reportUrl,
           analysisData: persisted.analysisResult,
+          analysisSchemaVersion: persisted.analysisSchemaVersion,
           reportPublicId: persisted.reportPublicId,
         },
       });

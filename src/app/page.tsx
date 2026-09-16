@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '@/components/Layout';
 import InputForm from '@/components/InputForm';
-import AnalysisDashboard from '@/components/AnalysisDashboard';
+import AnalysisDashboardV2 from '@/components/AnalysisDashboardV2';
 import { AnalysisResult, BatchItem } from '@/types';
 import { FileText, Loader2, RefreshCw, FileDown } from 'lucide-react';
 import { toJpeg } from 'html-to-image';
@@ -150,7 +150,7 @@ function HomeContent() {
               React.createElement(
                 React.Suspense,
                 { fallback: React.createElement('div', { style: { padding: '40px', background: 'white' } }, '加载中...') },
-                React.createElement(AnalysisDashboard, {
+                React.createElement(AnalysisDashboardV2, {
                   result: item.result,
                   hideControls: true,
                   customTitle: item.file.name,
@@ -273,7 +273,7 @@ function HomeContent() {
     if (selectedItem && selectedItem.status === 'COMPLETE' && selectedItem.result) {
       return (
         <Layout>
-          <AnalysisDashboard
+          <AnalysisDashboardV2
             result={selectedItem.result}
             onReset={backToList}
             customTitle={selectedItem.file.name}

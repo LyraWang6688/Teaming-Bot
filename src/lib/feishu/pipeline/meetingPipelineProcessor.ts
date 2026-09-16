@@ -7,7 +7,6 @@
 
 import { analyzeMeetingText } from '@/services/analysisService';
 import {
-  buildBitablePersonFieldValue,
   createOrgTargetBitableAccess,
   createSelectedOrgTargetBitableAccess,
   type FeishuBitableAccess,
@@ -911,10 +910,12 @@ async function completeMeetingAnalysis(
   });
 
   // 2. 从 Supabase 同步到 Base（展示镜像）
+  // 「创建人」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
+  const authorizationContext = await getLatestFeishuAuthorizationContext(context.integration.id);
   await syncPartialFieldsToBase(config, record.recordId, {
     '处理状态': FEISHU_PROCESS_STATUS.analyzing,
     '会议文字稿': transcript,
-    '创建人': buildBitablePersonFieldValue(supabaseRow.organizerOpenId) || undefined,
+    '创建人': authorizationContext?.authorizedUserName ?? supabaseRow.organizerOpenId ?? undefined,
   });
 
   logFeishuMonitor('info', 'base_record_transcript_write_succeeded', {
@@ -1047,9 +1048,12 @@ async function completeMeetingAnalysis(
   try {
     // 从 Supabase 同步到 Base（统一字段映射）
     // persistedReport 包含 transcript（前面已写入）、analysisSummary、reportUrl、organizerOpenId 等
+    // 「创建人」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
+    const authorizationContext = await getLatestFeishuAuthorizationContext(context.integration.id);
     await syncMeetingRecordToBase(config, persistedReport, {
       baseRecordId: record.recordId,
       orgName: config.orgTarget?.orgName,
+      organizerName: authorizationContext?.authorizedUserName ?? null,
     });
   } catch (error) {
     await writeAuditLog({
@@ -1267,9 +1271,12 @@ async function ensureMinuteRecord(
   });
 
   // 2. 从 Supabase 同步到 Base
+  // 「创建人」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
+  const authorizationContext = await getLatestFeishuAuthorizationContext(context.integration.id);
   const baseRecordId = await syncMeetingRecordToBase(config, supabaseRow, {
     baseRecordId: existing?.recordId || context.recordId || supabaseRow.baseRecordId || null,
     orgName: config.orgTarget?.orgName,
+    organizerName: authorizationContext?.authorizedUserName ?? null,
   });
 
   // 3. 回写 baseRecordId 到 Supabase（如果新创建的）

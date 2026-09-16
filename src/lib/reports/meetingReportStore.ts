@@ -8,7 +8,7 @@ import {
 import type { FeishuIntegrationContext } from '@/lib/feishu/integration/integrationStore';
 import type { MeetingDetails } from '@/lib/feishu/meetings/meetingDetailsTypes';
 
-export const MEETING_REPORT_SCHEMA_VERSION = 1;
+export const MEETING_REPORT_SCHEMA_VERSION = 2;
 
 type UpsertMeetingRecordInput = {
   integration: FeishuIntegrationContext;

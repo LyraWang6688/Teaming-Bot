@@ -5,7 +5,6 @@ import { buildPersistentReportUrl } from '@/lib/reports/reportUrl';
 import type { MeetingRecordRow } from '@/lib/db/schema';
 
 import {
-  buildBitablePersonFieldValue,
   createMeetingRecord,
   findMeetingRecordByMeetingId,
   type FeishuBitableAccess,
@@ -17,11 +16,16 @@ import {
  *
  * Supabase 是唯一真相源，Base 是展示镜像。所有 Base 写入统一走这个映射。
  * 新增 Base 字段时，在 BaseFieldMap 里加一项，在这里补一行即可。
+ *
+ * 「创建人」字段为文本类型：写入 authorized_user_name（飞书授权用户姓名），
+ * 缺省时回退到 organizerOpenId 字符串。不再使用人员字段格式 [{id}]，
+ * 因为平台级独立 Base 应用无法解析集成应用的 open_id。
  */
 function mapSupabaseRowToBaseFields(
   row: MeetingRecordRow,
-  orgName?: string | null
+  options?: { orgName?: string | null; organizerName?: string | null }
 ): Record<string, unknown> {
+  const { orgName, organizerName } = options ?? {};
   const fields: Record<string, unknown> = {};
 
   if (row.feishuMeetingId) fields['会议ID'] = row.feishuMeetingId;
@@ -30,10 +34,10 @@ function mapSupabaseRowToBaseFields(
   // 数据来源 = 初始化配置时选择的方向（orgTarget.orgName）
   if (orgName) fields['数据来源'] = [orgName];
 
-  // 创建人 = 会议创建人（organizerOpenId）
-  // 门槛通过场景下 organizerOpenId = authorizedOpenId，是同一个人
-  const creatorValue = buildBitablePersonFieldValue(row.organizerOpenId);
-  if (creatorValue) fields['创建人'] = creatorValue;
+  // 创建人 = 会议创建人姓名（文本类型字段）
+  // 门槛通过场景下 organizerOpenId = authorizedOpenId，姓名来自 feishu_authorizations
+  const creatorName = organizerName || row.organizerOpenId;
+  if (creatorName) fields['创建人'] = creatorName;
 
   // 处理状态：英文 status → 中文显示值
   const processStatus = mapStatusToChinese(row.status);
@@ -79,10 +83,13 @@ function mapSupabaseRowToBaseFields(
 export async function syncMeetingRecordToBase(
   config: FeishuBitableAccess,
   supabaseRecord: MeetingRecordRow,
-  options?: { baseRecordId?: string | null; orgName?: string | null }
+  options?: { baseRecordId?: string | null; orgName?: string | null; organizerName?: string | null }
 ): Promise<string | null> {
   const startedAt = Date.now();
-  const fields = mapSupabaseRowToBaseFields(supabaseRecord, options?.orgName ?? config.orgTarget?.orgName);
+  const fields = mapSupabaseRowToBaseFields(supabaseRecord, {
+    orgName: options?.orgName ?? config.orgTarget?.orgName,
+    organizerName: options?.organizerName,
+  });
   if (Object.keys(fields).length === 0) {
     logFeishuMonitor('warn', 'base_sync_empty_fields', {
       userId: config.userId,

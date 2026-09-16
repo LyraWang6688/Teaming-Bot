@@ -75,6 +75,7 @@ export default async function PersistentReportPage({ params }: ReportPageProps) 
   return (
     <PersistentReportView
       analysis={report.analysisResult}
+      analysisSchemaVersion={report.analysisSchemaVersion}
       topic={report.topic}
     />
   );

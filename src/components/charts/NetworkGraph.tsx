@@ -1,265 +1,161 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { NetworkEdgeV2, NetworkNodeV2, PlayerRoleV2 } from '@/types';
 
-import type { NetworkEdge, NetworkNode, PlayerRole } from '@/types';
-
-interface NetworkGraphProps {
-  nodes: NetworkNode[];
-  edges: NetworkEdge[];
-}
-
-const ROLE_CONFIG: Record<PlayerRole, { fill: string; stroke: string; text: string; label: string }> = {
-  mover: { fill: '#D4A027', stroke: '#A87D1A', text: 'white', label: '发起者' },
-  follower: { fill: '#3D7294', stroke: '#2A5570', text: 'white', label: '跟随者' },
-  opposer: { fill: '#C43E22', stroke: '#962E18', text: 'white', label: '反对者' },
-  bystander: { fill: '#7A55A2', stroke: '#5C3E80', text: 'white', label: '旁观者' },
-  silent: { fill: '#e2e8f0', stroke: '#94a3b8', text: '#475569', label: '无明显参与' },
+export const ROLE_VISUAL: Record<PlayerRoleV2, { fill: string; stroke: string; soft: string; label: string; text: string }> = {
+  mover: { fill: '#d89f25', stroke: '#a9750d', soft: '#fff5d8', label: '推动', text: '#ffffff' },
+  follower: { fill: '#4f86c6', stroke: '#31679f', soft: '#eaf3ff', label: '承接', text: '#ffffff' },
+  opposer: { fill: '#d95f52', stroke: '#a63f37', soft: '#fff0ef', label: '挑战', text: '#ffffff' },
+  bystander: { fill: '#8765b3', stroke: '#66428f', soft: '#f3edff', label: '观察', text: '#ffffff' },
+  silent: { fill: '#cbd5e1', stroke: '#94a3b8', soft: '#f1f5f9', label: '未明显观察到', text: '#334155' },
 };
+const EDGE = { strong: { width: 4, opacity: 0.85 }, moderate: { width: 2.6, opacity: 0.7 }, light: { width: 1.45, opacity: 0.52 } };
 
-const EDGE_CONFIG = {
-  strong: { width: 2.5, color: '#94a3b8', opacity: 0.8 },
-  moderate: { width: 1.5, color: '#cbd5e1', opacity: 0.6 },
-  light: { width: 1, color: '#e2e8f0', opacity: 0.5 },
-};
-
-const NODE_RADIUS = 22;
-
-function getNodeRadius(): number {
-  return NODE_RADIUS;
-}
-
-function computeStaticLayout(nodes: NetworkNode[], width: number, height: number) {
-  const cx = width / 2;
-  const cy = height / 2;
-  const padding = 60;
-  const radius = Math.min(width, height) / 2 - padding;
-
-  const groups: Record<PlayerRole, NetworkNode[]> = {
-    mover: [],
-    follower: [],
-    opposer: [],
-    bystander: [],
-    silent: [],
-  };
-
-  nodes.forEach((node) => groups[node.playerRole]?.push(node));
-
-  const sectorAngles: Record<PlayerRole, [number, number]> = {
-    mover: [-90, -90],
-    follower: [-50, 40],
-    opposer: [-180, -80],
-    bystander: [40, 130],
-    silent: [130, 220],
-  };
-
-  const positions = new Map<string, { x: number; y: number }>();
-
-  const movers = groups.mover;
-  movers.forEach((node, index) => {
-    if (movers.length === 1) {
-      positions.set(node.name, { x: cx, y: cy - radius * 0.05 });
-      return;
-    }
-
-    const angle = ((index / movers.length) * 360 - 90) * Math.PI / 180;
-    const moverRadius = radius * 0.2;
-    positions.set(node.name, {
-      x: cx + moverRadius * Math.cos(angle),
-      y: cy + moverRadius * Math.sin(angle),
-    });
-  });
-
-  (['follower', 'opposer', 'bystander', 'silent'] as PlayerRole[]).forEach((role) => {
-    const members = groups[role];
-    if (members.length === 0) {
-      return;
-    }
-
-    const [startDeg, endDeg] = sectorAngles[role];
-    const span = endDeg - startDeg;
-
-    members.forEach((node, index) => {
-      const step = members.length > 1 ? span / (members.length + 1) : 0;
-      const deg = members.length > 1 ? startDeg + step * (index + 1) : startDeg + span / 2;
-      const rad = deg * Math.PI / 180;
-      const outerRadius = radius * 0.7;
-
-      positions.set(node.name, {
-        x: cx + outerRadius * Math.cos(rad),
-        y: cy + outerRadius * Math.sin(rad),
-      });
-    });
-  });
-
-  return positions;
-}
-
-export default function NetworkGraph({ nodes, edges }: NetworkGraphProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 500, height: 420 });
-
+export default function NetworkGraph({ nodes, edges }: { nodes: NetworkNodeV2[]; edges: NetworkEdgeV2[] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(620);
   useEffect(() => {
-    if (!containerRef.current) {
-      return undefined;
-    }
-
-    const update = () => {
-      const width = containerRef.current?.clientWidth ?? 500;
-      setDimensions({ width, height: Math.max(400, Math.min(480, width)) });
-    };
-
-    update();
-
-    const observer = new ResizeObserver(update);
-    observer.observe(containerRef.current);
-
+    if (!ref.current) return;
+    const resize = () => setWidth(ref.current?.clientWidth || 620);
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(ref.current);
     return () => observer.disconnect();
   }, []);
-
-  const { width, height } = dimensions;
-  const positions = computeStaticLayout(nodes, width, height);
+  const height = width < 440 ? 430 : 470;
+  const radii = useMemo(
+    () => new Map(nodes.map((node) => [node.name, radiusFor(node.speakingShare || 0, nodes.length, node.name.length)])),
+    [nodes],
+  );
+  const positions = useMemo(() => layout(nodes, edges, width, height, radii), [nodes, edges, width, height, radii]);
 
   return (
-    <div ref={containerRef} className="w-full">
-      <svg width={width} height={height} className="overflow-visible">
+    <figure ref={ref} className="w-full">
+      <div className="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-[10px] font-semibold text-slate-600">
+        {(['mover', 'follower', 'opposer', 'bystander'] as PlayerRoleV2[]).map((role) => (
+          <span key={role} className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full" style={{ background: ROLE_VISUAL[role].fill }} />{ROLE_VISUAL[role].label}</span>
+        ))}
+        {nodes.some((node) => node.playerRole === 'silent') && <span className="inline-flex items-center gap-1.5"><i className="h-2.5 w-2.5 rounded-full bg-slate-300" />未明显观察到</span>}
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img" aria-label="会议语义互动网络">
+        <defs>
+          <marker id="meeting-arrow" viewBox="0 0 10 10" refX="8.2" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" /></marker>
+        </defs>
         {edges.map((edge, index) => {
           const source = positions.get(edge.source);
           const target = positions.get(edge.target);
-          if (!source || !target) {
-            return null;
-          }
-
-          const config = EDGE_CONFIG[edge.weight] || EDGE_CONFIG.light;
-
+          if (!source || !target) return null;
+          const trimmed = trimLine(source, target, (radii.get(edge.source) || 28) + 5, (radii.get(edge.target) || 28) + 8);
+          const style = EDGE[edge.weight] || EDGE.light;
+          const reverse = edges.some((candidate) => candidate.source === edge.target && candidate.target === edge.source);
+          const bend = reverse ? (edge.source.localeCompare(edge.target) > 0 ? 15 : -15) : 0;
+          const cx = (trimmed.x1 + trimmed.x2) / 2 + bend * (trimmed.y2 - trimmed.y1) / 100;
+          const cy = (trimmed.y1 + trimmed.y2) / 2 - bend * (trimmed.x2 - trimmed.x1) / 100;
+          const midX = (trimmed.x1 + trimmed.x2 + cx) / 3;
+          const midY = (trimmed.y1 + trimmed.y2 + cy) / 3;
           return (
-            <line
-              key={`edge-${index}`}
-              x1={source.x}
-              y1={source.y}
-              x2={target.x}
-              y2={target.y}
-              stroke={config.color}
-              strokeWidth={config.width}
-              strokeOpacity={config.opacity}
+            <g key={`${edge.source}-${edge.target}-${index}`}>
+            <path
+              d={`M ${trimmed.x1} ${trimmed.y1} Q ${cx} ${cy} ${trimmed.x2} ${trimmed.y2}`}
+              fill="none"
+              stroke="#64748b"
+              strokeWidth={style.width}
+              strokeOpacity={style.opacity}
               strokeLinecap="round"
+              markerEnd="url(#meeting-arrow)"
             />
+            {edge.nature && <text x={midX} y={midY - 5} textAnchor="middle" fill="#64748b" fontSize="9" paintOrder="stroke" stroke="#fff" strokeWidth="4">{shorten(edge.nature, 10)}</text>}
+            <title>{edge.source} → {edge.target}：{edge.nature || '直接语义互动'}{edge.count ? `（${edge.count} 次）` : ''}</title>
+            </g>
           );
         })}
-
         {nodes.map((node) => {
-          const position = positions.get(node.name);
-          if (!position) {
-            return null;
-          }
-
-          const config = ROLE_CONFIG[node.playerRole];
-          const radius = getNodeRadius();
-          const displayName = node.name.length > 4 ? node.name.slice(0, 4) : node.name;
-          const shareValue = node.speakingShare != null && !Number.isNaN(node.speakingShare)
-            ? Math.round(node.speakingShare)
-            : null;
-          const shareText = shareValue != null ? `${shareValue}%` : '--%';
-          const isRightSide = position.x < width / 2;
-          const textX = isRightSide ? position.x + radius + 8 : position.x - radius - 8;
-          const textAnchor = isRightSide ? 'start' : 'end';
-
+          const point = positions.get(node.name);
+          if (!point) return null;
+          const role = ROLE_VISUAL[node.playerRole];
+          const radius = radii.get(node.name) || 28;
+          const nameLines = splitName(node.name, radius);
           return (
-            <g key={`node-${node.name}`}>
-              <circle
-                cx={position.x}
-                cy={position.y}
-                r={radius}
-                fill={config.fill}
-                stroke={config.stroke}
-                strokeWidth={1.5}
-                opacity={node.playerRole === 'silent' ? 0.7 : 0.95}
-              />
-              <text
-                x={position.x}
-                y={position.y}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fill={config.text}
-                fontSize={11}
-                fontWeight={600}
-              >
-                {displayName}
-              </text>
-              <text
-                x={textX}
-                y={position.y + 4}
-                textAnchor={textAnchor}
-                dominantBaseline="middle"
-                fill="#1e293b"
-                fontSize={12}
-                fontWeight={700}
-              >
-                {shareText}
-              </text>
+            <g key={node.name}>
+              <circle cx={point.x} cy={point.y} r={radius} fill={role.fill} stroke={role.stroke} strokeWidth="2.2" />
+              {nameLines.map((line, index) => (
+                <text
+                  key={line + index}
+                  x={point.x}
+                  y={point.y - 8 - ((nameLines.length - 1) * 11) / 2 + index * 11}
+                  textAnchor="middle"
+                  fill={role.text}
+                  fontSize={nameLines.length >= 3 ? 8 : nameLines.length > 1 ? 9 : 10.5}
+                  fontWeight="700"
+                >
+                  {line}
+                </text>
+              ))}
+              <text x={point.x} y={point.y + 9 + ((nameLines.length - 1) * 11) / 2} textAnchor="middle" fill={role.text} fontSize="9.5" fontWeight="700">{Math.round(node.speakingShare || 0)}%</text>
             </g>
           );
         })}
       </svg>
-
-      <div className="mt-2 border-t border-slate-200 pt-2 text-xs text-slate-600">
-        <div className="space-y-1">
-          <p className="leading-relaxed">
-            <span className="mr-1 inline-flex items-center font-bold" style={{ color: ROLE_CONFIG.mover.fill }}>
-              <span className="mr-1 inline-block h-2 w-2 rounded-full" style={{ background: ROLE_CONFIG.mover.fill }} />
-              发起者
-            </span>
-            提出主张、目标或行动建议。
-          </p>
-          <p className="leading-relaxed">
-            <span className="mr-1 inline-flex items-center font-bold" style={{ color: ROLE_CONFIG.follower.fill }}>
-              <span className="mr-1 inline-block h-2 w-2 rounded-full" style={{ background: ROLE_CONFIG.follower.fill }} />
-              跟随者
-            </span>
-            支持提议并补充、落实和推进。
-          </p>
-          <p className="leading-relaxed">
-            <span className="mr-1 inline-flex items-center font-bold" style={{ color: ROLE_CONFIG.opposer.fill }}>
-              <span className="mr-1 inline-block h-2 w-2 rounded-full" style={{ background: ROLE_CONFIG.opposer.fill }} />
-              反对者
-            </span>
-            质疑假设、指出风险或提出不同意见。
-          </p>
-          <p className="leading-relaxed">
-            <span className="mr-1 inline-flex items-center font-bold" style={{ color: ROLE_CONFIG.bystander.fill }}>
-              <span className="mr-1 inline-block h-2 w-2 rounded-full" style={{ background: ROLE_CONFIG.bystander.fill }} />
-              旁观者
-            </span>
-            暂时跳出立场、观察并描述整体情况。
-          </p>
-          <p className="leading-relaxed text-slate-500">
-            <span className="mr-1 inline-flex items-center font-medium" style={{ color: '#64748b' }}>
-              <span
-                className="mr-1 inline-block h-2 w-2 rounded-full"
-                style={{ background: ROLE_CONFIG.silent.fill, border: `1px solid ${ROLE_CONFIG.silent.stroke}` }}
-              />
-              灰色节点
-            </span>
-            表示无明显参与，整场会议发言极少。
-          </p>
-        </div>
-
-        <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-slate-500">
-          <span className="inline-flex items-center">
-            <svg width="24" height="14" className="mr-1">
-              <circle cx="12" cy="7" r="6" fill="#94a3b8" />
-            </svg>
-            百分比数字 = 发言占比
-          </span>
-          <span className="inline-flex items-center">
-            <svg width="30" height="10" className="mr-1">
-              <line x1="2" y1="5" x2="28" y2="5" stroke="#94a3b8" strokeWidth="1" strokeLinecap="round" />
-              <line x1="2" y1="8" x2="28" y2="8" stroke="#64748b" strokeWidth="2.5" strokeLinecap="round" />
-            </svg>
-            连线越粗 = 互动越频繁
-          </span>
-        </div>
-      </div>
-    </div>
+      <figcaption className="mt-2 grid gap-2 border-t border-slate-200 pt-3 text-[10px] leading-5 text-slate-500 sm:grid-cols-2">
+        <p className="flex items-center gap-2"><i className="inline-block h-4 w-4 rounded-full border-2 border-slate-500 bg-white" />圆圈大小：发言占比</p>
+        <p className="flex items-center gap-2"><i className="inline-block h-3 w-6 rounded-full bg-gradient-to-r from-amber-400 via-blue-500 to-purple-500" />节点颜色：主要功能</p>
+        <p className="flex items-center gap-2"><span className="text-base text-slate-600">→</span>箭头：回应方向</p>
+        <p className="flex items-center gap-2"><i className="inline-block h-[3px] w-7 rounded bg-slate-500" />线宽：互动频次</p>
+      </figcaption>
+    </figure>
   );
+}
+
+function radiusFor(share: number, count: number, nameLength: number) {
+  const base = count >= 8 ? 23 : 27;
+  const shareRadius = Math.min(base + 20, base + Math.sqrt(Math.max(0, share)) * 2.2);
+  const nameRadius = Math.min(50, base + Math.max(0, nameLength - 4) * 1.15);
+  return Math.max(base, shareRadius, nameRadius);
+}
+
+function layout(nodes: NetworkNodeV2[], edges: NetworkEdgeV2[], width: number, height: number, radii: Map<string, number>) {
+  const positions = new Map<string, { x: number; y: number }>();
+  if (!nodes.length) return positions;
+  const degree = new Map(nodes.map((node) => [node.name, 0]));
+  edges.forEach((edge) => {
+    degree.set(edge.source, (degree.get(edge.source) || 0) + (edge.count || 1));
+    degree.set(edge.target, (degree.get(edge.target) || 0) + (edge.count || 1));
+  });
+  const ordered = [...nodes].sort((a, b) => (degree.get(b.name) || 0) - (degree.get(a.name) || 0));
+  const hubCount = nodes.length >= 5 ? 2 : 1;
+  const hubs = ordered.slice(0, hubCount);
+  const ring = ordered.slice(hubCount);
+  const cx = width / 2;
+  const cy = height / 2 - 18;
+  hubs.forEach((node, index) => positions.set(node.name, hubCount === 1 ? { x: cx, y: cy } : { x: cx + (index ? 62 : -62), y: cy }));
+  const largestRadius = Math.max(...nodes.map((node) => radii.get(node.name) || 28));
+  const rx = Math.max(105, width / 2 - largestRadius - 22);
+  const ry = Math.max(125, height / 2 - largestRadius - 34);
+  ring.forEach((node, index) => {
+    const angle = (-145 + (ring.length === 1 ? 0 : index * (290 / (ring.length - 1)))) * Math.PI / 180;
+    positions.set(node.name, { x: cx + Math.cos(angle) * rx, y: cy + Math.sin(angle) * ry });
+  });
+  return positions;
+}
+
+function trimLine(source: { x: number; y: number }, target: { x: number; y: number }, sourcePadding: number, targetPadding: number) {
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const length = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+  const ux = dx / length;
+  const uy = dy / length;
+  return { x1: source.x + ux * sourcePadding, y1: source.y + uy * sourcePadding, x2: target.x - ux * targetPadding, y2: target.y - uy * targetPadding };
+}
+
+function splitName(name: string, radius: number) {
+  const preferredWidth = Math.max(4, Math.floor(radius / 4.4));
+  if (name.length <= preferredWidth) return [name];
+  const lineCount = Math.min(3, Math.ceil(name.length / preferredWidth));
+  const charactersPerLine = Math.ceil(name.length / lineCount);
+  return Array.from({ length: lineCount }, (_, index) => name.slice(index * charactersPerLine, (index + 1) * charactersPerLine)).filter(Boolean);
+}
+
+function shorten(value: string, max: number) {
+  return value.length > max ? `${value.slice(0, max)}…` : value;
 }

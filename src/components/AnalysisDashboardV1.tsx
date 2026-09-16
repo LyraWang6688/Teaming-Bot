@@ -17,14 +17,14 @@ import {
 import { toJpeg } from 'html-to-image';
 
 import { logClientMonitor, toClientErrorContext } from '@/lib/platform/clientMonitor';
-import { AnalysisResult } from '@/types';
+import type { AnalysisResultV1 } from '@/types';
 import { ZONE_CONFIG } from '@/utils';
 
-import NetworkGraph from './charts/NetworkGraph';
-import TeamStateChart from './charts/TeamStateChart';
+import NetworkGraph from './charts/NetworkGraphV1';
+import TeamStateChart from './charts/TeamStateChartV1';
 
 interface AnalysisDashboardProps {
-  result: AnalysisResult;
+  result: AnalysisResultV1;
   onReset?: () => void;
   hideControls?: boolean;
   customTitle?: string;

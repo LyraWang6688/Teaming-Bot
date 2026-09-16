@@ -1,134 +1,68 @@
-export interface BehaviorMetric {
-  level: 'Red' | 'Blue' | 'Green' | 'Grey';
-  score: number;
-  evidence: string[];
-  summary: string;
-}
+/**
+ * 类型聚合层。
+ *
+ * V1 类型（已冻结）：对应 schemaVersion=1 的旧报告，详见 `./v1`。
+ * V2 类型（当前活跃）：对应 schemaVersion=2 的新报告，详见 `./v2`。
+ *
+ * 默认导出（无后缀）指向 V2：
+ * - `AnalysisResult` = `AnalysisResultV2`
+ * - `BatchItem` = `BatchItemV2`
+ * - `TeamZone` = `TeamZoneV2`
+ *
+ * V1 渲染器（AnalysisDashboardV1）及 V1 图表组件应显式 import V1 后缀类型。
+ */
 
-export interface TeamBehaviors {
-  speakingUp: BehaviorMetric;
-  collaboration: BehaviorMetric;
-  experimentation: BehaviorMetric;
-  reflection: BehaviorMetric;
-}
+export type {
+  TeamZoneV1,
+  BehaviorMetricV1,
+  TeamBehaviorsV1,
+  TeamStateV1,
+  QuoteV1,
+  LeaderAdviceV1,
+  CommunicationParticipantV1,
+  PlayerRoleV1,
+  NetworkNodeV1,
+  NetworkEdgeV1,
+  DialogueNetworkV1,
+  MeetingMetadataV1,
+  UnfinishedDialogueV1,
+  UnseenDisagreementV1,
+  KeyAssumptionV1,
+  AnalysisResultV1,
+  BatchItemV1,
+} from './v1';
 
-export interface TeamState {
-  zone: 'Apathy' | 'Comfort' | 'Anxiety' | 'Learning' | 'Difficult to Judge';
-  psychologicalSafetyScore: number;
-  workStandardScore: number;
-  interactionFluidityScore: number;
-  interactionFlowBreakdown: {
-    networkStructureScore: number;
-    dialogueDepthScore: number;
-    crossTierInteractionScore: number;
-  };
-  psychologicalSafetyBreakdown: {
-    speakingUpBehavior: number;
-    positiveInteraction: number;
-    errorTolerance: number;
-  };
-  workStandardBreakdown: {
-    goalClarity: number;
-    qualityPursuit: number;
-    executionRigor: number;
-  };
-  analysis: string;
-}
+export { AnalysisStatusV1 } from './v1';
 
-export interface Quote {
-  speaker: string;
-  text: string;
-}
+export type {
+  TeamZoneV2,
+  BoundaryDimensionV2,
+  ParticipantTypeV2,
+  BehaviorMetricV2,
+  TeamBehaviorsV2,
+  EvidenceDirectionV2,
+  EvidenceConfidenceV2,
+  DimensionAssessmentV2,
+  LearningBehaviorObservationV2,
+  TeamStateV2,
+  LeaderAdviceV2,
+  CommunicationParticipantV2,
+  PlayerRoleV2,
+  NetworkNodeV2,
+  NetworkEdgeV2,
+  DialogueNetworkV2,
+  MeetingMetadataV2,
+  CrossBoundaryLearningV2,
+  UnfinishedDialogueV2,
+  UnseenDisagreementV2,
+  AnalysisResultV2,
+  BatchItemV2,
+} from './v2';
 
-export interface LeaderAdvice {
-  action: 'frame_for_learning' | 'create_psychological_safety' | 'learn_from_failure' | 'cross_boundaries';
-  advice: string;
-  reasoning: string;
-}
-
-export interface CommunicationParticipant {
-  name: string;
-  speakingShare: number;
-  inquiryScore: number;
-  advocacyScore: number;
-  effectiveSentences: number;
-}
-
-export type PlayerRole = 'mover' | 'follower' | 'opposer' | 'bystander' | 'silent';
-
-export interface NetworkNode {
-  name: string;
-  role?: string;
-  playerRole: PlayerRole;
-  playerReason: string;
-  speakingShare?: number;
-}
-
-export interface NetworkEdge {
-  source: string;
-  target: string;
-  weight: 'strong' | 'moderate' | 'light';
-  nature?: string;
-}
-
-export interface DialogueNetwork {
-  nodes: NetworkNode[];
-  edges: NetworkEdge[];
-  analysis: string;
-  riskAssessment: string;
-}
-
-export interface MeetingMetadata {
-  meetingType: string;
-  projectPhase?: 'Start-up' | 'Post-startup';
-  totalSentences: number;
-  effectiveSentences: number;
-  qualityFlag: 'normal' | 'low_sample' | 'unbalanced';
-}
-
-export interface UnfinishedDialogue {
-  topic: string;
-  whyUnfinished: string;
-  whyNeedsClosure: string;
-}
-
-export interface UnseenDisagreement {
-  topic: string;
-  whatEachSideSays: string;
-  whyItMatters: string;
-}
-
-export interface KeyAssumption {
-  assumption: string;
-  whyToVerify: string;
-}
-
-export interface AnalysisResult {
-  reportTimestamp: string;
-  metadata: MeetingMetadata;
-  summary: string;
-  behaviors: TeamBehaviors;
-  teamState: TeamState;
-  keyAssumptions: KeyAssumption[];
-  unfinishedDialogues: UnfinishedDialogue[];
-  unseenDisagreements: UnseenDisagreement[];
-  leaderAdvice: LeaderAdvice;
-  communication: CommunicationParticipant[];
-  dialogueNetwork?: DialogueNetwork;
-}
-
-export enum AnalysisStatus {
-  IDLE = 'IDLE',
-  ANALYZING = 'ANALYZING',
-  COMPLETE = 'COMPLETE',
-  ERROR = 'ERROR',
-}
-
-export interface BatchItem {
-  id: string;
-  file: File;
-  status: 'PENDING' | 'ANALYZING' | 'COMPLETE' | 'ERROR';
-  taskId?: string;
-  result?: AnalysisResult;
-  error?: string;
-}
+/**
+ * 默认类型别名（指向 V2，新代码应使用这些）。
+ */
+import type { TeamZoneV2, AnalysisResultV2, BatchItemV2 } from './v2';
+export type TeamZone = TeamZoneV2;
+export type AnalysisResult = AnalysisResultV2;
+export type BatchItem = BatchItemV2;

@@ -4,7 +4,6 @@
  */
 
 import { jsonFormatter } from './jsonFormatter';
-import { markdownFormatter } from './markdownFormatter';
 import type { InputSource } from '@/constants/inputConfig';
 import { getOutputConfig } from '@/constants/outputConfig';
 import type { AnalysisResult } from '@/types';
@@ -15,7 +14,6 @@ import type { OutputConfig } from '@/constants/outputConfig';
  */
 const FORMATTERS: Record<string, (result: AnalysisResult, config: OutputConfig) => string | object> = {
   jsonFormatter,
-  markdownFormatter,
 };
 
 /**

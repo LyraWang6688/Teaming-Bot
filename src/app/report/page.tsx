@@ -7,8 +7,8 @@
 
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { AnalysisResult } from '@/types';
-import AnalysisDashboard from '@/components/AnalysisDashboard';
+import type { AnalysisResultV1, AnalysisResultV2 } from '@/types';
+import { PersistentReportView } from '@/components/reports/PersistentReportView';
 import { FEISHU_ACTIVE_PROCESS_STATUSES, FEISHU_PROCESS_STATUS } from '@/lib/feishu/pipeline/status';
 import { Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
 
@@ -78,7 +78,8 @@ function ReportContent() {
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [analysisData, setAnalysisData] = useState<AnalysisResult | null>(null);
+  const [analysisData, setAnalysisData] = useState<AnalysisResultV1 | AnalysisResultV2 | null>(null);
+  const [analysisSchemaVersion, setAnalysisSchemaVersion] = useState<number | null>(null);
   const [processStatus, setProcessStatus] = useState<string | null>(null);
   const [topic, setTopic] = useState<string | null>(null);
 
@@ -119,6 +120,7 @@ function ReportContent() {
 
         if (reportData?.analysisData) {
           setAnalysisData(reportData.analysisData);
+          setAnalysisSchemaVersion(reportData.analysisSchemaVersion ?? 1);
         } else if (reportData?.processStatus && ACTIVE_PROCESS_STATUSES.has(reportData.processStatus)) {
           // 正在处理中，不设置错误
         } else if (reportData?.processStatus === FEISHU_PROCESS_STATUS.failed) {
@@ -153,10 +155,10 @@ function ReportContent() {
   }
 
   return (
-    <AnalysisDashboard 
-      result={analysisData} 
-      onReset={() => window.location.href = '/'}
-      customTitle={topic || undefined}
+    <PersistentReportView
+      analysis={analysisData}
+      analysisSchemaVersion={analysisSchemaVersion}
+      topic={topic}
     />
   );
 }

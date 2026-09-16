@@ -22,8 +22,8 @@ export const OUTPUT_CONFIG: Record<InputSource, OutputConfig> = {
     features: ['visualization', 'pdf_export'],
   },
   feishu: {
-    format: 'markdown',
-    formatterName: 'markdownFormatter',
+    format: 'json',
+    formatterName: 'jsonFormatter',
     includeMetadata: false,
     features: [],
   },
