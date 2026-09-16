@@ -57,7 +57,7 @@ function mapMeetingDetailsError(error: unknown): Error {
   return error;
 }
 
-export async function fetchMeetingDetails(
+async function fetchMeetingDetails(
   integration: FeishuIntegrationContext,
   meetingId: string
 ): Promise<MeetingDetails> {

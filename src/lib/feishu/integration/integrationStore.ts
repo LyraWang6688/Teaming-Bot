@@ -37,6 +37,7 @@ export type FeishuIntegrationView = {
   appId: string;
   oauthScope: string;
   selectedOrgTargetId: string | null;
+  projectId: string | null;
   orgSelectedAt: string | null;
   initializedAt: string | null;
   createdAt: string;
@@ -118,6 +119,7 @@ type CreateIntegrationInput = {
   appId: string;
   appSecret: string;
   selectedOrgTargetId?: string | null;
+  projectId?: string | null;
   oauthScope?: string;
 };
 
@@ -126,6 +128,7 @@ type UpdateIntegrationInput = {
   appId?: string;
   appSecret?: string;
   selectedOrgTargetId?: string | null;
+  projectId?: string | null;
   oauthScope?: string;
   status?: string;
   setupStep?: string;
@@ -188,6 +191,7 @@ function mapIntegrationView(row: FeishuIntegrationRow): FeishuIntegrationView {
     appId: row.appId,
     oauthScope: row.oauthScope,
     selectedOrgTargetId: row.selectedOrgTargetId,
+    projectId: row.projectId,
     orgSelectedAt: toIsoString(row.orgSelectedAt),
     initializedAt: toIsoString(row.initializedAt),
     createdAt: row.createdAt.toISOString(),
@@ -320,6 +324,7 @@ export async function createUserFeishuIntegration(
       appId: input.appId.trim(),
       appSecretEncrypted: encrypt(input.appSecret.trim()),
       selectedOrgTargetId: input.selectedOrgTargetId || null,
+      projectId: input.projectId || null,
       orgSelectedAt: input.selectedOrgTargetId ? new Date() : null,
       oauthScope: input.oauthScope?.trim() || getDefaultFeishuOauthScope(),
       requiredEvents: [...FEISHU_REQUIRED_USER_EVENTS],
@@ -369,6 +374,12 @@ export async function updateUserFeishuIntegration(
   if (input.selectedOrgTargetId === null) {
     updateValues.selectedOrgTargetId = null;
     updateValues.orgSelectedAt = null;
+  }
+  if (typeof input.projectId === 'string') {
+    updateValues.projectId = input.projectId.trim();
+  }
+  if (input.projectId === null) {
+    updateValues.projectId = null;
   }
   if (typeof input.oauthScope === 'string') {
     updateValues.oauthScope = input.oauthScope.trim();

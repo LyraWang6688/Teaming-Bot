@@ -694,7 +694,3 @@ export function startFeishuIntegrationCleanupSweeper(): void {
 export function getListenerStatus(integrationId: string): ListenerInfo | undefined {
   return listeners.get(integrationId);
 }
-
-export function getAllListenersStatus(): ListenerInfo[] {
-  return Array.from(listeners.values());
-}

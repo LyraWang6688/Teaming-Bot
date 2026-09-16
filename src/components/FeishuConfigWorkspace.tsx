@@ -91,7 +91,6 @@ type CheckStatusView = {
   minuteSubscriptionStatus: string;
   eventSubscriptionStatus: string;
   oauthStatus: string;
-  baseStatus: string;
   allPassed: boolean;
   lastCheckedAt: string | null;
   lastErrorType: string | null;
@@ -276,7 +275,7 @@ function getStepDescription(step: number) {
     case 1:
       return '创建飞书应用并完成事件配置。';
     case 2:
-      return '授权访问妙记和多维表格。';
+      return '授权访问妙记与会议信息。';
     case 3:
       return '绑定目标组织。';
     case 4:
@@ -881,7 +880,7 @@ export default function FeishuConfigWorkspace() {
       return {
         badge: '第 3 步',
         title: '请选择目标组织',
-        description: '组织选定后，系统会自动开始 Base 与事件监听检查。',
+        description: '组织选定后，系统会自动开始权限与事件监听检查。',
       };
     }
 
@@ -1429,7 +1428,6 @@ export default function FeishuConfigWorkspace() {
               setupComplete,
               selectedOrgName: selectedOrgTarget?.orgName || null,
               authorizationStatus: detail?.authorization?.status || null,
-              baseStatus: detail?.checks?.baseStatus || null,
               eventSubscriptionStatus: detail?.checks?.eventSubscriptionStatus || null,
               lastErrorMessage: detail?.checks?.lastErrorMessage || null,
             },
@@ -1447,7 +1445,6 @@ export default function FeishuConfigWorkspace() {
   }, [
     currentStep,
     detail?.authorization?.status,
-    detail?.checks?.baseStatus,
     detail?.checks?.eventSubscriptionStatus,
     detail?.checks?.lastErrorMessage,
     feedbackDraft,
@@ -1936,7 +1933,7 @@ export default function FeishuConfigWorkspace() {
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                   <div className="min-w-0">
                                     <h3 className="text-sm font-semibold text-slate-900">授权应用</h3>
-                                    <p className="mt-1 text-xs leading-4 text-slate-600">允许系统读取妙记并写入目标多维表格。</p>
+                                    <p className="mt-1 text-xs leading-4 text-slate-600">允许系统读取妙记与会议信息，并订阅妙记生成事件。</p>
                                   </div>
                                   <Button onClick={handleAuthorize} disabled={isAuthorizing} size="sm" className="w-full shrink-0 sm:w-auto">
                                     {isAuthorizing ? (

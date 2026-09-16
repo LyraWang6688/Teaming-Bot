@@ -4,7 +4,6 @@ export const FEISHU_REQUIRED_USER_SCOPES = [
   'minutes:minutes.transcript:export',
   'vc:meeting.meetingevent:read',
   'offline_access',
-  'bitable:app',
 ] as const;
 
 export const FEISHU_REQUIRED_USER_EVENTS = [

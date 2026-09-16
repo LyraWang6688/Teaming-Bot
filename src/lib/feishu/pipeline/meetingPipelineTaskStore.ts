@@ -88,7 +88,7 @@ export async function getMeetingPipelineTaskById(
   return row || null;
 }
 
-export async function getMeetingPipelineTaskByMeeting(
+async function getMeetingPipelineTaskByMeetingInternal(
   integrationId: string,
   meetingId: string
 ): Promise<MeetingPipelineTaskRow | null> {
@@ -126,12 +126,6 @@ export async function getMeetingPipelineTaskByEventId(
   return row || null;
 }
 
-export async function upsertMeetingPipelineTaskForMeetingEnded(
-  input: UpsertMeetingPipelineTaskInput
-): Promise<{ task: MeetingPipelineTaskRow; duplicate: boolean; created: boolean }> {
-  return upsertMeetingPipelineTaskForMinuteGenerated(input);
-}
-
 export async function upsertMeetingPipelineTaskForMinuteGenerated(
   input: UpsertMeetingPipelineTaskInput
 ): Promise<{ task: MeetingPipelineTaskRow; duplicate: boolean; created: boolean }> {
@@ -140,7 +134,7 @@ export async function upsertMeetingPipelineTaskForMinuteGenerated(
   }
 
   const db = getDb();
-  const existing = await getMeetingPipelineTaskByMeeting(input.integration.id, input.meetingId);
+  const existing = await getMeetingPipelineTaskByMeetingInternal(input.integration.id, input.meetingId);
   const payload: MeetingPipelineTaskPayload = {
     ...(input.eventReceivedAt
       ? {

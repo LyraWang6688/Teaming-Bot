@@ -8,7 +8,7 @@ import {
   getOrgTargetContextById,
   type FeishuOrgTargetContext,
 } from '../projects/projectConfigStore';
-import { FEISHU_PROCESS_STATUS, type FeishuProcessStatus } from '../pipeline/status';
+import { type FeishuProcessStatus } from '../pipeline/status';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { getFeishuBitableAppToken, getFeishuBitableTableId } from '@/lib/platform/env';
 
@@ -279,49 +279,6 @@ export async function findMeetingRecordByMeetingId(
   return record ? toRecord(record) : null;
 }
 
-export async function listMeetingRecordsByStatuses(
-  config: FeishuBitableAccess,
-  statuses: FeishuProcessStatus[],
-  pageSize = 20
-): Promise<FeishuMeetingRecord[]> {
-  const records: FeishuMeetingRecord[] = [];
-
-  for (const status of statuses) {
-    let pageToken: string | undefined;
-
-    do {
-      const query = new URLSearchParams({ page_size: String(pageSize) });
-      if (pageToken) {
-        query.set('page_token', pageToken);
-      }
-
-      const result = await callBitableOpenApi<RecordSearchResult>(
-        config,
-        'POST',
-        `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records/search?${query.toString()}`,
-        {
-          filter: {
-            conjunction: 'and',
-            conditions: [
-              {
-                field_name: '处理状态',
-                operator: 'is',
-                value: [status],
-              },
-            ],
-          },
-          automatic_fields: false,
-        }
-      );
-
-      records.push(...(result.items || []).map(toRecord));
-      pageToken = result.has_more ? result.page_token : undefined;
-    } while (pageToken);
-  }
-
-  return records;
-}
-
 export async function createMeetingRecord(
   config: FeishuBitableAccess,
   fields: RecordFields
@@ -355,31 +312,6 @@ export function buildBitablePersonFieldValue(openId?: string | null): BitablePer
   if (!normalized) return undefined;
 
   return [{ id: normalized }];
-}
-
-export async function upsertMeetingWaitingRecord(
-  config: FeishuBitableAccess,
-  meeting: {
-    meetingId: string;
-    meetingName?: string;
-    creatorOpenId?: string | null;
-  }
-): Promise<FeishuMeetingRecord> {
-  const existing = await findMeetingRecordByMeetingId(config, meeting.meetingId);
-  const fields: RecordFields = {
-    '会议ID': meeting.meetingId,
-    '处理状态': FEISHU_PROCESS_STATUS.minuteGenerated,
-  };
-  if (meeting.meetingName) fields['会议名称'] = meeting.meetingName;
-  const creatorValue = buildBitablePersonFieldValue(meeting.creatorOpenId);
-  if (creatorValue) fields['创建人'] = creatorValue;
-
-  if (existing) {
-    await updateMeetingRecordFields(config, existing.recordId, fields);
-    return { ...existing, ...meeting, processStatus: FEISHU_PROCESS_STATUS.minuteGenerated };
-  }
-
-  return createMeetingRecord(config, fields);
 }
 
 export async function setMeetingProcessStatus(

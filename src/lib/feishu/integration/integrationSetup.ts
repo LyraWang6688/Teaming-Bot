@@ -26,7 +26,6 @@ type IntegrationCheckStatuses = {
   minuteSubscriptionStatus: CheckStatus;
   eventSubscriptionStatus: CheckStatus;
   oauthStatus: CheckStatus;
-  baseStatus: CheckStatus;
 };
 
 type IntegrationCheckResult = {
@@ -126,7 +125,6 @@ function createInitialStatuses(): IntegrationCheckStatuses {
     minuteSubscriptionStatus: 'pending',
     eventSubscriptionStatus: 'pending',
     oauthStatus: 'pending',
-    baseStatus: 'success',
   };
 }
 
@@ -202,7 +200,6 @@ function getListenerPrerequisiteFailures(
     statuses.appCredentialStatus === 'success' &&
     statuses.oauthStatus === 'authorized' &&
     hasSelectedOrgTarget &&
-    statuses.baseStatus === 'success' &&
     statuses.permissionStatus === 'success' &&
     statuses.minuteSubscriptionStatus !== 'success'
   ) {
@@ -372,24 +369,16 @@ async function executeFeishuIntegrationChecks(options: {
       pending: true,
       message: '请先选择所在组织。',
     };
-    details.base = {
-      ok: true,
-      message: 'Base 校验已跳过，数据源为 Supabase，写入时按需访问多维表格。',
-    };
   } else if (!selectedOrgTarget) {
     const failure = {
       type: 'org_target_unavailable',
-      message: '所选组织对应的多维表格配置不可用，请联系管理员确认当前项目配置。',
+      message: '所选组织对应的配置不可用，请联系管理员确认当前项目配置。',
     };
     failures.push(failure);
     details.organization = {
       ok: false,
       selectedOrgTargetId: integration.selectedOrgTargetId,
       message: failure.message,
-    };
-    details.base = {
-      ok: true,
-      message: 'Base 校验已跳过。',
     };
   } else {
     details.organization = {
@@ -398,10 +387,6 @@ async function executeFeishuIntegrationChecks(options: {
       orgTargetId: selectedOrgTarget.id,
       orgKey: selectedOrgTarget.orgKey,
       orgName: selectedOrgTarget.orgName,
-    };
-    details.base = {
-      ok: true,
-      message: 'Base 写入统一使用全局配置（环境变量 FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_TABLE_ID），数据源为 Supabase。',
     };
   }
 
@@ -421,11 +406,10 @@ async function executeFeishuIntegrationChecks(options: {
       requiredUserScopes,
       grantedUserScopes,
       note:
-        '当前真实检查已验证目标多维表格可访问，并确认 OAuth 授权 scope 覆盖会议信息、妙记导出与持续访问权限；会议事件仍会在首次真实链路中继续验证。',
+        '当前真实检查已确认 OAuth 授权 scope 覆盖会议信息、妙记导出与持续访问权限；会议事件仍会在首次真实链路中继续验证。',
     };
   } else if (
     statuses.oauthStatus === 'authorized' &&
-    statuses.baseStatus === 'success' &&
     !hasRecordedAuthorizationScope
   ) {
     statuses.permissionStatus = 'failed';
@@ -438,7 +422,6 @@ async function executeFeishuIntegrationChecks(options: {
     };
   } else if (
     statuses.oauthStatus === 'authorized' &&
-    statuses.baseStatus === 'success' &&
     missingUserScopes.length > 0
   ) {
     statuses.permissionStatus = 'failed';
@@ -449,14 +432,6 @@ async function executeFeishuIntegrationChecks(options: {
       missingUserScopes,
       note: '当前 OAuth 授权缺少部分用户权限，请重新发起授权。',
     };
-  } else if (
-    statuses.baseStatus === 'failed'
-  ) {
-    statuses.permissionStatus = 'failed';
-    details.permission = {
-      ok: false,
-      note: '由于 OAuth 或 Base 资源访问存在失败项，权限检查判定为未通过。',
-    };
   } else {
     statuses.permissionStatus = 'pending';
     details.permission = {
@@ -465,14 +440,13 @@ async function executeFeishuIntegrationChecks(options: {
       requiredUserScopes,
       grantedUserScopes,
       missingUserScopes,
-      note: '需要先选择组织、完成 OAuth，并确认目标多维表格可访问，系统才能验证用户授权 scope 是否完整。',
+      note: '需要先选择组织、完成 OAuth，系统才能验证用户授权 scope 是否完整。',
     };
   }
 
   if (
     statuses.appCredentialStatus === 'success' &&
     statuses.oauthStatus === 'authorized' &&
-    statuses.baseStatus === 'success' &&
     statuses.permissionStatus === 'success' &&
     Boolean(integration.selectedOrgTargetId)
   ) {
@@ -567,7 +541,6 @@ async function executeFeishuIntegrationChecks(options: {
     minuteSubscriptionStatus: statuses.minuteSubscriptionStatus,
     eventSubscriptionStatus: 'pending',
     oauthStatus: statuses.oauthStatus,
-    baseStatus: statuses.baseStatus,
     lastCheckedAt: checkedAt,
     lastErrorType: prerequisiteFailure?.type || null,
     lastErrorMessage: prerequisiteFailure?.message || null,
@@ -577,7 +550,6 @@ async function executeFeishuIntegrationChecks(options: {
   const listenerPrerequisitesPassed =
     statuses.appCredentialStatus === 'success' &&
     statuses.oauthStatus === 'authorized' &&
-    statuses.baseStatus === 'success' &&
     statuses.permissionStatus === 'success' &&
     statuses.minuteSubscriptionStatus === 'success' &&
     Boolean(integration.selectedOrgTargetId);
@@ -724,7 +696,7 @@ async function executeFeishuIntegrationChecks(options: {
                 eventKey: MINUTE_GENERATED_EVENT,
                 message: '需先完成前置校验，系统才会为当前授权用户订阅妙记生成事件。',
               },
-        message: '需依次完成应用、授权、组织选择、Base 可访问、权限校验与妙记事件订阅后，才会建立事件长连接。',
+        message: '需依次完成应用、授权、组织选择、权限校验与妙记事件订阅后，才会建立事件长连接。',
       };
     }
     logRuntimeMonitor('info', 'integration_checks', 'event_listener_gate_blocked', {
@@ -749,7 +721,6 @@ async function executeFeishuIntegrationChecks(options: {
     minuteSubscriptionStatus: statuses.minuteSubscriptionStatus,
     eventSubscriptionStatus: statuses.eventSubscriptionStatus,
     oauthStatus: statuses.oauthStatus,
-    baseStatus: statuses.baseStatus,
     lastCheckedAt: checkedAt,
     lastErrorType: firstFailure?.type || null,
     lastErrorMessage: firstFailure?.message || null,

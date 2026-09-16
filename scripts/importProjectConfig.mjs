@@ -138,9 +138,53 @@ async function main() {
     await client.query('begin');
 
     if (config.status === 'active') {
-      await client.query(`update feishu_projects set status = 'archived', updated_at = now() where status = 'active' and project_key <> $1`, [
-        config.projectKey,
-      ]);
+      // 1. 旧 active 项目归档
+      const archivedProjectsResult = await client.query(
+        `update feishu_projects set status = 'archived', updated_at = now()
+         where status = 'active' and project_key <> $1
+         returning id, project_key, name`,
+        [config.projectKey]
+      );
+
+      // 2. 级联失活旧项目下所有未删除、当前仍 active 的集成（直接通过 project_id 绑定）
+      const archivedProjectIds = archivedProjectsResult.rows.map((row) => row.id);
+      if (archivedProjectIds.length > 0) {
+        const deactivatedResult = await client.query(
+          `update feishu_integrations
+             set is_active = false,
+                 status = 'archived',
+                 superseded_by_integration_id = null,
+                 updated_at = now()
+           where is_active = true
+             and deleted_at is null
+             and project_id = any($1::uuid[])
+           returning id, user_id, project_id, selected_org_target_id`,
+          [archivedProjectIds]
+        );
+
+        // 3. 写审计日志（每个被失活的集成一条）
+        for (const row of deactivatedResult.rows) {
+          await client.query(
+            `insert into feishu_audit_logs
+               (integration_id, user_id, action, result, summary, metadata, created_at)
+             values ($1, $2, $3, $4, $5, $6, now())`,
+            [
+              row.id,
+              row.user_id,
+              'integration.project_archived_cascade_deactivate',
+              'success',
+              `所属项目被归档，集成自动失活（new project: ${config.projectKey}）`,
+              {
+                reason: 'project_archived',
+                newActiveProjectKey: config.projectKey,
+                archivedProjectIds,
+                projectId: row.project_id,
+                selectedOrgTargetId: row.selected_org_target_id,
+              },
+            ]
+          );
+        }
+      }
     }
 
     const projectResult = await client.query(

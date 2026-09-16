@@ -1,9 +1,3 @@
-export type FeishuApiResponse<T = unknown> = {
-  code: number;
-  msg?: string;
-  data?: T;
-};
-
 export class FeishuOpenApiError extends Error {
   statusCode?: number;
   code?: number;

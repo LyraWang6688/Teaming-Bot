@@ -29,15 +29,6 @@ export const FEISHU_ACTIVE_PROCESS_STATUSES: FeishuProcessStatus[] = [
   FEISHU_PROCESS_STATUS.analyzing,
 ];
 
-export const FEISHU_STATUS_OPTIONS = [
-  { name: FEISHU_PROCESS_STATUS.minuteGenerated, color: 0 },
-  { name: FEISHU_PROCESS_STATUS.fetchingTranscript, color: 1 },
-  { name: FEISHU_PROCESS_STATUS.analyzing, color: 1 },
-  { name: FEISHU_PROCESS_STATUS.completed, color: 2 },
-  { name: FEISHU_PROCESS_STATUS.failed, color: 3 },
-  { name: FEISHU_PROCESS_STATUS.gatedSkipped, color: 0 },
-] as const;
-
 /**
  * 将 Supabase 英文 status 映射为 Base 中文显示值
  * gatedSkipped 不写入 Base，返回 null

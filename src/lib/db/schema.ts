@@ -22,6 +22,7 @@ export const feishuIntegrations = pgTable(
     appId: text('app_id').notNull(),
     appSecretEncrypted: text('app_secret_encrypted').notNull(),
     selectedOrgTargetId: uuid('selected_org_target_id'),
+    projectId: uuid('project_id'),
     orgSelectedAt: timestamp('org_selected_at', { withTimezone: true }),
     oauthScope: text('oauth_scope').notNull(),
     requiredEvents: jsonb('required_events')
@@ -35,9 +36,8 @@ export const feishuIntegrations = pgTable(
         'auth:user.id:read',
         'minutes:minutes.basic:read',
         'minutes:minutes.transcript:export',
-        'vc:meeting.meetingevent:read',
+        'vc:meeting.meetingevents:read',
         'offline_access',
-        'bitable:app',
       ]),
     isActive: boolean('is_active').notNull().default(false),
     activatedAt: timestamp('activated_at', { withTimezone: true }),
@@ -51,6 +51,7 @@ export const feishuIntegrations = pgTable(
   (table) => [
     index('feishu_integrations_user_id_idx').on(table.userId),
     index('feishu_integrations_selected_org_target_id_idx').on(table.selectedOrgTargetId),
+    index('feishu_integrations_project_id_idx').on(table.projectId),
     index('feishu_integrations_is_active_idx').on(table.isActive),
     index('feishu_integrations_superseded_by_integration_id_idx').on(table.supersededByIntegrationId),
   ]

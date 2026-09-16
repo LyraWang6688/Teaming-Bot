@@ -140,7 +140,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const integration = await updateUserFeishuIntegration(user.id, integrationId, {
       ...parsed.data,
       ...(Object.prototype.hasOwnProperty.call(parsed.data, 'selectedOrgTargetId')
-        ? { status: 'draft', setupStep: 'organization', initializedAt: null }
+        ? {
+            status: 'draft',
+            setupStep: 'organization',
+            initializedAt: null,
+            projectId: selectedTarget?.projectId ?? null,
+          }
         : {}),
     });
 

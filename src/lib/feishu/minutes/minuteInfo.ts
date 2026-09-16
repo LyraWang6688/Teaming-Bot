@@ -68,7 +68,7 @@ export async function fetchMinuteOwner(
  *
  * 用于门槛判断（owner_id）和会议元数据补全（title、noteId 等）。
  */
-export async function fetchMinuteInfo(
+async function fetchMinuteInfo(
   minuteToken: string,
   integration: FeishuIntegrationContext
 ): Promise<MinuteInfo | null> {
