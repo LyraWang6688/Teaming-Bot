@@ -32,7 +32,8 @@ function mapSupabaseRowToBaseFields(
   if (row.topic) fields['会议名称'] = row.topic;
 
   // 数据来源 = 初始化配置时选择的方向（orgTarget.orgName）
-  if (orgName) fields['数据来源'] = [orgName];
+  // 注意：Base「数据来源」是单选字段，必须是该字段已定义的选项之一，且写入字符串而非数组
+  if (orgName) fields['数据来源'] = orgName;
 
   // 创建人 = 会议创建人姓名（文本类型字段）
   // 门槛通过场景下 organizerOpenId = authorizedOpenId，姓名来自 feishu_authorizations
