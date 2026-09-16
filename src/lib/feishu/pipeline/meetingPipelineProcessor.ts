@@ -1139,10 +1139,12 @@ async function completeMeetingAnalysis(
     const notificationResult = await sendMeetingReportNotification({
       integration: context.integration,
       meetingId: context.meetingId,
-      meetingName: context.meetingDetails?.topic ?? null,
+      meetingName: context.meetingDetails?.topic ?? supabaseRow.topic ?? null,
       recordId: record.recordId,
       reportUrl,
-      organizerOpenId: context.meetingDetails?.organizerOpenId ?? null,
+      // Supabase-first 恢复路径下 context.meetingDetails 可能缺失，
+      // 此时从 supabaseRow.organizerOpenId 兜底，确保通知能推送给会议创建人
+      organizerOpenId: context.meetingDetails?.organizerOpenId ?? supabaseRow.organizerOpenId ?? null,
     });
     logFeishuMonitor('info', 'meeting_pipeline_notification_completed', {
       integrationId: context.integration.id,
