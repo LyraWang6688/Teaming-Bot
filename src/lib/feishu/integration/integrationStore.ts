@@ -255,13 +255,13 @@ function mapAuthorizationContext(row: FeishuAuthorizationRow): FeishuAuthorizati
 }
 
 function isAllCheckStatusesPassed(row: FeishuIntegrationCheckRow): boolean {
+  // Base 校验已下线：Base 读写走应用身份（tenant_access_token），无需用户 OAuth 前置校验。
   return (
     row.appCredentialStatus === 'success' &&
     row.permissionStatus === 'success' &&
     row.minuteSubscriptionStatus === 'success' &&
     row.eventSubscriptionStatus === 'success' &&
-    row.oauthStatus === 'authorized' &&
-    row.baseStatus === 'success'
+    row.oauthStatus === 'authorized'
   );
 }
 

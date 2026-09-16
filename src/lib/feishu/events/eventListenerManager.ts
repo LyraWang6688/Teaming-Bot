@@ -186,13 +186,8 @@ async function assertListenerPrerequisites(integrationId: string) {
       '飞书应用凭证尚未通过校验，不能启动事件长连接。'
     );
   }
-  if (checks?.baseStatus !== 'success') {
-    throw new ListenerPrerequisiteError(
-      checks?.baseStatus === 'failed' ? 'base_access_failed' : 'base_access_pending',
-      'base',
-      '目标多维表格尚未通过可访问校验，不能启动事件长连接。'
-    );
-  }
+  // Base 可访问性校验已移除：Base 读写统一走应用身份（tenant_access_token），
+  // 不再依赖用户 OAuth token，事件监听启动无需 Base 前置校验。
   if (checks?.permissionStatus !== 'success') {
     throw new ListenerPrerequisiteError(
       checks?.permissionStatus === 'failed' ? 'permission_scope_failed' : 'permission_scope_pending',
