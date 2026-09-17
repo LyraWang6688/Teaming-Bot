@@ -1,0 +1,94 @@
+import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
+import { PersistentReportView } from '@/components/reports/PersistentReportView';
+import { getMeetingReportByPublicId } from '@/lib/reports/meetingReportStore';
+import { logRuntimeMonitor } from '@/lib/platform/runtimeMonitor';
+
+/**
+ * V2+ 报告路由：/report/v2/{reportPublicId}
+ *
+ * 路由本身不强制版本校验——真正决定渲染哪个版本组件的是数据库里的
+ * analysisSchemaVersion 字段（PersistentReportView 会自动分流）。
+ * 此路由只是 URL 上的版本标识，便于从链接直观判断分析模板版本。
+ *
+ * V1 报告仍走 /report/{reportPublicId}（存量链接保持兼容）。
+ */
+
+export const dynamic = 'force-dynamic';
+
+type ReportPageProps = {
+  params: Promise<{
+    reportPublicId: string;
+  }>;
+};
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function getNowMs(): number {
+  return Date.now();
+}
+
+export async function generateMetadata({ params }: ReportPageProps): Promise<Metadata> {
+  const { reportPublicId } = await params;
+  if (!UUID_PATTERN.test(reportPublicId)) {
+    return { title: '会议报告不存在' };
+  }
+
+  const report = await getMeetingReportByPublicId(reportPublicId);
+  return {
+    title: report?.topic || '会议动力分析报告',
+    robots: {
+      index: false,
+      follow: false,
+    },
+  };
+}
+
+export default async function PersistentReportPageV2({ params }: ReportPageProps) {
+  const loadStartedAt = getNowMs();
+  const { reportPublicId } = await params;
+  if (!UUID_PATTERN.test(reportPublicId)) {
+    notFound();
+  }
+
+  logRuntimeMonitor('info', 'meeting_report', 'meeting_report_load_started', {
+    reportPublicId,
+    urlVersion: 'v2',
+  });
+
+  const queryStartedAt = getNowMs();
+  const report = await getMeetingReportByPublicId(reportPublicId);
+  const dbQueryDurationMs = getNowMs() - queryStartedAt;
+  if (!report || !report.analysisResult || !report.completedAt) {
+    logRuntimeMonitor('warn', 'meeting_report', 'meeting_report_not_found', {
+      reportPublicId,
+      found: Boolean(report),
+      status: report?.status || null,
+      hasAnalysis: Boolean(report?.analysisResult),
+      dbQueryDurationMs,
+      loadDurationMs: getNowMs() - loadStartedAt,
+    });
+    notFound();
+  }
+
+  logRuntimeMonitor('info', 'meeting_report', 'meeting_report_loaded', {
+    reportPublicId,
+    meetingRecordId: report.id,
+    meetingId: report.feishuMeetingId,
+    integrationId: report.integrationId,
+    projectId: report.projectId,
+    orgTargetId: report.orgTargetId,
+    analysisSchemaVersion: report.analysisSchemaVersion,
+    dbQueryDurationMs,
+    loadDurationMs: getNowMs() - loadStartedAt,
+  });
+
+  return (
+    <PersistentReportView
+      analysis={report.analysisResult}
+      analysisSchemaVersion={report.analysisSchemaVersion}
+      topic={report.topic}
+    />
+  );
+}

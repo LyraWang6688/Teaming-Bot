@@ -55,6 +55,7 @@ import {
   updateMeetingRecordStatus,
   updateMeetingRecordTranscript,
   upsertMeetingRecord,
+  MEETING_REPORT_SCHEMA_VERSION,
 } from '@/lib/reports/meetingReportStore';
 import { buildPersistentReportUrl } from '@/lib/reports/reportUrl';
 
@@ -958,7 +959,11 @@ async function completeMeetingAnalysis(
   if (!context.reportPublicId) {
     throw new Error('会议记录缺少 report_public_id，无法生成永久报告链接。');
   }
-  const reportUrl = buildPersistentReportUrl(context.reportPublicId);
+  // V2+ 报告 URL 加版本路径段（/report/v2/{uuid}），从 URL 即可看出分析模板版本
+  const reportUrl = buildPersistentReportUrl(
+    context.reportPublicId,
+    MEETING_REPORT_SCHEMA_VERSION
+  );
 
   logFeishuMonitor('info', 'meeting_report_persist_started', {
     userId: context.integration.userId,

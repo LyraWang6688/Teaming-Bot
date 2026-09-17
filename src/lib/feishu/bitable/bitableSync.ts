@@ -1,7 +1,6 @@
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { FeishuOpenApiError } from '../common/openapi';
 import { FEISHU_PROCESS_STATUS } from '../pipeline/status';
-import { buildPersistentReportUrl } from '@/lib/reports/reportUrl';
 import type { MeetingRecordRow } from '@/lib/db/schema';
 
 import {
@@ -95,15 +94,13 @@ function mapSupabaseRowToBaseFields(
   const baseMeetingStatus = mapAnalysisZoneToBaseStatus(row.analysisZone);
   if (baseMeetingStatus) fields['会议状态'] = baseMeetingStatus;
 
-  // 报告链接
-  if (row.reportUrl && row.reportPublicId) {
-    const persistentUrl = buildPersistentReportUrl(row.reportPublicId);
-    if (persistentUrl) {
-      fields['报告链接'] = {
-        text: '查看报告',
-        link: persistentUrl,
-      };
-    }
+  // 报告链接：直接镜像 Supabase reportUrl 字段（已是 /report/v2/{uuid} 或 /report/{uuid}）
+  // 不在这里重新生成 URL，避免 V1 报告被错误写成 V2 路径
+  if (row.reportUrl) {
+    fields['报告链接'] = {
+      text: '查看报告',
+      link: row.reportUrl,
+    };
   }
 
   // 错误信息
