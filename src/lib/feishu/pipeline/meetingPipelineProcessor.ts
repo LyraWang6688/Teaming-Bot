@@ -686,11 +686,8 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
         minuteToken: context.minuteToken,
       });
     }
-    await setMeetingProcessStatus(
-      config,
-      record.recordId,
-      FEISHU_PROCESS_STATUS.fetchingTranscript
-    );
+    // Supabase 中间态仍写入，便于运维查询与任务恢复
+    // Base 不写中间态：符合「Base 只展示终态（已完成/分析失败/写入失败）」原则
     await updateMeetingRecordStatus(persistedMeeting.id, {
       status: 'fetching_transcript',
       errorType: null,
@@ -735,8 +732,18 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
 
     await completeMeetingAnalysis(config, latestRecord, transcript, context.minuteToken, context);
   } catch (error) {
+    // 先查 Supabase：如果 analysis_result 已存在，说明 LLM 分析成功但 Base 同步失败
+    // 否则属于 LLM 分析失败（或更早阶段失败）
+    const reportState = await getMeetingRecordByIntegrationAndMeeting(
+      context.integration.id,
+      context.meetingId
+    );
+    const hasAnalysisResult = Boolean(reportState?.analysisResult);
+    const baseStatus = hasAnalysisResult
+      ? FEISHU_PROCESS_STATUS.baseSyncFailed  // 写入失败：LLM 成功但 Base 同步失败
+      : FEISHU_PROCESS_STATUS.failed;        // 分析失败：LLM 分析未成功
     try {
-      await setMeetingProcessStatus(config, record.recordId, FEISHU_PROCESS_STATUS.failed);
+      await setMeetingProcessStatus(config, record.recordId, baseStatus);
     } catch (baseStatusError) {
       logFeishuMonitor('warn', 'meeting_report_base_failure_status_write_failed', {
         userId: context.integration.userId,
@@ -747,12 +754,8 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
         ...toErrorContext(baseStatusError),
       });
     }
-    const reportState = await getMeetingRecordByIntegrationAndMeeting(
-      context.integration.id,
-      context.meetingId
-    );
     await updateMeetingRecordStatus(persistedMeeting.id, {
-      status: reportState?.analysisResult ? 'base_sync_failed' : 'failed',
+      status: hasAnalysisResult ? 'base_sync_failed' : 'failed',
       errorType: error instanceof Error ? error.name : 'MeetingPipelineFailed',
       errorMessage: toBusinessErrorMessage(error),
     });

@@ -13,13 +13,39 @@ import {
 
 /**
  * 将 Supabase 的英文 status 映射为 Base 「处理状态」字段的中文值。
- * Base 只展示终态：已完成 / 失败。中间态（meeting_ended/fetching_transcript/analyzing/gated_skipped）
+ *
+ * Base 只展示终态：
+ * - 已完成：Supabase status='completed'
+ * - 分析失败：Supabase status='failed'（LLM 分析未成功）
+ * - 写入失败：Supabase status='base_sync_failed'（LLM 分析成功但 Base 同步失败）
+ *
+ * 中间态（meeting_ended/fetching_transcript/analyzing/gated_skipped）
  * 只保留在 Supabase，不写入 Base，符合「Supabase 是真相源，Base 是展示镜像」原则。
  */
 function mapSupabaseStatusToBaseTerminalStatus(supabaseStatus: string | null): string | null {
-  if (supabaseStatus === 'completed') return FEISHU_PROCESS_STATUS.completed; // '已完成'
-  if (supabaseStatus === 'failed') return FEISHU_PROCESS_STATUS.failed;       // '失败'
+  if (supabaseStatus === 'completed') return FEISHU_PROCESS_STATUS.completed;            // '已完成'
+  if (supabaseStatus === 'failed') return FEISHU_PROCESS_STATUS.failed;                  // '分析失败'
+  if (supabaseStatus === 'base_sync_failed') return FEISHU_PROCESS_STATUS.baseSyncFailed;  // '写入失败'
   return null;
+}
+
+/**
+ * 将 Supabase 的 analysis_zone 枚举值映射为 Base「会议状态」单选字段的中文标签。
+ *
+ * Zone 由 V2 引擎代码推导（decision.ts deriveZone），永远是 5 个枚举值之一。
+ * Base「会议状态」是单选字段，已在飞书 Base 界面手动配置好 5 个选项：
+ * 学习区 / 舒适区 / 焦虑区 / 冷漠区 / 证据不足
+ */
+function mapAnalysisZoneToBaseStatus(zone: string | null): string | null {
+  if (!zone) return null;
+  const zoneLabelMap: Record<string, string> = {
+    'Learning': '学习区',
+    'Comfort': '舒适区',
+    'Anxiety': '焦虑区',
+    'Apathy': '冷漠区',
+    'Difficult to Judge': '证据不足',
+  };
+  return zoneLabelMap[zone] ?? null;
 }
 
 /**
@@ -51,7 +77,7 @@ function mapSupabaseRowToBaseFields(
   const creatorName = organizerName || row.organizerOpenId;
   if (creatorName) fields['创建人'] = creatorName;
 
-  // 处理状态：Base 只展示终态（已完成/失败），中间态只存 Supabase
+  // 处理状态：Base 只展示终态（已完成/分析失败/写入失败），中间态只存 Supabase
   // 这符合「Supabase 是真相源，Base 是展示镜像」的设计原则
   const baseProcessStatus = mapSupabaseStatusToBaseTerminalStatus(row.status);
   if (baseProcessStatus) fields['处理状态'] = baseProcessStatus;
@@ -61,6 +87,13 @@ function mapSupabaseRowToBaseFields(
 
   // 分析摘要
   if (row.analysisSummary) fields['分析摘要'] = row.analysisSummary;
+
+  // 会议状态：从 analysis_zone 枚举映射成中文单选标签
+  // 注意：syncMeetingRecordToBase 失败时所有字段（含「会议状态」）都不会写入 Base，
+  // Base 上「会议状态」会是空的；运维要查 zone 必须查 Supabase 的 analysis_zone 列。
+  // catch 分支只会单独写入「处理状态」=写入失败，不重试其他字段。
+  const baseMeetingStatus = mapAnalysisZoneToBaseStatus(row.analysisZone);
+  if (baseMeetingStatus) fields['会议状态'] = baseMeetingStatus;
 
   // 报告链接
   if (row.reportUrl && row.reportPublicId) {

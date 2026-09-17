@@ -203,7 +203,12 @@ export async function persistMeetingReport(
       status: 'completed',
       analysisResult: input.analysis,
       analysisSchemaVersion: MEETING_REPORT_SCHEMA_VERSION,
-      analysisSummary: input.analysis.summary,
+      // 分析摘要：读 teamState.analysis（LLM 第 2 次生成的 100-180 字）
+      // V2 引擎下 teamState.analysis 永远有值（主路径 LLM 生成，basic_fallback 硬编码兜底）
+      analysisSummary: input.analysis.teamState?.analysis,
+      // 会议状态：从 teamState.zone 提取枚举值（Learning/Comfort/Anxiety/Apathy/Difficult to Judge）
+      // Base 同步时由 bitableSync.ts 映射成中文单选标签
+      analysisZone: input.analysis.teamState?.zone ?? null,
       reportUrl: input.reportUrl,
       analyzedAt: now,
       completedAt: now,
