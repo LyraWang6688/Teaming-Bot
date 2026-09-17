@@ -103,7 +103,8 @@ type MinuteGeneratedSource = {
 type MeetingAnalysisGateReason =
   | 'meeting_organizer_unresolved'
   | 'meeting_organizer_not_initialized'
-  | 'meeting_organizer_owned_by_other_integration';
+  | 'meeting_organizer_owned_by_other_integration'
+  | 'meeting_topic_keyword_mismatch';
 
 type MeetingAnalysisGateResult =
   | {
@@ -217,6 +218,23 @@ async function resolveMeetingAnalysisGate(
 ): Promise<MeetingAnalysisGateResult> {
   const authorization = await getLatestFeishuAuthorizationContext(context.integration.id);
   const currentAuthorizedOpenId = authorization?.authorizedOpenId || null;
+
+  // 门槛 1：会议名称必须包含关键字「ABC」
+  // 这是最廉价的字符串门槛，放在 organizer 数据库查询之前，避免无关会议消耗查询资源
+  // 关键字当前硬编码为 'ABC'，如需配置化可后续抽到环境变量或集成配置
+  const MEETING_TOPIC_KEYWORD = 'ABC';
+  const topic = meetingDetails?.topic;
+  if (!topic || !topic.includes(MEETING_TOPIC_KEYWORD)) {
+    return {
+      allowed: false,
+      reasonCode: 'meeting_topic_keyword_mismatch',
+      reasonMessage: `会议名称未包含关键字「${MEETING_TOPIC_KEYWORD}」，跳过自动分析。`,
+      organizerOpenId: meetingDetails?.organizerOpenId || null,
+      currentAuthorizedOpenId,
+      ownerIntegrationId: null,
+    };
+  }
+
   const organizerOpenId = meetingDetails?.organizerOpenId || null;
 
   if (!organizerOpenId) {

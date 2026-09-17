@@ -21,7 +21,8 @@ export type MeetingPipelineTaskPayload = {
     | 'integration_inactive'
     | 'meeting_organizer_unresolved'
     | 'meeting_organizer_not_initialized'
-    | 'meeting_organizer_owned_by_other_integration';
+    | 'meeting_organizer_owned_by_other_integration'
+    | 'meeting_topic_keyword_mismatch';
   skippedAt?: string;
   telemetry?: {
     eventReceivedAt?: string;
