@@ -10,18 +10,23 @@
       "enabled": true
     },
     {
+      "orgKey": "web_application",
+      "orgName": "网页应用",
+      "enabled": true
+    },
+    {
       "orgKey": "relationship_management",
-      "orgName": "关系管理",
+      "orgName": "关系人管理",
+      "enabled": true
+    },
+    {
+      "orgKey": "event_operation",
+      "orgName": "活动运营",
       "enabled": true
     },
     {
       "orgKey": "project_proposal",
-      "orgName": "项目立项书",
-      "enabled": true
-    },
-    {
-      "orgKey": "web_application",
-      "orgName": "网页应用",
+      "orgName": "立项申报",
       "enabled": true
     }
   ]
