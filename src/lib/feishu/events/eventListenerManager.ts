@@ -15,6 +15,10 @@ import {
   getValidIntegrationUserAuthorization,
 } from '../integration/tokenService';
 import { isFeishuIntegrationActive } from '../integration/integrationActivationService';
+import {
+  markFirstInitializedOnce,
+  resolveSetupAttemptAfterChecks,
+} from '../integration/setupAttemptStore';
 import { enqueueFeishuEvent } from '../pipeline/meetingPipelineProcessor';
 import { FEISHU_REQUIRED_USER_EVENTS } from '../integration/integrationConstants';
 
@@ -247,6 +251,16 @@ async function markListenerReady(integrationId: string): Promise<void> {
     status: 'success',
     setupStep: 'event_listener',
     initializedAt: new Date(),
+  });
+  // 首次初始化事实只写一次；若存在进行中的 setup attempt，落 succeeded
+  await markFirstInitializedOnce(
+    integrationId,
+    `event_listener_ready:${listener.readyAt.toISOString()}`
+  );
+  await resolveSetupAttemptAfterChecks({
+    integrationId,
+    currentStep: 'event_listener',
+    allPassed: true,
   });
   await writeAuditLog({
     userId: integration.userId,

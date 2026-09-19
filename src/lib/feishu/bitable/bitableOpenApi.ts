@@ -58,6 +58,8 @@ export type FeishuMeetingRecord = {
 
 export type FeishuBitableAccess = FeishuBitableConfig & {
   orgTarget?: FeishuOrgTargetContext;
+  /** 显式指定 projectId（bootstrap / 交付任务按固定项目执行时使用，不依赖当前 active 项目） */
+  projectIdOverride?: string;
   /** 触发本次 Base 写入的集成 ID（仅用于日志/审计，不参与 API 调用） */
   integrationId: string;
   /** 触发本次 Base 写入的用户 ID（仅用于日志/审计，不参与 API 调用） */

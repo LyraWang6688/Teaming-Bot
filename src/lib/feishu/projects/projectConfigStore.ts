@@ -69,6 +69,31 @@ export async function getActiveFeishuProject(): Promise<FeishuProjectView | null
   return row ? mapProject(row) : null;
 }
 
+/** 按固定 projectId 读取项目（交付任务执行时使用，不随「当前 active 项目」漂移） */
+export async function getFeishuProjectById(projectId: string): Promise<FeishuProjectView | null> {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(feishuProjects)
+    .where(eq(feishuProjects.id, projectId))
+    .limit(1);
+
+  return row ? mapProject(row) : null;
+}
+
+/** 列出所有已配置 appToken + tableId 的项目（供字段绑定 bootstrap 补绑定） */
+export async function listConfiguredFeishuProjects(): Promise<FeishuProjectView[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(feishuProjects)
+    .orderBy(desc(feishuProjects.updatedAt));
+
+  return rows
+    .map(mapProject)
+    .filter((project) => Boolean(project.bitableAppToken) && Boolean(project.bitableTableId));
+}
+
 export async function listActiveProjectOrgTargets(): Promise<ActiveProjectOrgTargets> {
   const project = await getActiveFeishuProject();
   if (!project) {

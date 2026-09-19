@@ -3,7 +3,16 @@ import {
 } from './integrationOpenApi';
 import { createFeishuSdkClient } from './sdkClient';
 import { getValidIntegrationUserAuthorization } from './tokenService';
-import { logRuntimeMonitor } from '@/lib/platform/runtimeMonitor';
+import {
+  logRuntimeMonitor,
+  toRuntimeErrorContext,
+} from '@/lib/platform/runtimeMonitor';
+import {
+  startOrTouchSetupAttempt,
+  resolveSetupAttemptAfterChecks,
+  markFirstInitializedOnce,
+  deriveSetupCurrentStep,
+} from './setupAttemptStore';
 import {
   getUserFeishuIntegrationContext,
   getLatestFeishuAuthorizationContext,
@@ -272,6 +281,23 @@ async function executeFeishuIntegrationChecks(options: {
     integrationName: integration.name,
   };
   const failures: CheckFailure[] = [];
+
+  // 初始化尝试持久化（best-effort：落库失败不影响真实检查）
+  try {
+    await startOrTouchSetupAttempt({
+      userId: options.userId,
+      integrationId: integration.id,
+      projectId: integration.projectId ?? null,
+      orgTargetId: integration.selectedOrgTargetId ?? null,
+      currentStep: 'create_app',
+    });
+  } catch (attemptError) {
+    logRuntimeMonitor('warn', 'integration_checks', 'setup_attempt_touch_failed', {
+      userId: options.userId,
+      integrationId: integration.id,
+      ...toRuntimeErrorContext(attemptError),
+    });
+  }
 
   try {
     details.appRegistration = {
@@ -728,16 +754,35 @@ async function executeFeishuIntegrationChecks(options: {
   });
 
   const allPassed = isAllChecksPassed(statuses);
+  const currentStep = deriveSetupCurrentStep(statuses);
   if (allPassed) {
     await updateUserFeishuIntegration(options.userId, integration.id, {
       status: 'success',
       setupStep: 'event_listener',
       initializedAt: new Date(),
     });
+    // 首次初始化事实（只写一次）；attempt 落 succeeded
+    await markFirstInitializedOnce(
+      integration.id,
+      `all_checks_passed:${checkedAt.toISOString()}`
+    );
+    await resolveSetupAttemptAfterChecks({
+      integrationId: integration.id,
+      currentStep,
+      allPassed: true,
+    });
   } else {
     await updateUserFeishuIntegration(options.userId, integration.id, {
       status: 'draft',
       initializedAt: null,
+    });
+    await resolveSetupAttemptAfterChecks({
+      integrationId: integration.id,
+      currentStep,
+      allPassed: false,
+      blockerCode: currentStep,
+      errorCode: firstFailure?.type ?? null,
+      errorSummary: firstFailure?.message ?? null,
     });
   }
 

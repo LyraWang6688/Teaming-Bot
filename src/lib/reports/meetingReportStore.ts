@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import type { AnalysisResult } from '@/types';
 import { getDb } from '@/lib/db/client';
 import {
@@ -72,6 +72,76 @@ export async function getMeetingRecordByLegacyReference(
     .limit(1);
 
   return row || null;
+}
+
+export async function getMeetingRecordById(
+  meetingRecordId: string
+): Promise<MeetingRecordRow | null> {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(meetingRecords)
+    .where(eq(meetingRecords.id, meetingRecordId))
+    .limit(1);
+
+  return row || null;
+}
+
+/**
+ * 绑定报告通知接收人（建通知任务前调用）。
+ * - 首次绑定：写入 app_id + open_id + 来源 + verified_at
+ * - 已绑定且相同：刷新 verified_at
+ * - 已绑定但不同：不覆盖（blocked 不换人原则），返回 false 由上层置任务 blocked
+ */
+export async function bindMeetingRecordRecipient(
+  meetingRecordId: string,
+  recipient: { appId: string; openId: string; source: string }
+): Promise<{ bound: boolean; current: { appId: string | null; openId: string | null } }> {
+  const db = getDb();
+  const [existing] = await db
+    .select({
+      recipientAppId: meetingRecords.recipientAppId,
+      recipientOpenId: meetingRecords.recipientOpenId,
+    })
+    .from(meetingRecords)
+    .where(eq(meetingRecords.id, meetingRecordId))
+    .limit(1);
+
+  if (!existing) {
+    return { bound: false, current: { appId: null, openId: null } };
+  }
+
+  if (existing.recipientAppId && existing.recipientOpenId) {
+    const same =
+      existing.recipientAppId === recipient.appId &&
+      existing.recipientOpenId === recipient.openId;
+    if (same) {
+      await db
+        .update(meetingRecords)
+        .set({ recipientVerifiedAt: new Date(), updatedAt: new Date() })
+        .where(eq(meetingRecords.id, meetingRecordId));
+    }
+    return {
+      bound: same,
+      current: { appId: existing.recipientAppId, openId: existing.recipientOpenId },
+    };
+  }
+
+  await db
+    .update(meetingRecords)
+    .set({
+      recipientAppId: recipient.appId,
+      recipientOpenId: recipient.openId,
+      recipientSource: recipient.source,
+      recipientVerifiedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(meetingRecords.id, meetingRecordId));
+
+  return {
+    bound: true,
+    current: { appId: recipient.appId, openId: recipient.openId },
+  };
 }
 
 export async function getMeetingReportByPublicId(
@@ -197,12 +267,32 @@ export async function persistMeetingReport(
 ): Promise<MeetingRecordRow> {
   const db = getDb();
   const now = new Date();
+
+  // 版本推进：
+  // - data_version：每次报告持久化（含恢复重放）+1，作为 Base 镜像的目标版本
+  // - report_revision：仅在分析内容实际变化时 +1，作为通知幂等键的一部分
+  const [current] = await db
+    .select({
+      analysisResult: meetingRecords.analysisResult,
+    })
+    .from(meetingRecords)
+    .where(eq(meetingRecords.id, input.meetingRecordId))
+    .limit(1);
+
+  const analysisChanged =
+    !current?.analysisResult ||
+    JSON.stringify(current.analysisResult) !== JSON.stringify(input.analysis);
+
   const [row] = await db
     .update(meetingRecords)
     .set({
       status: 'completed',
       analysisResult: input.analysis,
       analysisSchemaVersion: MEETING_REPORT_SCHEMA_VERSION,
+      dataVersion: sql`${meetingRecords.dataVersion} + 1`,
+      ...(analysisChanged
+        ? { reportRevision: sql`${meetingRecords.reportRevision} + 1` }
+        : {}),
       // 分析摘要：读 teamState.analysis（LLM 第 2 次生成的 100-180 字）
       // V2 引擎下 teamState.analysis 永远有值（主路径 LLM 生成，basic_fallback 硬编码兜底）
       analysisSummary: input.analysis.teamState?.analysis,

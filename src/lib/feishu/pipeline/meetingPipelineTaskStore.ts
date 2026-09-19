@@ -17,8 +17,13 @@ export type MeetingPipelineTaskStatus =
 
 export type MeetingPipelineTaskPayload = {
   reportUrl?: string;
+  /** Base 交付目标版本（meeting_records.data_version） */
+  dataVersion?: number;
+  /** 通知版本（meeting_records.report_revision） */
+  reportRevision?: number;
   skippedReason?:
     | 'integration_inactive'
+    | 'already_completed'
     | 'meeting_organizer_unresolved'
     | 'meeting_organizer_not_initialized'
     | 'meeting_organizer_owned_by_other_integration'

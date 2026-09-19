@@ -44,6 +44,8 @@ export const feishuIntegrations = pgTable(
     supersededAt: timestamp('superseded_at', { withTimezone: true }),
     supersededByIntegrationId: uuid('superseded_by_integration_id'),
     initializedAt: timestamp('initialized_at', { withTimezone: true }),
+    firstInitializedAt: timestamp('first_initialized_at', { withTimezone: true }),
+    firstInitializedEvidence: text('first_initialized_evidence'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
@@ -117,6 +119,8 @@ export const baseFieldBindings = pgTable(
     bindingStatus: text('binding_status').notNull().default('unbound'),
     required: boolean('required').notNull().default(false),
     mappingVersion: integer('mapping_version').notNull().default(1),
+    boundBy: text('bound_by'),
+    boundAt: timestamp('bound_at', { withTimezone: true }),
     lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -237,6 +241,12 @@ export const meetingRecords = pgTable(
     transcriptStoredAt: timestamp('transcript_stored_at', { withTimezone: true }),
     analyzedAt: timestamp('analyzed_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),
+    dataVersion: integer('data_version').notNull().default(0),
+    reportRevision: integer('report_revision').notNull().default(0),
+    recipientOpenId: text('recipient_open_id'),
+    recipientAppId: text('recipient_app_id'),
+    recipientSource: text('recipient_source'),
+    recipientVerifiedAt: timestamp('recipient_verified_at', { withTimezone: true }),
     lastErrorType: text('last_error_type'),
     lastErrorMessage: text('last_error_message'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -292,6 +302,133 @@ export const meetingPipelineTasks = pgTable(
     index('meeting_pipeline_tasks_status_next_run_idx').on(table.status, table.nextRunAt),
     index('meeting_pipeline_tasks_integration_id_idx').on(table.integrationId),
     index('meeting_pipeline_tasks_event_id_idx').on(table.eventId),
+  ]
+);
+
+/**
+ * 初始化尝试：替代 appRegistrationStore 的进程内 Map 作为可恢复事实源
+ */
+export const feishuSetupAttempts = pgTable(
+  'feishu_setup_attempts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: uuid('user_id').notNull(),
+    integrationId: uuid('integration_id'),
+    projectId: uuid('project_id'),
+    orgTargetId: uuid('org_target_id'),
+    setupTraceId: text('setup_trace_id').notNull(),
+    currentStep: text('current_step').notNull().default('create_app'),
+    status: text('status').notNull().default('running'),
+    startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),
+    stepStartedAt: timestamp('step_started_at', { withTimezone: true }),
+    lastProgressAt: timestamp('last_progress_at', { withTimezone: true }),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    lastErrorCode: text('last_error_code'),
+    lastErrorSummary: text('last_error_summary'),
+    nextActionCode: text('next_action_code'),
+    endReason: text('end_reason'),
+    stateVersion: integer('state_version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('feishu_setup_attempts_trace_uidx').on(table.setupTraceId),
+    index('feishu_setup_attempts_user_idx').on(table.userId),
+    index('feishu_setup_attempts_integration_idx').on(table.integrationId),
+    index('feishu_setup_attempts_status_updated_idx').on(table.status, table.updatedAt),
+  ]
+);
+
+/**
+ * Base 镜像交付任务：目标快照建任务时固定，7 态状态机 + 租约，不阻断分析/通知
+ */
+export const meetingBaseSyncTasks = pgTable(
+  'meeting_base_sync_tasks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    meetingRecordId: uuid('meeting_record_id').notNull(),
+    integrationId: uuid('integration_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    projectId: uuid('project_id'),
+    orgTargetId: uuid('org_target_id'),
+    targetKey: text('target_key').notNull(),
+    targetConfigSnapshot: jsonb('target_config_snapshot')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    mappingVersion: integer('mapping_version'),
+    requestedVersion: integer('requested_version').notNull().default(0),
+    syncedVersion: integer('synced_version').notNull().default(0),
+    inflightVersion: integer('inflight_version'),
+    status: text('status').notNull().default('pending'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }),
+    leaseToken: text('lease_token'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    baseRecordId: text('base_record_id'),
+    partial: boolean('partial').notNull().default(false),
+    lastErrorCode: text('last_error_code'),
+    lastErrorSummary: text('last_error_summary'),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    lastSucceededAt: timestamp('last_succeeded_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('meeting_base_sync_tasks_record_target_uidx').on(
+      table.meetingRecordId,
+      table.targetKey
+    ),
+    index('meeting_base_sync_tasks_status_next_run_idx').on(table.status, table.nextRunAt),
+    index('meeting_base_sync_tasks_lease_idx').on(table.leaseExpiresAt),
+    index('meeting_base_sync_tasks_integration_idx').on(table.integrationId),
+    index('meeting_base_sync_tasks_base_record_idx').on(table.baseRecordId),
+  ]
+);
+
+/**
+ * 报告通知交付任务：接收人与 app 创建时固定，幂等键跨重试复用
+ */
+export const meetingReportNotificationTasks = pgTable(
+  'meeting_report_notification_tasks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    meetingRecordId: uuid('meeting_record_id').notNull(),
+    reportRevision: integer('report_revision').notNull(),
+    integrationId: uuid('integration_id').notNull(),
+    userId: uuid('user_id').notNull(),
+    recipientAppId: text('recipient_app_id').notNull(),
+    recipientOpenId: text('recipient_open_id').notNull(),
+    reportUrl: text('report_url').notNull(),
+    meetingTitleSnapshot: text('meeting_title_snapshot'),
+    idempotencyKey: text('idempotency_key').notNull(),
+    status: text('status').notNull().default('pending'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    nextRunAt: timestamp('next_run_at', { withTimezone: true }),
+    leaseToken: text('lease_token'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }),
+    messageId: text('message_id'),
+    lastErrorCode: text('last_error_code'),
+    lastErrorSummary: text('last_error_summary'),
+    lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }),
+    sentAt: timestamp('sent_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('meeting_report_notification_tasks_recipient_uidx').on(
+      table.meetingRecordId,
+      table.reportRevision,
+      table.recipientAppId,
+      table.recipientOpenId
+    ),
+    uniqueIndex('meeting_report_notification_tasks_idem_uidx').on(table.idempotencyKey),
+    index('meeting_report_notification_tasks_status_next_run_idx').on(
+      table.status,
+      table.nextRunAt
+    ),
+    index('meeting_report_notification_tasks_lease_idx').on(table.leaseExpiresAt),
+    index('meeting_report_notification_tasks_integration_idx').on(table.integrationId),
   ]
 );
 
@@ -389,6 +526,10 @@ export type FeishuOauthStateRow = typeof feishuOauthStates.$inferSelect;
 export type FeishuAuditLogRow = typeof feishuAuditLogs.$inferSelect;
 export type MeetingRecordRow = typeof meetingRecords.$inferSelect;
 export type MeetingPipelineTaskRow = typeof meetingPipelineTasks.$inferSelect;
+export type FeishuSetupAttemptRow = typeof feishuSetupAttempts.$inferSelect;
+export type MeetingBaseSyncTaskRow = typeof meetingBaseSyncTasks.$inferSelect;
+export type MeetingReportNotificationTaskRow =
+  typeof meetingReportNotificationTasks.$inferSelect;
 export type WebAnalysisTaskRow = typeof webAnalysisTasks.$inferSelect;
 export type UserFeedbackRow = typeof userFeedbacks.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
