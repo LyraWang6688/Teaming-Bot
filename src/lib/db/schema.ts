@@ -96,6 +96,41 @@ export const feishuProjectOrgTargets = pgTable(
   ]
 );
 
+/**
+ * Base 字段绑定：业务字段 key -> 飞书多维表格 field_id
+ *
+ * 飞书记录写入只认 field_name；field_id 在字段改名后保持稳定。
+ * 绑定按 project_id + table_id 隔离，运行时用 field_id 反查当前 field_name。
+ */
+export const baseFieldBindings = pgTable(
+  'base_field_bindings',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => feishuProjects.id, { onDelete: 'cascade' }),
+    tableId: text('table_id').notNull(),
+    businessKey: text('business_key').notNull(),
+    fieldId: text('field_id'),
+    fieldNameSnapshot: text('field_name_snapshot'),
+    fieldTypeSnapshot: text('field_type_snapshot'),
+    bindingStatus: text('binding_status').notNull().default('unbound'),
+    required: boolean('required').notNull().default(false),
+    mappingVersion: integer('mapping_version').notNull().default(1),
+    lastCheckedAt: timestamp('last_checked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('base_field_bindings_project_table_key_uidx').on(
+      table.projectId,
+      table.tableId,
+      table.businessKey
+    ),
+    index('base_field_bindings_project_table_idx').on(table.projectId, table.tableId),
+  ]
+);
+
 export const feishuAuthorizations = pgTable(
   'feishu_authorizations',
   {
@@ -347,6 +382,7 @@ export const sessions = pgTable(
 export type FeishuIntegrationRow = typeof feishuIntegrations.$inferSelect;
 export type FeishuProjectRow = typeof feishuProjects.$inferSelect;
 export type FeishuProjectOrgTargetRow = typeof feishuProjectOrgTargets.$inferSelect;
+export type BaseFieldBindingRow = typeof baseFieldBindings.$inferSelect;
 export type FeishuAuthorizationRow = typeof feishuAuthorizations.$inferSelect;
 export type FeishuIntegrationCheckRow = typeof feishuIntegrationChecks.$inferSelect;
 export type FeishuOauthStateRow = typeof feishuOauthStates.$inferSelect;

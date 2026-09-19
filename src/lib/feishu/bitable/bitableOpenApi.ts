@@ -259,7 +259,8 @@ export async function getBitableRecord(
 
 export async function findMeetingRecordByMeetingId(
   config: FeishuBitableAccess,
-  meetingId: string
+  meetingId: string,
+  meetingIdFieldName = '会议ID'
 ): Promise<FeishuMeetingRecord | null> {
   const result = await callBitableOpenApi<RecordSearchResult>(
     config,
@@ -270,7 +271,7 @@ export async function findMeetingRecordByMeetingId(
         conjunction: 'and',
         conditions: [
           {
-            field_name: '会议ID',
+            field_name: meetingIdFieldName,
             operator: 'is',
             value: [meetingId],
           },
@@ -311,14 +312,88 @@ export async function updateMeetingRecordFields(
   );
 }
 
+type FieldListResult = {
+  items?: Array<{
+    field_id?: unknown;
+    field_name?: unknown;
+    type?: unknown;
+    ui_type?: unknown;
+  }>;
+  has_more?: boolean;
+  page_token?: string;
+};
+
+/**
+ * 飞书表字段元数据（已规范化）
+ * - fieldId/fieldName：稳定 ID 与当前展示名（改名后 fieldId 不变）
+ * - type：归一化的写入类型 text | select | other（url 样式文本仍归 text）
+ * - rawType/rawUiType：飞书原始类型码与 ui_type，调试用
+ */
+export type BitableFieldMeta = {
+  fieldId: string;
+  fieldName: string;
+  type: 'text' | 'select' | 'other';
+  rawType: number | null;
+  rawUiType: string | null;
+};
+
+function normalizeBitableFieldType(rawType: unknown, rawUiType: unknown): BitableFieldMeta['type'] {
+  const uiType = typeof rawUiType === 'string' ? rawUiType.toLowerCase() : '';
+  if (uiType === 'text' || uiType === 'url') return 'text';
+  if (uiType === 'singleselect') return 'select';
+
+  const code = typeof rawType === 'number' ? rawType : Number.NaN;
+  // 1=多行文本，15=超链接（写入协议与文本一致），3=单选
+  if (code === 1 || code === 15) return 'text';
+  if (code === 3) return 'select';
+  return 'other';
+}
+
+/**
+ * 列出目标表全部字段（自动分页）。
+ * 用于字段绑定 bootstrap 与改名自愈刷新。
+ */
+export async function listBitableFields(config: FeishuBitableAccess): Promise<BitableFieldMeta[]> {
+  const fields: BitableFieldMeta[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const suffix = pageToken ? `&page_token=${encodeURIComponent(pageToken)}` : '';
+    const result = await callBitableOpenApi<FieldListResult>(
+      config,
+      'GET',
+      `/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/fields?page_size=100${suffix}`
+    );
+
+    for (const item of result.items ?? []) {
+      const fieldId = typeof item.field_id === 'string' ? item.field_id : '';
+      const fieldName = typeof item.field_name === 'string' ? item.field_name : '';
+      if (!fieldId || !fieldName) continue;
+      fields.push({
+        fieldId,
+        fieldName,
+        type: normalizeBitableFieldType(item.type, item.ui_type),
+        rawType: typeof item.type === 'number' ? item.type : null,
+        rawUiType: typeof item.ui_type === 'string' ? item.ui_type : null,
+      });
+    }
+
+    pageToken = result.has_more ? result.page_token : undefined;
+  } while (pageToken);
+
+  return fields;
+}
+
 export async function setMeetingProcessStatus(
   config: FeishuBitableAccess,
   recordId: string,
   status: FeishuProcessStatus,
-  extraFields: RecordFields = {}
+  options?: { processStatusFieldName?: string; extraFields?: RecordFields }
 ): Promise<void> {
+  // 字段名由调用方经 fieldBinding 解析（运营改名后仍指向正确字段），缺省回退约定名
+  const processStatusFieldName = options?.processStatusFieldName ?? '处理状态';
   await updateMeetingRecordFields(config, recordId, {
-    '处理状态': status,
-    ...extraFields,
+    [processStatusFieldName]: status,
+    ...(options?.extraFields ?? {}),
   });
 }

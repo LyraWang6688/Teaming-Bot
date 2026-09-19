@@ -16,6 +16,7 @@ import {
   setMeetingProcessStatus,
 } from '../bitable/bitableOpenApi';
 import { syncMeetingRecordToBase, syncPartialFieldsToBase } from '../bitable/bitableSync';
+import { resolveFieldName } from '../bitable/fieldBinding';
 import {
   type FeishuIntegrationContext,
   findActiveInitializedIntegrationByAuthorizedOpenId,
@@ -762,7 +763,10 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
       ? FEISHU_PROCESS_STATUS.baseSyncFailed  // 写入失败：LLM 成功但 Base 同步失败
       : FEISHU_PROCESS_STATUS.failed;        // 分析失败：LLM 分析未成功
     try {
-      await setMeetingProcessStatus(config, record.recordId, baseStatus);
+      const processStatusFieldName = await resolveFieldName(config, 'process_status');
+      await setMeetingProcessStatus(config, record.recordId, baseStatus, {
+        processStatusFieldName,
+      });
     } catch (baseStatusError) {
       logFeishuMonitor('warn', 'meeting_report_base_failure_status_write_failed', {
         userId: context.integration.userId,
@@ -932,12 +936,12 @@ async function completeMeetingAnalysis(
   });
 
   // 2. 从 Supabase 同步到 Base（展示镜像）
-  // 「创建人」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
-  // 「处理状态」不再在中间态写入 Base，Base 只展示终态（已完成/失败），中间态只保留在 Supabase
+  // 「会议owner」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
+  // 「处理状态」不在中间态写入 Base，Base 只展示终态（已完成/分析失败/写入失败），中间态只保留在 Supabase
   const authorizationContext = await getLatestFeishuAuthorizationContext(context.integration.id);
   await syncPartialFieldsToBase(config, record.recordId, {
-    '会议文字稿': transcript,
-    '创建人': authorizationContext?.authorizedUserName ?? supabaseRow.organizerOpenId ?? undefined,
+    transcript,
+    creator: authorizationContext?.authorizedUserName ?? supabaseRow.organizerOpenId ?? undefined,
   });
 
   logFeishuMonitor('info', 'base_record_transcript_write_succeeded', {
@@ -1074,7 +1078,7 @@ async function completeMeetingAnalysis(
   try {
     // 从 Supabase 同步到 Base（统一字段映射）
     // persistedReport 包含 transcript（前面已写入）、analysisSummary、reportUrl、organizerOpenId 等
-    // 「创建人」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
+    // 「会议owner」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
     const authorizationContext = await getLatestFeishuAuthorizationContext(context.integration.id);
     await syncMeetingRecordToBase(config, persistedReport, {
       baseRecordId: record.recordId,
@@ -1274,7 +1278,8 @@ async function getMeetingRecordForContext(
     }
   }
 
-  return findMeetingRecordByMeetingId(config, context.meetingId);
+  const meetingIdFieldName = await resolveFieldName(config, 'meeting_id');
+  return findMeetingRecordByMeetingId(config, context.meetingId, meetingIdFieldName);
 }
 
 async function ensureMinuteRecord(
@@ -1297,7 +1302,7 @@ async function ensureMinuteRecord(
   });
 
   // 2. 从 Supabase 同步到 Base
-  // 「创建人」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
+  // 「会议owner」字段写入 authorized_user_name（飞书授权用户姓名），由 feishu_authorizations 表提供
   const authorizationContext = await getLatestFeishuAuthorizationContext(context.integration.id);
   const baseRecordId = await syncMeetingRecordToBase(config, supabaseRow, {
     baseRecordId: existing?.recordId || context.recordId || supabaseRow.baseRecordId || null,
