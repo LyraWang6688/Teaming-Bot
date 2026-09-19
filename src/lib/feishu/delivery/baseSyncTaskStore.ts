@@ -8,6 +8,7 @@
  *   succeeded 后出现新版本 → 重新置 pending
  */
 import { eq, sql } from 'drizzle-orm';
+import { encrypt } from '@/lib/security/crypto';
 import { getDb } from '@/lib/db/client';
 import {
   meetingBaseSyncTasks,
@@ -35,6 +36,8 @@ export type EnqueueBaseSyncTaskInput = {
   projectId?: string | null;
   orgTargetId?: string | null;
   orgName?: string | null;
+  appToken?: string | null;
+  tableId?: string | null;
   requestedVersion: number;
   mappingVersion?: number | null;
   existingBaseRecordId?: string | null;
@@ -64,11 +67,13 @@ export async function enqueueBaseSyncTask(
   executor: DeliveryDbExecutor = getDb()
 ): Promise<MeetingBaseSyncTaskRow | null> {
   const targetKey = buildTargetKey(input.projectId);
-  const blocked = !input.projectId;
+  const blocked = !input.projectId || !input.orgTargetId || !input.appToken || !input.tableId;
   const snapshot = JSON.stringify({
     projectId: input.projectId ?? null,
     orgTargetId: input.orgTargetId ?? null,
     orgName: input.orgName ?? null,
+    appTokenEncrypted: input.appToken ? encrypt(input.appToken) : null,
+    tableId: input.tableId ?? null,
   });
 
   const result = await executor.execute(sql`

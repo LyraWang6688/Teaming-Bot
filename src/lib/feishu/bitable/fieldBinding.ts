@@ -175,7 +175,7 @@ function reconcile(
     };
 
     let target: BitableFieldMeta | null = null;
-    if (existing?.bindingStatus === 'bound' && existing.fieldId) {
+    if (existing?.fieldId) {
       target = liveById.get(existing.fieldId) ?? matchBySpecNames();
     } else {
       target = matchBySpecNames();

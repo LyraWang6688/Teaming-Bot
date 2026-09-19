@@ -31,6 +31,7 @@ export type EnqueueNotificationTaskInput = {
   userId: string;
   recipientAppId: string;
   recipientOpenId: string;
+  blockedReason?: string | null;
   reportUrl: string;
   meetingTitle?: string | null;
   /** 不传则按规则生成确定性幂等键 */
@@ -68,14 +69,18 @@ export async function enqueueNotificationTask(
       meeting_record_id, report_revision, integration_id, user_id,
       recipient_app_id, recipient_open_id, report_url,
       meeting_title_snapshot, idempotency_key,
-      status, attempt_count, next_run_at, created_at, updated_at
+      status, attempt_count, next_run_at, last_error_code, last_error_summary, created_at, updated_at
     ) values (
       ${input.meetingRecordId}, ${input.reportRevision},
       ${input.integrationId}, ${input.userId},
       ${input.recipientAppId}, ${input.recipientOpenId},
       ${input.reportUrl}, ${input.meetingTitle ?? null},
       ${idempotencyKey},
-      'pending', 0, now(), now(), now()
+      ${input.blockedReason ? 'blocked' : 'pending'}, 0,
+      ${input.blockedReason ? null : new Date()},
+      ${input.blockedReason ?? null},
+      ${input.blockedReason ? '通知接收人缺失或不匹配；报告已保存，请核对会议创建人绑定后恢复。' : null},
+      now(), now()
     )
     on conflict do nothing
     returning *

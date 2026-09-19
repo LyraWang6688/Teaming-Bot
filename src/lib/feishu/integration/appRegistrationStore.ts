@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { hashForLookup } from '@/lib/security/crypto';
+import { beginRegistrationAttempt, resolveRegistrationAttempt } from './setupAttemptStore';
 import * as lark from '@larksuiteoapi/node-sdk';
 import {
   FEISHU_APPLICATION_SETUP_SCOPES,
@@ -17,6 +19,7 @@ export type AppRegistrationStatus =
 
 export type AppRegistrationTask = {
   sessionToken: string;
+  setupAttemptId: string;
   userId: string;
   status: AppRegistrationStatus;
   verificationUrl: string | null;
@@ -71,11 +74,14 @@ function toSafeError(error: unknown): string {
 
 export async function startAppRegistration(
   userId: string,
-  onCompleted?: (sessionToken: string) => Promise<void>
+  onCompleted?: (sessionToken: string) => Promise<void>,
+  requestTraceId?: string
 ): Promise<AppRegistrationTask> {
   const sessionToken = randomUUID();
+  const setupAttemptId = await beginRegistrationAttempt(userId, hashForLookup(sessionToken), requestTraceId);
   const task: AppRegistrationTask = {
     sessionToken,
+    setupAttemptId,
     userId,
     status: 'starting',
     verificationUrl: null,
@@ -120,6 +126,7 @@ export async function startAppRegistration(
       },
     })
     .then(async (result) => {
+      if (task.status === 'failed' || task.status === 'expired') return;
       task.status = 'completed';
       task.result = {
         appId: result.client_id,
@@ -135,21 +142,26 @@ export async function startAppRegistration(
           // the same application configuration/publish request.
           task.status = 'failed';
           task.error = toSafeError(error);
+          await resolveRegistrationAttempt({ attemptId: task.setupAttemptId, userId, status: 'failed' });
         }
       }
     })
-    .catch((error) => {
+    .catch(async (error) => {
       task.status = Date.now() > task.expiresAt ? 'expired' : 'failed';
       task.error = toSafeError(error);
       resolveQr?.(task);
       resolveQr = null;
-    });
+      await resolveRegistrationAttempt({ attemptId: task.setupAttemptId, userId, status: task.status });
+    })
+    .catch((error) => { console.error('Registration state persistence failed', error instanceof Error ? error.name : 'UnknownError'); });
 
   const timeout = new Promise<AppRegistrationTask>((resolve) => {
     setTimeout(() => resolve(task), 8_000);
   });
   const readyTask = await Promise.race([qrReady, timeout]);
   if (!readyTask.verificationUrl) {
+    task.status = 'failed';
+    await resolveRegistrationAttempt({ attemptId: task.setupAttemptId, userId, status: 'failed' });
     throw new Error(readyTask.error || '未能获取飞书应用创建链接，请重新发起。');
   }
   return readyTask;

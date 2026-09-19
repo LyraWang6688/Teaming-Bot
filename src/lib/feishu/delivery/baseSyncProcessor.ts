@@ -20,7 +20,8 @@ import {
 } from '@/lib/reports/meetingReportStore';
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { FeishuOpenApiError } from '../common/openapi';
-import { createOrgTargetBitableAccess } from '../bitable/bitableOpenApi';
+import { decrypt } from '@/lib/security/crypto';
+import type { FeishuBitableAccess } from '../bitable/bitableOpenApi';
 import {
   BASE_BUSINESS_FIELD_SPECS,
   forceRefreshFieldBindings,
@@ -42,7 +43,6 @@ import {
 import { isFeishuIntegrationActive } from '../integration/integrationActivationService';
 import {
   BASE_SYNC_ERROR_CODE,
-  getBaseSyncTaskById,
 } from './baseSyncTaskStore';
 import {
   claimDueDeliveryTasks,
@@ -51,7 +51,6 @@ import {
   failDeliveryAttempt,
   markDeliveryBlocked,
   markDeliveryUnknown,
-  requeueDeliveryTask,
   startLeaseHeartbeat,
   type DeliveryDbExecutor,
 } from './deliveryTaskStore';
@@ -80,6 +79,8 @@ type TargetSnapshot = {
   projectId?: string | null;
   orgTargetId?: string | null;
   orgName?: string | null;
+  appTokenEncrypted?: string | null;
+  tableId?: string | null;
 };
 
 function parseSnapshot(raw: ClaimedBaseSyncTask['target_config_snapshot']): TargetSnapshot {
@@ -89,6 +90,8 @@ function parseSnapshot(raw: ClaimedBaseSyncTask['target_config_snapshot']): Targ
     projectId: typeof snap.projectId === 'string' ? snap.projectId : null,
     orgTargetId: typeof snap.orgTargetId === 'string' ? snap.orgTargetId : null,
     orgName: typeof snap.orgName === 'string' ? snap.orgName : null,
+    appTokenEncrypted: typeof snap.appTokenEncrypted === 'string' ? snap.appTokenEncrypted : null,
+    tableId: typeof snap.tableId === 'string' ? snap.tableId : null,
   };
 }
 
@@ -245,7 +248,7 @@ export async function processBaseSyncTask(
       });
     };
 
-    if (!projectId || !orgTargetId) {
+    if (!projectId || !orgTargetId || !snapshot.appTokenEncrypted || !snapshot.tableId) {
       await block(
         BASE_SYNC_ERROR_CODE.targetNotConfigured,
         '任务快照缺少目标项目/组织方向，无法写入 Base。'
@@ -281,7 +284,13 @@ export async function processBaseSyncTask(
       return;
     }
 
-    const access = await createOrgTargetBitableAccess(integration, orgTarget);
+    const access: FeishuBitableAccess = {
+      appToken: decrypt(snapshot.appTokenEncrypted),
+      tableId: snapshot.tableId,
+      integrationId: integration.id,
+      userId: integration.userId,
+      orgTarget,
+    };
     const authorization = await getLatestFeishuAuthorizationContext(integration.id);
     const businessFields = mapSupabaseRowToBusinessFields(meeting, {
       orgName: snapshot.orgName ?? orgTarget.orgName,
@@ -293,7 +302,7 @@ export async function processBaseSyncTask(
       return;
     }
 
-    const knownRecordId = rawTask.base_record_id || meeting.baseRecordId || null;
+    const knownRecordId = rawTask.base_record_id || null;
     const startedAt = Date.now();
 
     try {
@@ -305,15 +314,15 @@ export async function processBaseSyncTask(
       );
       const partial = writeResult.resolution.skipped.length > 0;
 
+      const completed = await completeDeliveryTask(db, DELIVERY_TABLE.baseSync, lease, {
+        baseRecordId: writeResult.recordId,
+        syncedVersion: meeting.dataVersion,
+        partial,
+      });
+      if (!completed) return; // 租约丢失，禁止记成功或覆盖引用
       if (writeResult.recordId && writeResult.recordId !== meeting.baseRecordId) {
         await updateMeetingRecordBaseReference(meeting.id, writeResult.recordId);
       }
-
-      await completeDeliveryTask(db, DELIVERY_TABLE.baseSync, lease, {
-        baseRecordId: writeResult.recordId,
-        syncedVersion: rawTask.requested_version,
-        partial,
-      });
 
       await writeAuditLog({
         userId: rawTask.user_id,
@@ -346,16 +355,6 @@ export async function processBaseSyncTask(
         durationMs: Date.now() - startedAt,
       });
 
-      // 执行期间可能已有新版本入队（status 当时为 running，冲突更新不会自动重排）
-      const latest = await getBaseSyncTaskById(rawTask.id);
-      if (latest && latest.requestedVersion > latest.syncedVersion) {
-        await requeueDeliveryTask(db, DELIVERY_TABLE.baseSync, lease);
-        logFeishuMonitor('info', 'delivery_base_requeued_new_version', {
-          taskId: rawTask.id,
-          requestedVersion: latest.requestedVersion,
-          syncedVersion: latest.syncedVersion,
-        });
-      }
     } catch (error) {
       const requiredUnbound =
         typeof error === 'object' &&

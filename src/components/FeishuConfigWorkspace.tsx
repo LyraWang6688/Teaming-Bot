@@ -1664,7 +1664,7 @@ export default function FeishuConfigWorkspace() {
                   <div className="flex items-center gap-1 text-xs text-slate-500">
                     <span>第 {currentStep} 步</span>
                     <ArrowRight className="h-3 w-3" />
-                    <span>共 5 步</span>
+                    <span>共 {sidebarSteps.length} 步</span>
                   </div>
                 </div>
                 <div className="space-y-1">

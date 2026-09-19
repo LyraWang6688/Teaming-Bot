@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runFeishuIntegrationChecks } from '@/lib/feishu/integration/integrationSetup';
-import { interruptActiveSetupAttempt } from '@/lib/feishu/integration/setupAttemptStore';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import { getCurrentUser } from '@/lib/auth/session';
 import { getRequestTraceContext } from '@/lib/platform/requestTrace';
@@ -59,20 +58,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       integrationId,
       ...toRuntimeErrorContext(error),
     });
-    // 检查抛异常：进行中的初始化 attempt 置 interrupted（best-effort）
-    try {
-      await interruptActiveSetupAttempt(
-        integrationId,
-        error instanceof Error ? error.message : '执行真实检查失败。'
-      );
-    } catch (attemptError) {
-      logRuntimeMonitor('warn', 'integration_checks', 'setup_attempt_interrupt_failed', {
-        ...traceContext,
-        userId: user.id,
-        integrationId,
-        ...toRuntimeErrorContext(attemptError),
-      });
-    }
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : '执行真实检查失败。' },
       { status: 500 }

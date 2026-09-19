@@ -18,6 +18,7 @@ import { isFeishuIntegrationActive } from '../integration/integrationActivationS
 import {
   markFirstInitializedOnce,
   resolveSetupAttemptAfterChecks,
+  getActiveSetupAttemptToken,
 } from '../integration/setupAttemptStore';
 import { enqueueFeishuEvent } from '../pipeline/meetingPipelineProcessor';
 import { FEISHU_REQUIRED_USER_EVENTS } from '../integration/integrationConstants';
@@ -212,6 +213,7 @@ async function assertListenerPrerequisites(integrationId: string) {
 }
 
 async function markListenerReady(integrationId: string): Promise<void> {
+  const attempt = await getActiveSetupAttemptToken(integrationId);
   const listener = listeners.get(integrationId);
   const integration = await getFeishuIntegrationContextById(integrationId);
   if (!listener || !integration) return;
@@ -257,7 +259,8 @@ async function markListenerReady(integrationId: string): Promise<void> {
     integrationId,
     `event_listener_ready:${listener.readyAt.toISOString()}`
   );
-  await resolveSetupAttemptAfterChecks({
+  if (attempt) await resolveSetupAttemptAfterChecks({
+    attempt,
     integrationId,
     currentStep: 'event_listener',
     allPassed: true,

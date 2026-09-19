@@ -5,6 +5,8 @@
  * 事件接收后快速入队，耗时工作在后台异步执行。
  */
 
+import { getDb, type DbExecutor } from '@/lib/db/client';
+import type { MeetingRecordRow } from '@/lib/db/schema';
 import { analyzeMeetingText } from '@/services/analysisService';
 import {
   createOrgTargetBitableAccess,
@@ -625,7 +627,8 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
     ...targetContext,
   });
 
-  const persistedMeeting = await upsertMeetingRecord({
+  const persistedMeeting = await getDb().transaction(async (tx) => {
+    const row = await upsertMeetingRecord({
     integration: context.integration,
     meetingId: context.meetingId,
     minuteToken: context.minuteToken,
@@ -633,6 +636,16 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
     orgTargetId: config.orgTarget?.id || null,
     baseRecordId: context.recordId || null,
     details: meetingDetails,
+    }, tx);
+    if (row.status !== 'completed') {
+      if (meetingDetails?.organizerOpenId) {
+        await bindMeetingRecordRecipient(row.id, {
+          appId: context.integration.appId, openId: meetingDetails.organizerOpenId, source: 'meeting_gate_verified',
+        }, tx);
+      }
+      await enqueueMeetingBaseProjection(row, context, config, tx);
+    }
+    return row;
   });
   context.meetingRecordId = persistedMeeting.id;
   context.reportPublicId = persistedMeeting.reportPublicId;
@@ -767,35 +780,28 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
       context
     );
   } catch (error) {
-    // Base 已解耦：这里的失败只可能是转写/分析阶段失败，Supabase 置 failed；
-    // Base 镜像的终态写入（含「分析失败」展示）由 Base 交付任务异步完成
-    await updateMeetingRecordStatus(persistedMeeting.id, {
-      status: 'failed',
-      errorType: error instanceof Error ? error.name : 'MeetingPipelineFailed',
-      errorMessage: toBusinessErrorMessage(error),
-    });
-
-    // 登记 Base 交付任务，把「分析失败」终态异步镜像到 Base（失败也不阻断、不内联写 Base）
-    if (config.orgTarget?.projectId) {
-      try {
-        await enqueueBaseSyncTask({
-          meetingRecordId: persistedMeeting.id,
-          integrationId: context.integration.id,
-          userId: context.integration.userId,
-          projectId: config.orgTarget.projectId,
-          orgTargetId: config.orgTarget.id,
-          orgName: config.orgTarget.orgName,
-          requestedVersion: persistedMeeting.dataVersion,
-          existingBaseRecordId: record.recordId || null,
-        });
-      } catch (enqueueError) {
-        logFeishuMonitor('warn', 'delivery_base_enqueue_on_failure_failed', {
-          integrationId: context.integration.id,
-          meetingRecordId: persistedMeeting.id,
-          ...toErrorContext(enqueueError),
-        });
-      }
+    const committed = await getMeetingRecordByIntegrationAndMeeting(context.integration.id, context.meetingId);
+    if (committed?.status === 'completed') {
+      logFeishuMonitor('warn', 'pipeline_post_commit_error', { meetingRecordId: committed.id, ...toErrorContext(error) });
+      return;
     }
+    const terminal = !context.taskId || context.attempt + 1 >= PIPELINE_MAX_ATTEMPTS;
+    await getDb().transaction(async (tx) => {
+      const failed = await updateMeetingRecordStatus(persistedMeeting.id, {
+        status: terminal ? 'failed' : 'retry_wait',
+        errorType: error instanceof Error ? error.name : 'MeetingPipelineFailed',
+        errorMessage: toBusinessErrorMessage(error),
+      }, tx);
+      await enqueueMeetingBaseProjection(failed, context, config, tx);
+      if (terminal && context.taskId) {
+        await failMeetingPipelineTask(context.taskId, {
+          currentStage: failed.transcript ? FEISHU_PROCESS_STATUS.analyzing : FEISHU_PROCESS_STATUS.fetchingTranscript,
+          attemptCount: context.attempt + 1,
+          errorType: failed.lastErrorType,
+          errorMessage: failed.lastErrorMessage,
+        }, tx);
+      }
+    });
 
     logFeishuMonitor('error', 'meeting_pipeline_failed', {
       meetingId: context.meetingId,
@@ -806,7 +812,7 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
       ...toErrorContext(error),
     });
     if (context.taskId) {
-      await scheduleOrFailMeetingPipelineTask(context, error);
+      if (!terminal) await scheduleOrFailMeetingPipelineTask(context, error);
       return;
     }
     throw error;
@@ -928,27 +934,20 @@ async function completeMeetingAnalysis(
 
   const transcriptWriteStartedAt = Date.now();
 
-  // 1. 只写 Supabase（真相源）：upsert 会议记录 + 写 transcript
-  // Base 镜像完全解耦：中间态不写 Base，终态由 Base 交付任务单次合并写入
-  if (!context.meetingRecordId) {
-    const persisted = await upsertMeetingRecord({
-      integration: context.integration,
-      meetingId: context.meetingId,
-      minuteToken,
-      projectId: config.orgTarget?.projectId || null,
-      orgTargetId: config.orgTarget?.id || null,
-      baseRecordId: knownBaseRecordId,
-      details: context.meetingDetails,
-    });
-    context.meetingRecordId = persisted.id;
-    context.reportPublicId = persisted.reportPublicId;
-  }
-  await updateMeetingRecordTranscript(context.meetingRecordId, transcript);
-  await updateMeetingRecordStatus(context.meetingRecordId, {
-    status: 'analyzing',
-    transcriptStoredAt: new Date(),
-    errorType: null,
-    errorMessage: null,
+  // 阶段数据与交付需求同事务提交；外部 API 由 worker 独立执行。
+  await getDb().transaction(async (tx) => {
+    if (!context.meetingRecordId) {
+      const row = await upsertMeetingRecord({
+        integration: context.integration, meetingId: context.meetingId, minuteToken,
+        projectId: config.orgTarget?.projectId ?? null,
+        orgTargetId: config.orgTarget?.id ?? null,
+        baseRecordId: knownBaseRecordId || null, details: context.meetingDetails,
+      }, tx);
+      context.meetingRecordId = row.id;
+      context.reportPublicId = row.reportPublicId;
+    }
+    const row = await updateMeetingRecordTranscript(context.meetingRecordId, transcript, tx);
+    await enqueueMeetingBaseProjection(row, context, config, tx);
   });
 
   logFeishuMonitor('info', 'transcript_persist_succeeded', {
@@ -1007,10 +1006,18 @@ async function completeMeetingAnalysis(
   let persistedReport;
   const reportPersistStartedAt = Date.now();
   try {
-    persistedReport = await persistMeetingReport({
-      meetingRecordId: context.meetingRecordId,
-      analysis,
-      reportUrl,
+    const meetingRecordId = context.meetingRecordId;
+    if (!meetingRecordId) throw new Error('会议持久化记录不存在');
+    persistedReport = await getDb().transaction(async (tx) => {
+      const row = await persistMeetingReport({ meetingRecordId, analysis, reportUrl }, tx);
+      await enqueueDeliveryTasksAfterAnalysis({ context, config, persistedReport: row, reportUrl }, tx);
+      if (context.taskId) {
+        await completeMeetingPipelineTask(context.taskId, {
+          baseRecordId: knownBaseRecordId || null, minuteToken,
+          payload: { reportUrl, dataVersion: row.dataVersion, reportRevision: row.reportRevision },
+        }, tx);
+      }
+      return row;
     });
   } catch (error) {
     await writeAuditLog({
@@ -1063,17 +1070,6 @@ async function completeMeetingAnalysis(
     },
   });
 
-  // === 交付解耦：分析已落 Supabase，登记两条独立交付任务，主链路不再内联写 Base/发消息 ===
-
-  // 1) Base 镜像任务：目标快照在建任务时固定，worker 单次合并写入全部终态字段
-  await enqueueDeliveryTasksAfterAnalysis({
-    context,
-    config,
-    persistedReport,
-    knownBaseRecordId,
-    reportUrl,
-  });
-
   const pipelineCompletedAt = Date.now();
   logFeishuMonitor('info', 'meeting_pipeline_completed', {
     meetingId: context.meetingId,
@@ -1087,117 +1083,50 @@ async function completeMeetingAnalysis(
     ...buildPipelineDurationContext(context, pipelineCompletedAt),
     ...targetContext,
   });
-  if (context.taskId) {
-    await completeMeetingPipelineTask(context.taskId, {
-      baseRecordId: knownBaseRecordId,
-      minuteToken,
-      payload: {
-        reportUrl,
-        dataVersion: persistedReport.dataVersion,
-        reportRevision: persistedReport.reportRevision,
-      },
-    });
-  }
+
 }
 
-/**
- * 分析完成后登记交付任务：
- * - Base 同步任务（未绑定项目时由任务自身落 blocked + TARGET_NOT_CONFIGURED）
- * - 报告通知任务（接收人=会议创建人，按集成 app 绑定；幂等键含 report_revision）
- * 登记失败不影响分析结果：错误只记日志/审计，由运维视图发现后人工补偿。
- */
+async function enqueueMeetingBaseProjection(
+  row: MeetingRecordRow,
+  context: MinuteGeneratedSource,
+  config: FeishuBitableAccess,
+  tx: DbExecutor
+) {
+  await enqueueBaseSyncTask({
+    meetingRecordId: row.id, integrationId: context.integration.id,
+    userId: context.integration.userId,
+    projectId: row.projectId, orgTargetId: row.orgTargetId,
+    orgName: config.orgTarget?.orgName ?? null,
+    appToken: config.appToken, tableId: config.tableId,
+    requestedVersion: row.dataVersion,
+    existingBaseRecordId: row.baseRecordId,
+  }, tx);
+}
+
+/** 无外部副作用；任何登记失败都由调用事务整体回滚。 */
 async function enqueueDeliveryTasksAfterAnalysis(input: {
   context: MinuteGeneratedSource;
   config: FeishuBitableAccess;
-  persistedReport: Awaited<ReturnType<typeof persistMeetingReport>>;
-  knownBaseRecordId: string;
+  persistedReport: MeetingRecordRow;
   reportUrl: string;
-}): Promise<void> {
-  const { context, config, persistedReport, knownBaseRecordId, reportUrl } = input;
-
-  try {
-    const baseTask = await enqueueBaseSyncTask({
-      meetingRecordId: persistedReport.id,
-      integrationId: context.integration.id,
-      userId: context.integration.userId,
-      projectId: config.orgTarget?.projectId ?? null,
-      orgTargetId: config.orgTarget?.id ?? null,
-      orgName: config.orgTarget?.orgName ?? null,
-      requestedVersion: persistedReport.dataVersion,
-      existingBaseRecordId: knownBaseRecordId || persistedReport.baseRecordId || null,
-    });
-    logFeishuMonitor('info', 'delivery_base_task_enqueued', {
-      integrationId: context.integration.id,
-      taskId: context.taskId,
-      meetingId: context.meetingId,
-      meetingRecordId: persistedReport.id,
-      deliveryTaskId: baseTask?.id ?? null,
-      deliveryTaskStatus: baseTask?.status ?? null,
-      requestedVersion: persistedReport.dataVersion,
-    });
-  } catch (error) {
-    logFeishuMonitor('error', 'delivery_base_task_enqueue_failed', {
-      integrationId: context.integration.id,
-      meetingRecordId: persistedReport.id,
-      ...toErrorContext(error),
-    });
-  }
-
-  // 接收人绑定：会议创建人 open_id 属于当前集成应用（appId 取自集成配置，非全局 env）
-  // 恢复路径可能没有 meetingDetails，回退使用 meeting_records.organizer_open_id
-  const organizerOpenId =
-    context.meetingDetails?.organizerOpenId ?? persistedReport.organizerOpenId ?? null;
-  const meetingTitle = context.meetingDetails?.topic ?? persistedReport.topic ?? null;
-  if (!organizerOpenId || !context.integration.appId) {
-    logFeishuMonitor('warn', 'delivery_notification_recipient_missing', {
-      integrationId: context.integration.id,
-      meetingId: context.meetingId,
-      meetingRecordId: persistedReport.id,
-      reason: !organizerOpenId ? 'organizer_open_id_missing' : 'integration_app_id_missing',
-    });
-    return;
-  }
-
-  try {
-    const binding = await bindMeetingRecordRecipient(persistedReport.id, {
-      appId: context.integration.appId,
-      openId: organizerOpenId,
-      source: 'meeting_organizer',
-    });
-    if (!binding.bound) {
-      // 已绑定成别人：按「blocked 不换人」不建通知任务
-      logFeishuMonitor('warn', 'delivery_notification_recipient_mismatch_skip_enqueue', {
-        integrationId: context.integration.id,
-        meetingRecordId: persistedReport.id,
-      });
-      return;
-    }
-
-    const notificationTask = await enqueueNotificationTask({
-      meetingRecordId: persistedReport.id,
-      reportRevision: persistedReport.reportRevision,
-      integrationId: context.integration.id,
-      userId: context.integration.userId,
-      recipientAppId: context.integration.appId,
-      recipientOpenId: organizerOpenId,
-      reportUrl,
-      meetingTitle,
-    });
-    logFeishuMonitor('info', 'delivery_notification_task_enqueued', {
-      integrationId: context.integration.id,
-      meetingId: context.meetingId,
-      meetingRecordId: persistedReport.id,
-      deliveryTaskId: notificationTask?.id ?? null,
-      reportRevision: persistedReport.reportRevision,
-      deduped: notificationTask === null,
-    });
-  } catch (error) {
-    logFeishuMonitor('error', 'delivery_notification_task_enqueue_failed', {
-      integrationId: context.integration.id,
-      meetingRecordId: persistedReport.id,
-      ...toErrorContext(error),
-    });
-  }
+}, tx: DbExecutor): Promise<void> {
+  const { context, config, persistedReport, reportUrl } = input;
+  await enqueueMeetingBaseProjection(persistedReport, context, config, tx);
+  const openId = persistedReport.recipientOpenId ?? persistedReport.organizerOpenId ?? '';
+  const appId = persistedReport.recipientAppId ?? context.integration.appId;
+  const binding = openId && appId
+    ? await bindMeetingRecordRecipient(persistedReport.id, {
+        appId, openId, source: 'meeting_gate_verified',
+      }, tx)
+    : null;
+  await enqueueNotificationTask({
+    meetingRecordId: persistedReport.id, reportRevision: persistedReport.reportRevision,
+    integrationId: context.integration.id, userId: context.integration.userId,
+    recipientAppId: appId || '', recipientOpenId: openId,
+    reportUrl, meetingTitle: persistedReport.topic,
+    blockedReason: !binding ? 'RECIPIENT_MISSING'
+      : !binding.bound || appId !== context.integration.appId ? 'RECIPIENT_MISMATCH' : null,
+  }, tx);
 }
 
 async function analyzeMeetingTranscriptWithRetries(

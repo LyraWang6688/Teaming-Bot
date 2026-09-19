@@ -1,3 +1,4 @@
+import { resolveRegistrationAttempt } from './setupAttemptStore';
 import {
   claimAppRegistrationFinalization,
   failAppRegistrationFinalization,
@@ -82,9 +83,14 @@ export async function finalizeAppRegistration(
       },
     });
 
+    await resolveRegistrationAttempt({
+      attemptId: task.setupAttemptId, userId: task.userId,
+      integrationId: integration.id, status: 'waiting_user',
+    });
     finishAppRegistrationFinalization(sessionToken, integration.id);
     return getUserFeishuIntegrationDetail(task.userId, integration.id);
   } catch (error) {
+    await resolveRegistrationAttempt({ attemptId: task.setupAttemptId, userId: task.userId, status: 'failed' });
     failAppRegistrationFinalization(sessionToken, error);
     throw error;
   }

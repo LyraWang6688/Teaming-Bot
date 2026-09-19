@@ -5,10 +5,10 @@ import { createFeishuSdkClient } from './sdkClient';
 import { getValidIntegrationUserAuthorization } from './tokenService';
 import {
   logRuntimeMonitor,
-  toRuntimeErrorContext,
 } from '@/lib/platform/runtimeMonitor';
 import {
   startOrTouchSetupAttempt,
+  interruptActiveSetupAttempt,
   resolveSetupAttemptAfterChecks,
   markFirstInitializedOnce,
   deriveSetupCurrentStep,
@@ -282,23 +282,13 @@ async function executeFeishuIntegrationChecks(options: {
   };
   const failures: CheckFailure[] = [];
 
-  // 初始化尝试持久化（best-effort：落库失败不影响真实检查）
+  const attempt = await startOrTouchSetupAttempt({
+    userId: options.userId, integrationId: integration.id,
+    projectId: integration.projectId ?? null,
+    orgTargetId: integration.selectedOrgTargetId ?? null,
+    currentStep: integration.setupStep || 'create_app',
+  });
   try {
-    await startOrTouchSetupAttempt({
-      userId: options.userId,
-      integrationId: integration.id,
-      projectId: integration.projectId ?? null,
-      orgTargetId: integration.selectedOrgTargetId ?? null,
-      currentStep: 'create_app',
-    });
-  } catch (attemptError) {
-    logRuntimeMonitor('warn', 'integration_checks', 'setup_attempt_touch_failed', {
-      userId: options.userId,
-      integrationId: integration.id,
-      ...toRuntimeErrorContext(attemptError),
-    });
-  }
-
   try {
     details.appRegistration = {
       provider: 'node_sdk',
@@ -767,6 +757,7 @@ async function executeFeishuIntegrationChecks(options: {
       `all_checks_passed:${checkedAt.toISOString()}`
     );
     await resolveSetupAttemptAfterChecks({
+      attempt,
       integrationId: integration.id,
       currentStep,
       allPassed: true,
@@ -777,6 +768,7 @@ async function executeFeishuIntegrationChecks(options: {
       initializedAt: null,
     });
     await resolveSetupAttemptAfterChecks({
+      attempt,
       integrationId: integration.id,
       currentStep,
       allPassed: false,
@@ -825,6 +817,11 @@ async function executeFeishuIntegrationChecks(options: {
       currentSnapshot,
     },
   };
+  } catch (error) {
+    await interruptActiveSetupAttempt(attempt);
+    throw error;
+  }
+
 }
 
 export async function runFeishuIntegrationChecks(options: {

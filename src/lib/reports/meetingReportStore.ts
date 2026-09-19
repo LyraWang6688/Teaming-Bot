@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import type { AnalysisResult } from '@/types';
-import { getDb } from '@/lib/db/client';
+import { getDb, type DbExecutor } from '@/lib/db/client';
 import {
   meetingRecords,
   type MeetingRecordRow,
@@ -95,9 +95,9 @@ export async function getMeetingRecordById(
  */
 export async function bindMeetingRecordRecipient(
   meetingRecordId: string,
-  recipient: { appId: string; openId: string; source: string }
+  recipient: { appId: string; openId: string; source: string },
+  db: DbExecutor = getDb()
 ): Promise<{ bound: boolean; current: { appId: string | null; openId: string | null } }> {
-  const db = getDb();
   const [existing] = await db
     .select({
       recipientAppId: meetingRecords.recipientAppId,
@@ -105,7 +105,8 @@ export async function bindMeetingRecordRecipient(
     })
     .from(meetingRecords)
     .where(eq(meetingRecords.id, meetingRecordId))
-    .limit(1);
+    .limit(1)
+    .for('update');
 
   if (!existing) {
     return { bound: false, current: { appId: null, openId: null } };
@@ -158,17 +159,17 @@ export async function getMeetingReportByPublicId(
 }
 
 export async function upsertMeetingRecord(
-  input: UpsertMeetingRecordInput
+  input: UpsertMeetingRecordInput,
+  db: DbExecutor = getDb()
 ): Promise<MeetingRecordRow> {
-  const db = getDb();
   const detailsFields = meetingDetailsFields(input.details);
   const updateFields = {
     userId: input.integration.userId,
-    ...(input.projectId ? { projectId: input.projectId } : {}),
-    ...(input.orgTargetId ? { orgTargetId: input.orgTargetId } : {}),
+    ...(input.projectId ? { projectId: sql`coalesce(${meetingRecords.projectId}, ${input.projectId})` } : {}),
+    ...(input.orgTargetId ? { orgTargetId: sql`coalesce(${meetingRecords.orgTargetId}, ${input.orgTargetId})` } : {}),
     ...(input.baseRecordId ? { baseRecordId: input.baseRecordId } : {}),
     ...(input.minuteToken ? { minuteToken: input.minuteToken } : {}),
-    topic: input.details?.topic ?? null,
+    ...(input.details?.topic ? { topic: input.details.topic } : {}),
     ...detailsFields,
     updatedAt: new Date(),
   };
@@ -183,6 +184,7 @@ export async function upsertMeetingRecord(
       feishuMeetingId: input.meetingId,
       minuteToken: input.minuteToken || null,
       status: 'meeting_ended',
+      dataVersion: 1,
       topic: input.details?.topic ?? null,
       ...detailsFields,
       updatedAt: new Date(),
@@ -220,19 +222,23 @@ export async function updateMeetingRecordStatus(
     transcriptStoredAt?: Date | null;
     errorType?: string | null;
     errorMessage?: string | null;
-  }
-): Promise<void> {
-  const db = getDb();
-  await db
+  },
+  db: DbExecutor = getDb()
+): Promise<MeetingRecordRow> {
+  const [row] = await db
     .update(meetingRecords)
     .set({
       status: input.status,
+      dataVersion: sql`${meetingRecords.dataVersion} + 1`,
       transcriptStoredAt: input.transcriptStoredAt,
       lastErrorType: input.errorType,
       lastErrorMessage: input.errorMessage,
       updatedAt: new Date(),
     })
-    .where(eq(meetingRecords.id, meetingRecordId));
+    .where(eq(meetingRecords.id, meetingRecordId))
+    .returning();
+  if (!row) throw new Error('会议记录不存在');
+  return row;
 }
 
 /**
@@ -243,13 +249,17 @@ export async function updateMeetingRecordStatus(
  */
 export async function updateMeetingRecordTranscript(
   meetingRecordId: string,
-  transcript: string
+  transcript: string,
+  db: DbExecutor = getDb()
 ): Promise<MeetingRecordRow> {
-  const db = getDb();
   const [row] = await db
     .update(meetingRecords)
     .set({
       transcript,
+      status: 'analyzing',
+      dataVersion: sql`${meetingRecords.dataVersion} + 1`,
+      lastErrorType: null,
+      lastErrorMessage: null,
       transcriptStoredAt: new Date(),
       updatedAt: new Date(),
     })
@@ -263,25 +273,10 @@ export async function updateMeetingRecordTranscript(
 }
 
 export async function persistMeetingReport(
-  input: PersistMeetingReportInput
+  input: PersistMeetingReportInput,
+  db: DbExecutor = getDb()
 ): Promise<MeetingRecordRow> {
-  const db = getDb();
   const now = new Date();
-
-  // 版本推进：
-  // - data_version：每次报告持久化（含恢复重放）+1，作为 Base 镜像的目标版本
-  // - report_revision：仅在分析内容实际变化时 +1，作为通知幂等键的一部分
-  const [current] = await db
-    .select({
-      analysisResult: meetingRecords.analysisResult,
-    })
-    .from(meetingRecords)
-    .where(eq(meetingRecords.id, input.meetingRecordId))
-    .limit(1);
-
-  const analysisChanged =
-    !current?.analysisResult ||
-    JSON.stringify(current.analysisResult) !== JSON.stringify(input.analysis);
 
   const [row] = await db
     .update(meetingRecords)
@@ -290,9 +285,8 @@ export async function persistMeetingReport(
       analysisResult: input.analysis,
       analysisSchemaVersion: MEETING_REPORT_SCHEMA_VERSION,
       dataVersion: sql`${meetingRecords.dataVersion} + 1`,
-      ...(analysisChanged
-        ? { reportRevision: sql`${meetingRecords.reportRevision} + 1` }
-        : {}),
+      reportRevision: sql`case when ${meetingRecords.analysisResult} is distinct from ${JSON.stringify(input.analysis)}::jsonb
+        then ${meetingRecords.reportRevision} + 1 else ${meetingRecords.reportRevision} end`,
       // 分析摘要：读 teamState.analysis（LLM 第 2 次生成的 100-180 字）
       // V2 引擎下 teamState.analysis 永远有值（主路径 LLM 生成，basic_fallback 硬编码兜底）
       analysisSummary: input.analysis.teamState?.analysis,

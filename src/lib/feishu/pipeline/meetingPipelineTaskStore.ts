@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
-import { getDb } from '@/lib/db/client';
+import { getDb, type DbExecutor } from '@/lib/db/client';
 import { meetingPipelineTasks, type MeetingPipelineTaskRow } from '@/lib/db/schema';
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import { FEISHU_PROCESS_STATUS, type FeishuProcessStatus } from './status';
@@ -82,9 +82,9 @@ function mergePayload(
 }
 
 export async function getMeetingPipelineTaskById(
-  taskId: string
+  taskId: string,
+  db: DbExecutor = getDb()
 ): Promise<MeetingPipelineTaskRow | null> {
-  const db = getDb();
   const [row] = await db
     .select()
     .from(meetingPipelineTasks)
@@ -231,10 +231,10 @@ export async function upsertMeetingPipelineTaskForMinuteGenerated(
 
 export async function updateMeetingPipelineTask(
   taskId: string,
-  input: UpdateTaskFields
+  input: UpdateTaskFields,
+  db: DbExecutor = getDb()
 ): Promise<MeetingPipelineTaskRow | null> {
-  const db = getDb();
-  const existing = await getMeetingPipelineTaskById(taskId);
+  const existing = await getMeetingPipelineTaskById(taskId, db);
   if (!existing) {
     return null;
   }
@@ -314,7 +314,8 @@ export async function completeMeetingPipelineTask(
     baseRecordId?: string | null;
     minuteToken?: string | null;
     payload?: MeetingPipelineTaskPayload;
-  }
+  },
+  db: DbExecutor = getDb()
 ): Promise<MeetingPipelineTaskRow | null> {
   return updateMeetingPipelineTask(taskId, {
     currentStage: FEISHU_PROCESS_STATUS.completed,
@@ -327,7 +328,7 @@ export async function completeMeetingPipelineTask(
     lastErrorType: null,
     lastErrorMessage: null,
     payload: input?.payload,
-  });
+  }, db);
 }
 
 export async function failMeetingPipelineTask(
@@ -337,7 +338,8 @@ export async function failMeetingPipelineTask(
     attemptCount: number;
     errorType?: string | null;
     errorMessage?: string | null;
-  }
+  },
+  db: DbExecutor = getDb()
 ): Promise<MeetingPipelineTaskRow | null> {
   return updateMeetingPipelineTask(taskId, {
     currentStage: input.currentStage,
@@ -348,7 +350,7 @@ export async function failMeetingPipelineTask(
     lockedAt: null,
     lastErrorType: input.errorType ?? null,
     lastErrorMessage: input.errorMessage ?? null,
-  });
+  }, db);
 }
 
 export async function listRecoverableMeetingPipelineTasks(

@@ -28,24 +28,14 @@ export const SETUP_ATTEMPT_STATUS = {
 export type SetupAttemptStatus =
   (typeof SETUP_ATTEMPT_STATUS)[keyof typeof SETUP_ATTEMPT_STATUS];
 
-type ActiveSetupAttemptRow = typeof feishuSetupAttempts.$inferSelect;
+export type SetupAttemptToken = { id: string; stateVersion: number; setupTraceId: string };
 
-async function findActiveAttempt(
-  integrationId: string
-): Promise<ActiveSetupAttemptRow | null> {
-  const db = getDb();
-  const [row] = await db
-    .select()
-    .from(feishuSetupAttempts)
-    .where(
-      and(
-        eq(feishuSetupAttempts.integrationId, integrationId),
-        inArray(feishuSetupAttempts.status, ['running', 'waiting_user'])
-      )
-    )
-    .orderBy(desc(feishuSetupAttempts.updatedAt))
-    .limit(1);
-  return row ?? null;
+export async function getActiveSetupAttemptToken(integrationId: string): Promise<SetupAttemptToken | null> {
+  const [row] = await getDb().select().from(feishuSetupAttempts).where(and(
+    eq(feishuSetupAttempts.integrationId, integrationId),
+    inArray(feishuSetupAttempts.status, ['running', 'waiting_user'])
+  )).orderBy(desc(feishuSetupAttempts.updatedAt)).limit(1);
+  return row ? { id: row.id, stateVersion: row.stateVersion, setupTraceId: row.setupTraceId } : null;
 }
 
 export type StartOrTouchInput = {
@@ -53,136 +43,121 @@ export type StartOrTouchInput = {
   integrationId: string;
   projectId?: string | null;
   orgTargetId?: string | null;
-  /** 当前检查执行到的步骤（create_app/oauth/org_target/permission/minute_subscription/event_listener） */
   currentStep: string;
 };
 
-/**
- * 检查开始时登记心跳：
- * 有进行中的 attempt → 复用并推进；否则新建一轮 attempt。
- */
-export async function startOrTouchSetupAttempt(
-  input: StartOrTouchInput
-): Promise<{ setupTraceId: string; reused: boolean }> {
-  const db = getDb();
-  const now = new Date();
-  const active = await findActiveAttempt(input.integrationId);
-
-  if (active) {
-    await db
-      .update(feishuSetupAttempts)
-      .set({
-        status: 'running',
-        currentStep: input.currentStep,
-        stepStartedAt: now,
-        lastProgressAt: now,
-        finishedAt: null,
-        endReason: null,
-        stateVersion: sql`${feishuSetupAttempts.stateVersion} + 1`,
-        updatedAt: now,
-      })
-      .where(eq(feishuSetupAttempts.id, active.id));
-    return { setupTraceId: active.setupTraceId, reused: true };
-  }
-
-  const setupTraceId = `setup:${input.integrationId}:${randomUUID()}`;
-  await db.insert(feishuSetupAttempts).values({
-    userId: input.userId,
-    integrationId: input.integrationId,
-    projectId: input.projectId ?? null,
-    orgTargetId: input.orgTargetId ?? null,
-    setupTraceId,
-    currentStep: input.currentStep,
-    status: 'running',
-    stepStartedAt: now,
-    lastProgressAt: now,
-    stateVersion: 1,
-    updatedAt: now,
+/** 每次检查领取一个版本；观察并不代表步骤有进展。 */
+export async function startOrTouchSetupAttempt(input: StartOrTouchInput): Promise<SetupAttemptToken> {
+  return getDb().transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${input.integrationId}, 0))`);
+    const [active] = await tx.select().from(feishuSetupAttempts).where(and(
+      eq(feishuSetupAttempts.integrationId, input.integrationId),
+      inArray(feishuSetupAttempts.status, ['running', 'waiting_user'])
+    )).orderBy(desc(feishuSetupAttempts.updatedAt)).limit(1).for('update');
+    const now = new Date();
+    const [row] = active ? await tx.update(feishuSetupAttempts).set({
+      stateVersion: sql`${feishuSetupAttempts.stateVersion} + 1`,
+      projectId: input.projectId ?? active.projectId,
+      orgTargetId: input.orgTargetId ?? active.orgTargetId,
+      updatedAt: now,
+    }).where(eq(feishuSetupAttempts.id, active.id)).returning()
+    : await tx.insert(feishuSetupAttempts).values({
+      ...input, setupTraceId: `setup:${randomUUID()}`, status: 'running',
+      lastProgressAt: now, stepStartedAt: now, updatedAt: now,
+    }).returning();
+    return { id: row.id, stateVersion: row.stateVersion, setupTraceId: row.setupTraceId };
   });
-
-  return { setupTraceId, reused: false };
 }
 
 export type ResolveSetupCheckInput = {
   integrationId: string;
+  attempt: SetupAttemptToken;
   currentStep: string;
   allPassed: boolean;
-  /** 未通过时的首要阻塞门（作为 next_action_code） */
   blockerCode?: string | null;
   errorCode?: string | null;
   errorSummary?: string | null;
   endReason?: string | null;
 };
 
-/**
- * 一轮 checks 执行完毕后的状态落定：
- * - 全部通过 → succeeded
- * - 有未通过/待办项 → waiting_user（保留 attempt 活跃，等下一次轮询继续）
- */
-export async function resolveSetupAttemptAfterChecks(
-  input: ResolveSetupCheckInput
-): Promise<void> {
-  const db = getDb();
-  const active = await findActiveAttempt(input.integrationId);
-  if (!active) return;
+/** 只接受本次检查领取的版本，迟到结果不能覆盖另一轮检查/尝试。 */
+export async function resolveSetupAttemptAfterChecks(input: ResolveSetupCheckInput): Promise<boolean> {
   const now = new Date();
-
-  if (input.allPassed) {
-    await db
-      .update(feishuSetupAttempts)
-      .set({
-        status: 'succeeded',
-        currentStep: input.currentStep,
-        lastProgressAt: now,
-        finishedAt: now,
-        nextActionCode: null,
-        lastErrorCode: null,
-        lastErrorSummary: null,
-        endReason: input.endReason ?? 'all_checks_passed',
-        stateVersion: sql`${feishuSetupAttempts.stateVersion} + 1`,
-        updatedAt: now,
-      })
-      .where(eq(feishuSetupAttempts.id, active.id));
-    return;
-  }
-
-  await db
-    .update(feishuSetupAttempts)
-    .set({
-      status: 'waiting_user',
-      currentStep: input.currentStep,
-      lastProgressAt: now,
-      nextActionCode: input.blockerCode ?? null,
-      lastErrorCode: input.errorCode ?? null,
-      lastErrorSummary: input.errorSummary ?? null,
-      stateVersion: sql`${feishuSetupAttempts.stateVersion} + 1`,
-      updatedAt: now,
-    })
-    .where(eq(feishuSetupAttempts.id, active.id));
+  const status = input.allPassed ? 'succeeded' : 'waiting_user';
+  const [row] = await getDb().update(feishuSetupAttempts).set({
+    status, currentStep: input.currentStep,
+    stepStartedAt: sql`case when ${feishuSetupAttempts.currentStep} is distinct from ${input.currentStep}
+      then ${now} else ${feishuSetupAttempts.stepStartedAt} end`,
+    lastProgressAt: sql`case when ${feishuSetupAttempts.currentStep} is distinct from ${input.currentStep}
+      or ${feishuSetupAttempts.status} is distinct from ${status}
+      then ${now} else ${feishuSetupAttempts.lastProgressAt} end`,
+    finishedAt: input.allPassed ? now : null,
+    nextActionCode: input.allPassed ? null : input.blockerCode ?? null,
+    lastErrorCode: input.allPassed ? null : input.errorCode ?? null,
+    lastErrorSummary: input.allPassed ? null : input.errorSummary ?? null,
+    endReason: input.allPassed ? input.endReason ?? 'all_checks_passed' : null,
+    stateVersion: sql`${feishuSetupAttempts.stateVersion} + 1`, updatedAt: now,
+  }).where(and(
+    eq(feishuSetupAttempts.id, input.attempt.id),
+    eq(feishuSetupAttempts.integrationId, input.integrationId),
+    eq(feishuSetupAttempts.stateVersion, input.attempt.stateVersion),
+    inArray(feishuSetupAttempts.status, ['running', 'waiting_user'])
+  )).returning({ id: feishuSetupAttempts.id });
+  return Boolean(row);
 }
 
-/** 检查执行抛异常（非业务未通过）：进行中的 attempt 置 interrupted */
-export async function interruptActiveSetupAttempt(
-  integrationId: string,
-  errorSummary: string
-): Promise<void> {
-  const db = getDb();
-  const active = await findActiveAttempt(integrationId);
-  if (!active) return;
-  const now = new Date();
-  await db
-    .update(feishuSetupAttempts)
-    .set({
-      status: 'interrupted',
-      finishedAt: now,
-      lastProgressAt: now,
-      lastErrorCode: 'CHECK_RUN_THREW',
-      lastErrorSummary: errorSummary.slice(0, 500),
-      endReason: 'check_run_threw',
-      stateVersion: sql`${feishuSetupAttempts.stateVersion} + 1`,
-      updatedAt: now,
-    })
-    .where(eq(feishuSetupAttempts.id, active.id));
+export async function interruptActiveSetupAttempt(attempt: SetupAttemptToken): Promise<void> {
+  await getDb().update(feishuSetupAttempts).set({
+    status: 'interrupted', finishedAt: new Date(), endReason: 'check_run_threw',
+    lastErrorCode: 'CHECK_RUN_THREW', lastErrorSummary: '检查中断，初始化结果未确认，请重新检查。',
+    nextActionCode: 'retry_checks', stateVersion: sql`${feishuSetupAttempts.stateVersion} + 1`,
+    updatedAt: new Date(),
+  }).where(and(eq(feishuSetupAttempts.id, attempt.id),
+    eq(feishuSetupAttempts.stateVersion, attempt.stateVersion),
+    inArray(feishuSetupAttempts.status, ['running', 'waiting_user'])));
+}
+
+/** 在 SDK 创建之前保存；session 只存 hash，不持久化创建密钥。 */
+export async function beginRegistrationAttempt(userId: string, sessionHash: string, trace?: string): Promise<string> {
+  const [row] = await getDb().insert(feishuSetupAttempts).values({
+    userId, registrationSessionHash: sessionHash,
+    setupTraceId: `${trace?.slice(0, 128) || 'setup'}:${randomUUID()}`,
+    currentStep: 'create_app', status: 'running',
+    stepStartedAt: new Date(), lastProgressAt: new Date(),
+  }).returning({ id: feishuSetupAttempts.id });
+  return row.id;
+}
+
+export async function resolveRegistrationAttempt(input: {
+  attemptId: string; userId: string; integrationId?: string;
+  status: 'waiting_user' | 'failed' | 'expired' | 'interrupted';
+}): Promise<void> {
+  const progressed = Boolean(input.integrationId);
+  await getDb().update(feishuSetupAttempts).set({
+    integrationId: input.integrationId,
+    status: input.status, currentStep: progressed ? 'oauth' : 'create_app',
+    lastProgressAt: new Date(), stepStartedAt: new Date(), updatedAt: new Date(),
+    finishedAt: input.status === 'waiting_user' ? null : new Date(),
+    lastErrorCode: input.status === 'waiting_user' ? null : `REGISTRATION_${input.status.toUpperCase()}`,
+    lastErrorSummary: input.status === 'waiting_user' ? null : '创建应用未完成，初始化尚未完成，请重新发起创建。',
+    nextActionCode: progressed ? 'authorize' : 'restart_registration',
+    stateVersion: sql`${feishuSetupAttempts.stateVersion} + 1`,
+  }).where(and(eq(feishuSetupAttempts.id, input.attemptId),
+    eq(feishuSetupAttempts.userId, input.userId),
+    isNull(feishuSetupAttempts.integrationId),
+    inArray(feishuSetupAttempts.status, ['running', 'waiting_user'])));
+}
+
+export async function interruptLostRegistration(userId: string, sessionHash: string): Promise<void> {
+  await getDb().update(feishuSetupAttempts).set({
+    status: 'interrupted', finishedAt: new Date(), endReason: 'registration_session_lost',
+    lastErrorCode: 'REGISTRATION_SESSION_LOST', nextActionCode: 'restart_registration',
+    lastErrorSummary: '创建会话已中断，尚未完成应用关联，请重新发起。',
+    stateVersion: sql`${feishuSetupAttempts.stateVersion} + 1`, updatedAt: new Date(),
+  }).where(and(eq(feishuSetupAttempts.userId, userId),
+    eq(feishuSetupAttempts.registrationSessionHash, sessionHash),
+    isNull(feishuSetupAttempts.integrationId),
+    inArray(feishuSetupAttempts.status, ['running', 'waiting_user'])));
 }
 
 /**

@@ -3,14 +3,13 @@ import type { FeishuBitableConfig } from '../common/config';
 import { callGlobalBaseAppTenantOpenApi } from '../integration/integrationOpenApi';
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import {
-  getActiveFeishuProject,
+  getFeishuProjectById,
   getEnabledOrgTargetContextById,
   getOrgTargetContextById,
   type FeishuOrgTargetContext,
 } from '../projects/projectConfigStore';
 import { type FeishuProcessStatus } from '../pipeline/status';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
-import { getFeishuBitableAppToken, getFeishuBitableTableId } from '@/lib/platform/env';
 
 type RecordFields = Record<string, unknown>;
 
@@ -66,27 +65,14 @@ export type FeishuBitableAccess = FeishuBitableConfig & {
   userId: string;
 };
 
-async function getGlobalBitableConfig(): Promise<FeishuBitableConfig> {
-  const activeProject = await getActiveFeishuProject();
-  if (activeProject?.bitableAppToken && activeProject?.bitableTableId) {
-    return {
-      appToken: activeProject.bitableAppToken,
-      tableId: activeProject.bitableTableId,
-    };
-  }
-
-  return {
-    appToken: getFeishuBitableAppToken(),
-    tableId: getFeishuBitableTableId(),
-  };
-}
-
 export async function createOrgTargetBitableAccess(
   integration: Pick<FeishuIntegrationContext, 'id' | 'userId' | 'selectedOrgTargetId'>,
   orgTarget: FeishuOrgTargetContext
 ): Promise<FeishuBitableAccess> {
+  const project = await getFeishuProjectById(orgTarget.projectId);
   return {
-    ...(await getGlobalBitableConfig()),
+    appToken: project?.bitableAppToken ?? '',
+    tableId: project?.bitableTableId ?? '',
     integrationId: integration.id,
     userId: integration.userId,
     orgTarget,
@@ -97,7 +83,7 @@ export async function createSelectedOrgTargetBitableAccess(
   integration: Pick<FeishuIntegrationContext, 'id' | 'userId' | 'selectedOrgTargetId'>,
   options?: { allowDisabled?: boolean }
 ): Promise<FeishuBitableAccess> {
-  const baseConfig = await getGlobalBitableConfig();
+  const baseConfig = { appToken: '', tableId: '' };
 
   if (!integration.selectedOrgTargetId) {
     return {

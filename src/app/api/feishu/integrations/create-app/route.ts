@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
     const task = await startAppRegistration(user.id, async (sessionToken) => {
       await finalizeAppRegistration(sessionToken);
-    });
+    }, traceContext.setupTraceId);
     await writeAuditLog({
       userId: user.id,
       action: 'integration.app_registration.started',

@@ -3,7 +3,9 @@ import { Pool } from 'pg';
 import { getDatabaseUrl } from '@/lib/platform/env';
 import * as schema from './schema';
 
-type Database = NodePgDatabase<typeof schema>;
+export type Database = NodePgDatabase<typeof schema>;
+
+export type DbExecutor = Pick<Database, 'select' | 'insert' | 'update' | 'execute'>;
 
 const globalForDb = globalThis as typeof globalThis & {
   __feishuDbPool?: Pool;

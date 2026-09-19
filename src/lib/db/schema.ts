@@ -317,6 +317,7 @@ export const feishuSetupAttempts = pgTable(
     projectId: uuid('project_id'),
     orgTargetId: uuid('org_target_id'),
     setupTraceId: text('setup_trace_id').notNull(),
+    registrationSessionHash: text('registration_session_hash'),
     currentStep: text('current_step').notNull().default('create_app'),
     status: text('status').notNull().default('running'),
     startedAt: timestamp('started_at', { withTimezone: true }).defaultNow().notNull(),

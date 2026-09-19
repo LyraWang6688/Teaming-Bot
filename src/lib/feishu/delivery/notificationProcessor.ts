@@ -159,6 +159,15 @@ export async function processNotificationTask(
       return;
     }
 
+    if (!rawTask.recipient_open_id || !rawTask.recipient_app_id) {
+      await block(NOTIFICATION_ERROR_CODE.recipientMissing, '任务缺少已验证接收人，请核对后恢复。');
+      return;
+    }
+    if (integration.appId !== rawTask.recipient_app_id) {
+      await block(NOTIFICATION_ERROR_CODE.recipientMismatch, '集成应用与通知绑定的应用不一致。');
+      return;
+    }
+
     // 接收人已绑定成别人 → blocked，不自动换人换 app
     if (
       meeting.recipientAppId &&
@@ -183,9 +192,10 @@ export async function processNotificationTask(
         idempotencyKey: rawTask.idempotency_key,
       });
 
-      await completeDeliveryTask(db, DELIVERY_TABLE.notification, lease, {
+      const completed = await completeDeliveryTask(db, DELIVERY_TABLE.notification, lease, {
         messageId: result.messageId ?? undefined,
       });
+      if (!completed) return;
 
       await writeAuditLog({
         userId: rawTask.user_id,

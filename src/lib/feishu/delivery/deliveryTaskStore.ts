@@ -154,7 +154,7 @@ export async function completeDeliveryTask(
   table: DeliveryTableName,
   task: LeaseGuard,
   patch?: SucceedPatch
-): Promise<void> {
+): Promise<boolean> {
   const t = tableIdentifier(table);
   const baseExtra =
     table === DELIVERY_TABLE.baseSync
@@ -169,18 +169,23 @@ export async function completeDeliveryTask(
           sent_at = now()
         `;
 
-  await db.execute(sql`
+  const result = await db.execute(sql`
     update ${t}
-    set status = 'succeeded',
-        next_run_at = null,
+    set status = ${table === DELIVERY_TABLE.baseSync
+          ? sql`case when requested_version > ${patch?.syncedVersion ?? 0} then 'pending' else 'succeeded' end`
+          : sql`'succeeded'`},
+        next_run_at = ${table === DELIVERY_TABLE.baseSync
+          ? sql`case when requested_version > ${patch?.syncedVersion ?? 0} then now() else null end`
+          : sql`null`},
         lease_token = null,
         lease_expires_at = null,
         last_error_code = null,
         last_error_summary = null,
         ${baseExtra},
         updated_at = now()
-    where id = ${task.id} and lease_token = ${task.leaseToken}
+    where id = ${task.id} and lease_token = ${task.leaseToken} and status = 'running'
   `);
+  return (result.rowCount ?? 0) > 0;
 }
 
 /**
@@ -198,7 +203,7 @@ export async function failDeliveryAttempt(
   }
 ): Promise<'retry_wait' | 'blocked'> {
   if (outcome.retryable && task.attemptCount < DELIVERY_MAX_ATTEMPTS) {
-    const delayMs = computeRetryDelayMs(task.attemptCount + 1);
+    const delayMs = computeRetryDelayMs(task.attemptCount);
     const nextRunAt = new Date(Date.now() + delayMs);
     const ok = await leaseTransition(
       db,

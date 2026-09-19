@@ -1,3 +1,5 @@
+import { interruptLostRegistration, resolveRegistrationAttempt } from '@/lib/feishu/integration/setupAttemptStore';
+import { hashForLookup } from '@/lib/security/crypto';
 import { NextResponse } from 'next/server';
 import { getCurrentUser } from '@/lib/auth/session';
 import { getAppRegistrationTask } from '@/lib/feishu/integration/appRegistrationStore';
@@ -17,19 +19,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: '缺少 sessionToken' }, { status: 400 });
     }
 
+    const currentUser = await getCurrentUser();
+    if (!currentUser) return NextResponse.json({ success: false, error: '请先登录。' }, { status: 401 });
     const task = getAppRegistrationTask(sessionToken);
     if (!task) {
+      await interruptLostRegistration(currentUser.id, hashForLookup(sessionToken));
       return NextResponse.json({
         success: true,
         data: { status: 'expired', error: '创建应用会话已过期，请重新发起。' },
       });
     }
 
-    const currentUser = await getCurrentUser();
-    if (!currentUser || currentUser.id !== task.userId) {
+    if (currentUser.id !== task.userId) {
       return NextResponse.json({ success: false, error: '创建应用会话不属于当前用户。' }, { status: 403 });
     }
 
+    if (task.status === 'failed' || task.status === 'expired') {
+      await resolveRegistrationAttempt({ attemptId: task.setupAttemptId, userId: task.userId, status: task.status });
+    }
     if (task.status === 'completed') {
       const integration = await finalizeAppRegistration(sessionToken);
       if (integration) {
