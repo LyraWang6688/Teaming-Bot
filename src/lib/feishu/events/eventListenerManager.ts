@@ -1,3 +1,4 @@
+import { assertServerRuntimeEnabled } from '@/lib/platform/serverRuntime';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { logFeishuMonitor } from '../common/monitor';
 import {
@@ -551,6 +552,7 @@ export function stopListener(
 }
 
 export async function startListener(integrationId: string): Promise<ListenerInfo> {
+  assertServerRuntimeEnabled();
   return startListenerForIntegration(integrationId);
 }
 

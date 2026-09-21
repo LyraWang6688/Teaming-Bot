@@ -1,4 +1,12 @@
+import { isServerRuntimeEnabled } from './lib/platform/serverRuntime';
+import { getProjectPublicUrl } from './lib/platform/env';
+
 export async function register() {
+  if (!isServerRuntimeEnabled()) {
+    console.info('[Server Runtime] 后台业务未启用，不启动监听和任务执行器。');
+    return;
+  }
+  getProjectPublicUrl(); // 在启动任何消费者之前校验部署域名。
   const { startFeishuMeetingPipelineWorker } = await import('./lib/feishu/pipeline/meetingPipelineWorker');
   const { recoverFeishuMeetingPipelinesOnStartup } = await import('./lib/feishu/pipeline/meetingPipelineProcessor');
   const { startDeliveryWorkers } = await import('./lib/feishu/delivery/deliveryWorker');

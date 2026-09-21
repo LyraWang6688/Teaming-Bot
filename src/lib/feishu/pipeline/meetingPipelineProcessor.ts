@@ -1,3 +1,4 @@
+import { assertServerRuntimeEnabled } from '@/lib/platform/serverRuntime';
 /**
  * 飞书会议管线处理器
  *
@@ -371,6 +372,7 @@ export async function enqueueFeishuEvent(
   envelope: FeishuEventEnvelope,
   integration: FeishuIntegrationContext
 ): Promise<EnqueueResult> {
+  assertServerRuntimeEnabled();
   const eventId = getEventId(envelope);
   const eventType = getEventType(envelope);
   const eventReceivedAt = new Date().toISOString();
@@ -1263,6 +1265,7 @@ function buildRecoveryContextFromTask(
 }
 
 export async function runMeetingPipelineTask(taskId: string) {
+  assertServerRuntimeEnabled();
   const task = await getMeetingPipelineTaskById(taskId);
   if (!task) {
     logFeishuMonitor('warn', 'meeting_pipeline_task_missing', {

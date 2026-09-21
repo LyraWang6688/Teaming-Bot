@@ -1,3 +1,4 @@
+import { assertPublicReportUrl } from '@/lib/platform/serverRuntime';
 /**
  * 报告通知交付任务执行器
  *
@@ -182,6 +183,10 @@ export async function processNotificationTask(
       return;
     }
 
+    try { assertPublicReportUrl(rawTask.report_url); } catch {
+      await block('INVALID_REPORT_URL', '报告地址不是公网 HTTPS 地址，已阻止发送；请修正报告与任务地址后恢复。');
+      return;
+    }
     const startedAt = Date.now();
     try {
       const result = await sendReportCardToRecipient({

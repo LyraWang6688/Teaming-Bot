@@ -3,6 +3,7 @@ services:
     build:
       context: .
       args:
+        SOURCE_REVISION: ${SOURCE_REVISION:-unknown}
         NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}
         NEXT_PUBLIC_MEETING_ANALYSIS_ENABLED: ${NEXT_PUBLIC_MEETING_ANALYSIS_ENABLED:-false}
@@ -13,6 +14,7 @@ services:
       - .env.production
     environment:
       NODE_ENV: production
+      FEISHU_RUNTIME_ENABLED: "true"
       PORT: 3000
       HOSTNAME: 0.0.0.0
     ports:

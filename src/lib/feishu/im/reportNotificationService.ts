@@ -1,3 +1,4 @@
+import { assertPublicReportUrl, assertServerRuntimeEnabled } from '@/lib/platform/serverRuntime';
 import { maskSecret } from '@/lib/security/crypto';
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { createFeishuSdkClient } from '../integration/sdkClient';
@@ -62,6 +63,8 @@ export async function sendReportCardToRecipient(options: {
   idempotencyKey: string;
 }): Promise<{ messageId: string | null; durationMs: number }> {
   const { integration, recipientOpenId, meetingName, reportUrl, idempotencyKey } = options;
+  assertServerRuntimeEnabled();
+  assertPublicReportUrl(reportUrl);
   const startedAt = Date.now();
   const maskedRecipientOpenId = maskSecret(recipientOpenId);
 

@@ -1,3 +1,4 @@
+import { assertServerRuntimeEnabled } from '@/lib/platform/serverRuntime';
 /**
  * 交付任务 worker：Base 同步与报告通知两条独立轮询链路
  *
@@ -76,6 +77,7 @@ async function pollNotificationDelivery() {
  * 进程重启后到期/租约过期任务立即被重新领取，无需额外 startup 扫描。
  */
 export function startDeliveryWorkers() {
+  assertServerRuntimeEnabled();
   if (globalForDeliveryWorker.__feishuDeliveryWorkerStarted) {
     return;
   }

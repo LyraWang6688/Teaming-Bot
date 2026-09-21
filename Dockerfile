@@ -25,6 +25,9 @@ COPY . .
 RUN pnpm build
 
 FROM base AS runner
+ARG SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION
+ENV APP_REVISION=$SOURCE_REVISION
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0

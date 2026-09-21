@@ -1,3 +1,4 @@
+import { assertServerRuntimeEnabled } from '@/lib/platform/serverRuntime';
 import {
   claimDueMeetingPipelineTasks,
   failMeetingPipelineTask,
@@ -63,6 +64,7 @@ async function pollMeetingPipelineTasks() {
 }
 
 export function startFeishuMeetingPipelineWorker() {
+  assertServerRuntimeEnabled();
   if (globalForMeetingWorker.__feishuMeetingWorkerStarted) {
     return;
   }

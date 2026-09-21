@@ -1,3 +1,4 @@
+import { assertPublicReportUrl } from './serverRuntime';
 import { FEISHU_REQUIRED_USER_SCOPE } from '@/lib/feishu/integration/integrationConstants';
 
 function getRequiredValue(name: string, value: string | undefined): string {
@@ -10,7 +11,8 @@ function getRequiredValue(name: string, value: string | undefined): string {
 }
 
 export function getProjectPublicUrl(): string {
-  return (process.env.PROJECT_PUBLIC_URL || 'http://localhost:5000').replace(/\/$/, '');
+  const value = getRequiredValue('PROJECT_PUBLIC_URL', process.env.PROJECT_PUBLIC_URL);
+  return assertPublicReportUrl(value).origin;
 }
 
 export function getFeishuAppId(): string {
