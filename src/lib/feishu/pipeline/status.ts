@@ -10,12 +10,14 @@
  * - 已完成：分析结果和报告数据已写回多维表格（终态）
  * - 分析失败：LLM 分析未成功，Supabase status='failed'（终态）
  * - 写入失败：LLM 分析成功但 Base 同步失败，Supabase status='base_sync_failed'（终态）
- * - 门槛未通过：会议创建人未在已初始化集成列表中，仅留档 Supabase，不写 Base
+ * - 门槛未通过：标题不符或当前集成不是已初始化的妙记所有者，仅任务留档，不写 Base
  *
  * Base「处理状态」单选字段只展示终态：已完成 / 分析失败 / 写入失败
  */
 export const FEISHU_PROCESS_STATUS = {
   minuteGenerated: '妙记已生成',
+  checkingEligibility: '检查分析条件',
+  eligibilityBlocked: '等待处理',
   fetchingTranscript: '获取文字稿中',
   analyzing: '分析中',
   completed: '已完成',

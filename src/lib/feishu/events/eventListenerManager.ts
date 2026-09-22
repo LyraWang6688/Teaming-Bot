@@ -1,3 +1,4 @@
+import { createSafeFeishuSdkLogger } from '@/lib/feishu/common/sdkLogger';
 import { assertServerRuntimeEnabled } from '@/lib/platform/serverRuntime';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { logFeishuMonitor } from '../common/monitor';
@@ -393,6 +394,7 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
     appSecret: integration.secrets.appSecret,
     domain: lark.Domain.Feishu,
     loggerLevel: lark.LoggerLevel.error,
+    logger: createSafeFeishuSdkLogger(),
     autoReconnect: true,
     source: 'teaming-meeting-analysis',
     handshakeTimeoutMs: READY_TIMEOUT_MS,
@@ -477,6 +479,7 @@ async function startListenerForIntegration(integrationId: string): Promise<Liste
 
   const dispatcher = new lark.EventDispatcher({
     loggerLevel: lark.LoggerLevel.error,
+    logger: createSafeFeishuSdkLogger(),
   }).register<Record<string, (data: unknown) => Promise<void>>>({
     [EVENT_TYPE]: async (data: unknown) => {
       await enqueueSdkEvent(integrationId, data);

@@ -1,9 +1,11 @@
+import { createSafeFeishuSdkLogger } from '@/lib/feishu/common/sdkLogger';
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { FeishuIntegrationContext } from './integrationStore';
 import { getFeishuBaseAppId, getFeishuBaseAppSecret } from '@/lib/platform/env';
 
 export function createFeishuSdkClient(
-  integration: Pick<FeishuIntegrationContext, 'appId' | 'secrets'>
+  integration: Pick<FeishuIntegrationContext, 'appId' | 'secrets'>,
+  requestErrorsHandled = false
 ): lark.Client {
   return new lark.Client({
     appId: integration.appId,
@@ -11,6 +13,7 @@ export function createFeishuSdkClient(
     appType: lark.AppType.SelfBuild,
     domain: lark.Domain.Feishu,
     loggerLevel: lark.LoggerLevel.error,
+    logger: createSafeFeishuSdkLogger(requestErrorsHandled),
     source: 'teaming-meeting-analysis',
   });
 }
@@ -27,6 +30,7 @@ export function getGlobalBaseAppSdkClient(): lark.Client {
       appType: lark.AppType.SelfBuild,
       domain: lark.Domain.Feishu,
       loggerLevel: lark.LoggerLevel.error,
+      logger: createSafeFeishuSdkLogger(true),
       source: 'teaming-meeting-analysis',
     });
   }

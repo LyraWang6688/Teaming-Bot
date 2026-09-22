@@ -1,5 +1,5 @@
 import { callFeishuIntegrationUserOpenApi } from '../integration/integrationOpenApi';
-import { logFeishuMonitor, toErrorContext } from '../common/monitor';
+import { logFeishuMonitor } from '../common/monitor';
 import { FeishuOpenApiError } from '../common/openapi';
 import { type FeishuIntegrationContext, writeAuditLog } from '../integration/integrationStore';
 
@@ -47,20 +47,11 @@ function mapMinuteInfo(token: string, minute: RawMinute): MinuteInfo {
   };
 }
 
-/**
- * 获取妙记所有者 open_id（会议创建人）
- *
- * 飞书定义：云录制文件归属者 = 日程组织者（预约会议）或会议发起人（临时会议），
- * 语义上即"会议创建人"，用于触发门槛判断。
- *
- * 接口：GET /minutes/v1/minutes/:minute_token?user_id_type=open_id
- */
-export async function fetchMinuteOwner(
-  minuteToken: string,
-  integration: FeishuIntegrationContext
-): Promise<string | null> {
-  const info = await fetchMinuteInfo(minuteToken, integration);
-  return info?.ownerId ?? null;
+export class MinuteInfoError extends Error {
+  constructor(public readonly code: string, message: string, public readonly retryable: boolean) {
+    super(message);
+    this.name = 'MinuteInfoError';
+  }
 }
 
 /**
@@ -68,10 +59,10 @@ export async function fetchMinuteOwner(
  *
  * 用于门槛判断（owner_id）和会议元数据补全（title、noteId 等）。
  */
-async function fetchMinuteInfo(
+export async function fetchMinuteInfo(
   minuteToken: string,
   integration: FeishuIntegrationContext
-): Promise<MinuteInfo | null> {
+): Promise<MinuteInfo> {
   const startedAt = Date.now();
   logFeishuMonitor('info', 'minute_info_fetch_started', {
     userId: integration.userId,
@@ -84,17 +75,13 @@ async function fetchMinuteInfo(
     const response = await callFeishuIntegrationUserOpenApi<MinuteInfoResponse>(
       integration,
       'GET',
-      `/minutes/v1/minutes/${encodeURIComponent(minuteToken)}?${query.toString()}`
+      `/minutes/v1/minutes/${encodeURIComponent(minuteToken)}?${query.toString()}`,
+      undefined,
+      { errorLogging: 'caller' }
     );
 
     if (!response.minute) {
-      logFeishuMonitor('warn', 'minute_info_response_empty', {
-        userId: integration.userId,
-        integrationId: integration.id,
-        minuteToken,
-        durationMs: Date.now() - startedAt,
-      });
-      return null;
+      throw new MinuteInfoError('minute_response_invalid', '妙记信息尚不可用。', true);
     }
 
     const info = mapMinuteInfo(minuteToken, response.minute);
@@ -126,48 +113,27 @@ async function fetchMinuteInfo(
   } catch (error) {
     const mapped = mapMinuteInfoError(error);
 
-    await writeAuditLog({
-      userId: integration.userId,
-      integrationId: integration.id,
-      action: 'minute.info.read',
-      result: 'failed',
-      summary: '读取妙记信息失败',
-      metadata: {
-        minuteToken,
-        errorType: mapped.name,
-        durationMs: Date.now() - startedAt,
-      },
-    });
-
-    logFeishuMonitor('error', 'minute_info_fetch_failed', {
-      userId: integration.userId,
-      integrationId: integration.id,
-      minuteToken,
-      durationMs: Date.now() - startedAt,
-      ...toErrorContext(mapped),
-    });
-
-    // 妙记信息获取失败不阻断主流程，返回 null 让门槛判断走兜底分支
-    return null;
+    // The task boundary persists and logs one classified outcome. Do not turn
+    // permission denial into null or emit a second generic owner-missing error.
+    throw mapped;
   }
 }
 
-function mapMinuteInfoError(error: unknown): Error {
+export function mapMinuteInfoError(error: unknown): MinuteInfoError {
+  if (error instanceof MinuteInfoError) return error;
   if (!(error instanceof FeishuOpenApiError)) {
-    return error instanceof Error ? error : new Error(String(error));
+    return new MinuteInfoError('minute_request_failed', '妙记信息暂时获取失败。', true);
   }
-
-  if (error.code === 2091002 || error.statusCode === 404) {
-    return new Error('妙记不存在或已被删除。');
+  if (error.code === 2091005) {
+    return new MinuteInfoError('minute_read_forbidden', '当前集成无权读取妙记，归属未确认，本次未进入分析。', false);
   }
-
+  if (error.code === 2091002 || error.code === 2091004 || error.statusCode === 404) {
+    return new MinuteInfoError('minute_unavailable', '妙记不存在或已被删除。', false);
+  }
   if (error.code === 2091003) {
-    return new Error('妙记转写尚未完成，请稍后重试。');
+    return new MinuteInfoError('minute_not_ready', '妙记尚未就绪，等待重试。', true);
   }
-
-  if (error.code === 2091005 || error.statusCode === 403) {
-    return new Error('当前授权用户没有该妙记的读取权限。');
-  }
-
-  return error;
+  const retryable = !error.statusCode || error.statusCode === 429 || error.statusCode >= 500;
+  return new MinuteInfoError(retryable ? 'minute_request_failed' : 'minute_request_rejected',
+    retryable ? '妙记信息暂时获取失败。' : '妙记请求被拒绝，请检查集成授权。', retryable);
 }

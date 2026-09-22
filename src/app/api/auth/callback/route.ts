@@ -1,3 +1,4 @@
+import { createSafeFeishuSdkLogger } from '@/lib/feishu/common/sdkLogger';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
@@ -71,6 +72,7 @@ export async function GET(request: NextRequest) {
       appType: lark.AppType.SelfBuild,
       domain: lark.Domain.Feishu,
       loggerLevel: lark.LoggerLevel.error,
+      logger: createSafeFeishuSdkLogger(),
       source: 'teaming-meeting-analysis-login',
     });
 

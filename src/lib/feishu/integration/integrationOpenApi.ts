@@ -102,11 +102,12 @@ async function requestFeishuIntegrationUserOpenApi<T>(
   method: HttpMethod,
   path: string,
   data?: Record<string, unknown>,
-  responseType: 'json' | 'text' | 'arraybuffer' = 'json'
+  responseType: 'json' | 'text' | 'arraybuffer' = 'json',
+  errorLogging: 'default' | 'caller' = 'default'
 ): Promise<T> {
   const startedAt = Date.now();
   const authorization = await getValidIntegrationUserAuthorization(integration);
-  const client = createFeishuSdkClient(integration);
+  const client = createFeishuSdkClient(integration, true);
   const { normalizedPath, params } = splitPathAndParams(path);
 
   logRuntimeMonitor('info', 'integration_openapi', 'integration_user_sdk_request_started', {
@@ -143,7 +144,7 @@ async function requestFeishuIntegrationUserOpenApi<T>(
     return unwrapFeishuResponse(response, method, normalizedPath);
   } catch (error) {
     const mapped = mapSdkError(error, method, normalizedPath);
-    logRuntimeMonitor('error', 'integration_openapi', 'integration_user_sdk_request_failed', {
+    if (errorLogging !== 'caller') logRuntimeMonitor('error', 'integration_openapi', 'integration_user_sdk_request_failed', {
       integrationId: integration.id,
       method,
       path: normalizedPath,
@@ -161,9 +162,10 @@ export async function callFeishuIntegrationUserOpenApi<T = unknown>(
   integration: FeishuIntegrationContext,
   method: HttpMethod,
   path: string,
-  data?: Record<string, unknown>
+  data?: Record<string, unknown>,
+  options?: { errorLogging?: 'default' | 'caller' }
 ): Promise<T> {
-  return requestFeishuIntegrationUserOpenApi<T>(integration, method, path, data);
+  return requestFeishuIntegrationUserOpenApi<T>(integration, method, path, data, 'json', options?.errorLogging);
 }
 
 export async function callFeishuIntegrationUserOpenApiText(
@@ -228,7 +230,7 @@ async function requestFeishuIntegrationTenantOpenApi<T>(
   responseType: 'json' | 'text' | 'arraybuffer' = 'json'
 ): Promise<T> {
   const startedAt = Date.now();
-  const client = createFeishuSdkClient(integration);
+  const client = createFeishuSdkClient(integration, true);
   const { normalizedPath, params } = splitPathAndParams(path);
 
   logRuntimeMonitor('info', 'integration_openapi', 'integration_tenant_sdk_request_started', {

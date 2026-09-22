@@ -22,35 +22,38 @@ const globalForMeetingWorker = globalThis as typeof globalThis & {
 
 async function pollMeetingPipelineTasks() {
   try {
-    const tasks = await claimDueMeetingPipelineTasks({
-      limit: WORKER_BATCH_SIZE,
-      staleLockBefore: new Date(Date.now() - WORKER_LOCK_TTL_MS),
-    });
-
-    if (tasks.length > 0) {
-      logFeishuMonitor('info', 'meeting_pipeline_worker_claimed', {
-        taskCount: tasks.length,
-        taskIds: tasks.map((task) => task.id),
+    for (let slot = 0; slot < WORKER_BATCH_SIZE; slot += 1) {
+      const tasks = await claimDueMeetingPipelineTasks({
+        limit: 1,
+        staleLockBefore: new Date(Date.now() - WORKER_LOCK_TTL_MS),
       });
-    }
 
-    for (const task of tasks) {
-      try {
-        await runMeetingPipelineTask(task.id);
-      } catch (error) {
-        logFeishuMonitor('error', 'meeting_pipeline_worker_task_failed', {
-          taskId: task.id,
-          integrationId: task.integrationId,
-          meetingId: task.feishuMeetingId,
-          ...toErrorContext(error),
+      if (!tasks.length) break;
+      if (tasks.length > 0) {
+        logFeishuMonitor('info', 'meeting_pipeline_worker_claimed', {
+          taskCount: tasks.length,
+          taskIds: tasks.map((task) => task.id),
         });
+      }
 
-        await failMeetingPipelineTask(task.id, {
-          currentStage: task.currentStage as FeishuProcessStatus,
-          attemptCount: task.attemptCount,
-          errorType: error instanceof Error ? error.name : 'MeetingPipelineWorkerError',
-          errorMessage: error instanceof Error ? error.message : '任务执行器执行失败',
-        });
+      for (const task of tasks) {
+        try {
+          await runMeetingPipelineTask(task.id);
+        } catch (error) {
+          logFeishuMonitor('error', 'meeting_pipeline_worker_task_failed', {
+            taskId: task.id,
+            integrationId: task.integrationId,
+            meetingId: task.feishuMeetingId,
+            ...toErrorContext(error),
+          });
+
+          await failMeetingPipelineTask(task.id, {
+            currentStage: task.currentStage as FeishuProcessStatus,
+            attemptCount: task.attemptCount,
+            errorType: error instanceof Error ? error.name : 'MeetingPipelineWorkerError',
+            errorMessage: error instanceof Error ? error.message : '任务执行器执行失败',
+          });
+        }
       }
     }
   } catch (error) {

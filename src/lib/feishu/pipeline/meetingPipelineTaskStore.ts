@@ -10,6 +10,8 @@ export const MEETING_PIPELINE_TASK_STATUS = {
   running: 'running',
   completed: 'completed',
   failed: 'failed',
+  skipped: 'skipped',
+  blocked: 'blocked',
 } as const;
 
 export type MeetingPipelineTaskStatus =
@@ -27,7 +29,12 @@ export type MeetingPipelineTaskPayload = {
     | 'meeting_organizer_unresolved'
     | 'meeting_organizer_not_initialized'
     | 'meeting_organizer_owned_by_other_integration'
-    | 'meeting_topic_keyword_mismatch';
+    | 'meeting_topic_keyword_mismatch'
+    | 'minute_not_owner'
+    | 'minute_read_forbidden'
+    | 'minute_owner_missing'
+    | 'minute_owner_not_initialized';
+  gate?: { reasonCode: string; message: string; ownerOpenId?: string | null; checkedAt: string };
   skippedAt?: string;
   telemetry?: {
     eventReceivedAt?: string;
@@ -140,93 +147,37 @@ export async function upsertMeetingPipelineTaskForMinuteGenerated(
   }
 
   const db = getDb();
-  const existing = await getMeetingPipelineTaskByMeetingInternal(input.integration.id, input.meetingId);
-  const payload: MeetingPipelineTaskPayload = {
-    ...(input.eventReceivedAt
-      ? {
-          telemetry: {
-            eventReceivedAt: input.eventReceivedAt,
-          },
-        }
-      : {}),
-    ...(input.target ? { target: input.target } : {}),
-  };
+  // Unique constraints are the authority. Duplicate delivery must never clear a
+  // running lease or reset a completed/skipped/blocked task.
+  const [inserted] = await db.insert(meetingPipelineTasks).values({
+    userId: input.integration.userId,
+    integrationId: input.integration.id,
+    feishuMeetingId: input.meetingId,
+    eventId: input.eventId || null,
+    eventType: input.eventType || null,
+    minuteToken: input.minuteToken || null,
+    currentStage: FEISHU_PROCESS_STATUS.minuteGenerated,
+    status: MEETING_PIPELINE_TASK_STATUS.pending,
+    attemptCount: 0,
+    payload: {
+      telemetry: { eventReceivedAt: input.eventReceivedAt },
+      ...(input.target ? { target: input.target } : {}),
+    },
+    nextRunAt: new Date(),
+    updatedAt: new Date(),
+  }).onConflictDoNothing().returning();
+  if (inserted) return { task: inserted, duplicate: false, created: true };
 
-  if (!existing) {
-    const [row] = await db
-      .insert(meetingPipelineTasks)
-      .values({
-        userId: input.integration.userId,
-        integrationId: input.integration.id,
-        feishuMeetingId: input.meetingId,
-        eventId: input.eventId || null,
-        eventType: input.eventType || null,
-        minuteToken: input.minuteToken || null,
-        currentStage: FEISHU_PROCESS_STATUS.minuteGenerated,
-        status: MEETING_PIPELINE_TASK_STATUS.pending,
-        attemptCount: 0,
-        payload,
-        nextRunAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .returning();
-
-    return {
-      task: row,
-      duplicate: false,
-      created: true,
-    };
+  const existing = (input.eventId
+    ? await getMeetingPipelineTaskByEventId(input.integration.id, input.eventId)
+    : null) || await getMeetingPipelineTaskByMeetingInternal(input.integration.id, input.meetingId);
+  if (!existing) throw new Error('TaskConflictUnresolved');
+  if (existing.feishuMeetingId !== input.meetingId ||
+      (existing.minuteToken && input.minuteToken && existing.minuteToken !== input.minuteToken)) {
+    // Do not silently replace a different recording in the one-task-per-meeting model.
+    throw new Error('MeetingEventIdentityConflict');
   }
-
-  const isDuplicateActive =
-    existing.status === MEETING_PIPELINE_TASK_STATUS.pending ||
-    existing.status === MEETING_PIPELINE_TASK_STATUS.scheduled ||
-    existing.status === MEETING_PIPELINE_TASK_STATUS.running;
-  const shouldResetTask =
-    existing.status === MEETING_PIPELINE_TASK_STATUS.completed ||
-    existing.status === MEETING_PIPELINE_TASK_STATUS.failed;
-
-  const [row] = await db
-    .update(meetingPipelineTasks)
-    .set({
-      eventId: input.eventId || existing.eventId,
-      eventType: input.eventType || existing.eventType,
-      minuteToken: input.minuteToken || existing.minuteToken,
-      status:
-        shouldResetTask
-          ? MEETING_PIPELINE_TASK_STATUS.pending
-          : existing.status,
-      currentStage:
-        shouldResetTask
-          ? FEISHU_PROCESS_STATUS.minuteGenerated
-          : existing.currentStage,
-      attemptCount:
-        shouldResetTask
-          ? 0
-          : existing.attemptCount,
-      nextRunAt:
-        shouldResetTask
-          ? new Date()
-          : existing.nextRunAt,
-      startedAt:
-        shouldResetTask
-          ? null
-          : existing.startedAt,
-      completedAt: null,
-      lockedAt: null,
-      lastErrorType: null,
-      lastErrorMessage: null,
-      payload: shouldResetTask ? mergePayload(existing.payload, payload) : existing.payload,
-      updatedAt: new Date(),
-    })
-    .where(eq(meetingPipelineTasks.id, existing.id))
-    .returning();
-
-  return {
-    task: row,
-    duplicate: isDuplicateActive && existing.eventId === input.eventId,
-    created: false,
-  };
+  return { task: existing, duplicate: true, created: false };
 }
 
 export async function updateMeetingPipelineTask(
@@ -415,5 +366,7 @@ export async function claimDueMeetingPipelineTasks(
     returning *
   `);
 
-  return (result.rows ?? []) as MeetingPipelineTaskRow[];
+  const ids = (result.rows ?? []).map((row) => (row as { id: string }).id);
+  if (!ids.length) return [];
+  return db.select().from(meetingPipelineTasks).where(inArray(meetingPipelineTasks.id, ids));
 }

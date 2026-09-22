@@ -1,3 +1,4 @@
+import { createSafeFeishuSdkLogger } from '@/lib/feishu/common/sdkLogger';
 import * as lark from '@larksuiteoapi/node-sdk';
 import { getFeishuOauthCallbackUrl } from './integrationConfig';
 import { logRuntimeMonitor } from '@/lib/platform/runtimeMonitor';
@@ -56,6 +57,7 @@ export async function configureFeishuApplication(options: {
     appType: lark.AppType.SelfBuild,
     domain: lark.Domain.Feishu,
     loggerLevel: lark.LoggerLevel.error,
+    logger: createSafeFeishuSdkLogger(),
     source: 'teaming-meeting-analysis',
   });
 

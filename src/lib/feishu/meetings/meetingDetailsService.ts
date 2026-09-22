@@ -2,7 +2,6 @@ import { FeishuOpenApiError } from '../common/openapi';
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { callFeishuIntegrationUserOpenApi } from '../integration/integrationOpenApi';
 import { type FeishuIntegrationContext, writeAuditLog } from '../integration/integrationStore';
-import { fetchMinuteOwner } from '../minutes/minuteInfo';
 import { MeetingDetailsError, type MeetingDetails } from './meetingDetailsTypes';
 
 type RawMeeting = {
@@ -57,7 +56,7 @@ function mapMeetingDetailsError(error: unknown): Error {
   return error;
 }
 
-async function fetchMeetingDetails(
+export async function fetchMeetingDetails(
   integration: FeishuIntegrationContext,
   meetingId: string
 ): Promise<MeetingDetails> {
@@ -135,28 +134,4 @@ async function fetchMeetingDetails(
     });
     throw mapped;
   }
-}
-
-/**
- * 组合函数：获取会议详情 + 妙记所有者
- *
- * 先调妙记信息接口取 owner_id（会议创建人），再调 VC API 取会议详情，
- * 合并返回带 organizerOpenId 的 MeetingDetails。
- *
- * organizer 获取失败不阻断流程，organizerOpenId 为 null 时由调用方走门槛兜底分支。
- */
-export async function fetchMeetingDetailsWithOrganizer(
-  integration: FeishuIntegrationContext,
-  meetingId: string,
-  minuteToken: string
-): Promise<MeetingDetails> {
-  const [details, organizerOpenId] = await Promise.all([
-    fetchMeetingDetails(integration, meetingId),
-    fetchMinuteOwner(minuteToken, integration),
-  ]);
-
-  return {
-    ...details,
-    organizerOpenId,
-  };
 }

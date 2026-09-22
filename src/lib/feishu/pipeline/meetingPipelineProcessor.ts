@@ -28,9 +28,7 @@ import {
 } from '@/lib/reports/meetingReportStore';
 import {
   type FeishuIntegrationContext,
-  findActiveInitializedIntegrationByAuthorizedOpenId,
   getFeishuIntegrationContextById,
-  getLatestFeishuAuthorizationContext,
   writeAuditLog,
 } from '../integration/integrationStore';
 import { isFeishuIntegrationActive } from '../integration/integrationActivationService';
@@ -50,13 +48,9 @@ import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { FeishuOpenApiError } from '../common/openapi';
 import { FEISHU_PROCESS_STATUS } from './status';
 import { fetchTranscriptByMinuteToken } from '../minutes/transcript';
-import {
-  fetchMeetingDetailsWithOrganizer,
-} from '../meetings/meetingDetailsService';
-import {
-  MeetingDetailsError,
-  type MeetingDetails,
-} from '../meetings/meetingDetailsTypes';
+import type { MeetingDetails } from '../meetings/meetingDetailsTypes';
+import { MinuteInfoError } from '../minutes/minuteInfo';
+import { evaluateMeetingEligibility } from './meetingEligibility';
 import { buildPersistentReportUrl } from '@/lib/reports/reportUrl';
 
 type FeishuEventHeader = {
@@ -99,28 +93,6 @@ type MinuteGeneratedSource = {
   eventReceivedAt?: string;
   taskStartedAt?: string;
 };
-
-type MeetingAnalysisGateReason =
-  | 'meeting_organizer_unresolved'
-  | 'meeting_organizer_not_initialized'
-  | 'meeting_organizer_owned_by_other_integration'
-  | 'meeting_topic_keyword_mismatch';
-
-type MeetingAnalysisGateResult =
-  | {
-      allowed: true;
-      organizerOpenId: string;
-      currentAuthorizedOpenId: string | null;
-      ownerIntegrationId: string;
-    }
-  | {
-      allowed: false;
-      reasonCode: MeetingAnalysisGateReason;
-      reasonMessage: string;
-      organizerOpenId: string | null;
-      currentAuthorizedOpenId: string | null;
-      ownerIntegrationId: string | null;
-    };
 
 const processingMeetingIds = new Map<string, number>();
 
@@ -184,132 +156,6 @@ function buildPipelineDurationContext(
   return durations;
 }
 
-async function fetchMeetingDetailsWithFallback(
-  context: MinuteGeneratedSource
-): Promise<MeetingDetails | null> {
-  try {
-    return await fetchMeetingDetailsWithOrganizer(
-      context.integration,
-      context.meetingId,
-      context.minuteToken
-    );
-  } catch (error) {
-    if (
-      error instanceof MeetingDetailsError &&
-      (error.code === 'meeting_not_found' || error.code === 'meeting_access_denied')
-    ) {
-      logFeishuMonitor('warn', 'meeting_detail_unavailable', {
-        userId: context.integration.userId,
-        integrationId: context.integration.id,
-        taskId: context.taskId,
-        meetingId: context.meetingId,
-        reasonCode: error.code,
-      });
-      return null;
-    }
-
-    throw error;
-  }
-}
-
-async function resolveMeetingAnalysisGate(
-  context: MinuteGeneratedSource,
-  meetingDetails: MeetingDetails | null
-): Promise<MeetingAnalysisGateResult> {
-  const authorization = await getLatestFeishuAuthorizationContext(context.integration.id);
-  const currentAuthorizedOpenId = authorization?.authorizedOpenId || null;
-
-  // 门槛 1：会议名称必须包含关键字「ABC」
-  // 这是最廉价的字符串门槛，放在 organizer 数据库查询之前，避免无关会议消耗查询资源
-  // 关键字当前硬编码为 'ABC'，如需配置化可后续抽到环境变量或集成配置
-  const MEETING_TOPIC_KEYWORD = 'ABC';
-  const topic = meetingDetails?.topic;
-  if (!topic || !topic.includes(MEETING_TOPIC_KEYWORD)) {
-    return {
-      allowed: false,
-      reasonCode: 'meeting_topic_keyword_mismatch',
-      reasonMessage: `会议名称未包含关键字「${MEETING_TOPIC_KEYWORD}」，跳过自动分析。`,
-      organizerOpenId: meetingDetails?.organizerOpenId || null,
-      currentAuthorizedOpenId,
-      ownerIntegrationId: null,
-    };
-  }
-
-  const organizerOpenId = meetingDetails?.organizerOpenId || null;
-
-  if (!organizerOpenId) {
-    return {
-      allowed: false,
-      reasonCode: 'meeting_organizer_unresolved',
-      reasonMessage: '妙记所有者 open_id 无法解析，跳过自动分析。',
-      organizerOpenId: null,
-      currentAuthorizedOpenId,
-      ownerIntegrationId: null,
-    };
-  }
-
-  const ownerIntegration = await findActiveInitializedIntegrationByAuthorizedOpenId({
-    authorizedOpenId: organizerOpenId,
-    selectedOrgTargetId: context.integration.selectedOrgTargetId,
-  });
-
-  if (!ownerIntegration) {
-    return {
-      allowed: false,
-      reasonCode: 'meeting_organizer_not_initialized',
-      reasonMessage: '会议创建人尚未完成当前组织下的飞书初始化配置，跳过自动分析。',
-      organizerOpenId,
-      currentAuthorizedOpenId,
-      ownerIntegrationId: null,
-    };
-  }
-
-  if (ownerIntegration.integrationId !== context.integration.id) {
-    return {
-      allowed: false,
-      reasonCode: 'meeting_organizer_owned_by_other_integration',
-      reasonMessage: '当前妙记事件来自参会人集成，不是会议创建人的当前活跃集成，跳过自动分析。',
-      organizerOpenId,
-      currentAuthorizedOpenId,
-      ownerIntegrationId: ownerIntegration.integrationId,
-    };
-  }
-
-  return {
-    allowed: true,
-    organizerOpenId,
-    currentAuthorizedOpenId,
-    ownerIntegrationId: ownerIntegration.integrationId,
-  };
-}
-
-async function writeMeetingAnalysisGateAudit(
-  context: MinuteGeneratedSource,
-  gate: Extract<MeetingAnalysisGateResult, { allowed: false }>,
-  phase: 'enqueue' | 'execute'
-): Promise<void> {
-  await writeAuditLog({
-    userId: context.integration.userId,
-    integrationId: context.integration.id,
-    action: 'meeting.analysis.gated',
-    result: 'skipped',
-    summary: '会议未满足发起人初始化门槛，已跳过自动分析',
-    metadata: {
-      phase,
-      meetingId: context.meetingId,
-      minuteToken: context.minuteToken,
-      eventType: context.eventType || null,
-      taskId: context.taskId || null,
-      reasonCode: gate.reasonCode,
-      reasonMessage: gate.reasonMessage,
-      organizerOpenId: gate.organizerOpenId,
-      currentAuthorizedOpenId: gate.currentAuthorizedOpenId,
-      ownerIntegrationId: gate.ownerIntegrationId,
-      selectedOrgTargetId: context.integration.selectedOrgTargetId || null,
-    },
-  });
-}
-
 async function getMeetingBitableAccess(context: {
   integration: FeishuIntegrationContext;
   targetOrgTargetId?: string;
@@ -338,14 +184,6 @@ function getEventId(envelope: FeishuEventEnvelope): string | undefined {
 
 function getEventType(envelope: FeishuEventEnvelope): string | undefined {
   return envelope.header?.event_type || envelope.type || (envelope.event?.type as string | undefined);
-}
-
-function scheduleBackgroundTask(task: () => Promise<void>, delayMs = 0) {
-  setTimeout(() => {
-    task().catch((error) => {
-      logFeishuMonitor('error', 'background_task_failed', toErrorContext(error));
-    });
-  }, delayMs);
 }
 
 function getMinuteGeneratedEventPayload(event: Record<string, unknown>) {
@@ -434,92 +272,6 @@ export async function enqueueFeishuEvent(
     throw new Error('妙记生成事件缺少会议来源 source_entity_id');
   }
 
-  const gateContext: MinuteGeneratedSource = {
-    integration,
-    eventType,
-    meetingId,
-    minuteToken,
-    attempt: 0,
-    eventReceivedAt,
-  };
-  const meetingDetails = await fetchMeetingDetailsWithFallback(gateContext);
-  const analysisGate = await resolveMeetingAnalysisGate(gateContext, meetingDetails);
-
-  if (!analysisGate.allowed) {
-    await writeMeetingAnalysisGateAudit(gateContext, analysisGate, 'enqueue');
-
-    // 门槛不通过：写 Supabase 留档（status=gated_skipped），不写 Base
-    // 与 processMinuteGeneratedAttempt 中的 execute 阶段保持一致
-    try {
-      const gatedMeeting = await upsertMeetingRecord({
-        integration,
-        meetingId,
-        minuteToken,
-        projectId: null,
-        orgTargetId: null,
-        baseRecordId: null,
-        details: meetingDetails,
-      });
-      await updateMeetingRecordStatus(gatedMeeting.id, {
-        status: 'gated_skipped',
-        errorType: analysisGate.reasonCode,
-        errorMessage: analysisGate.reasonMessage,
-      });
-    } catch (error) {
-      logFeishuMonitor('error', 'meeting_gated_supabase_persist_failed', {
-        integrationId: integration.id,
-        eventId,
-        eventType,
-        meetingId,
-        minuteToken,
-        reasonCode: analysisGate.reasonCode,
-        ...toErrorContext(error),
-      });
-    }
-
-    logFeishuMonitor('info', 'meeting_analysis_gated_before_enqueue', {
-      integrationId: integration.id,
-      eventId,
-      eventType,
-      meetingId,
-      minuteToken,
-      reasonCode: analysisGate.reasonCode,
-      reasonMessage: analysisGate.reasonMessage,
-      organizerOpenId: analysisGate.organizerOpenId,
-      currentAuthorizedOpenId: analysisGate.currentAuthorizedOpenId,
-      ownerIntegrationId: analysisGate.ownerIntegrationId,
-    });
-    return {
-      accepted: true,
-      duplicate: false,
-      eventId,
-      eventType,
-    };
-  }
-
-  const targetAccess = await createSelectedOrgTargetBitableAccess(integration);
-  const targetSnapshot = targetAccess.orgTarget
-    ? {
-        projectId: targetAccess.orgTarget.projectId,
-        orgTargetId: targetAccess.orgTarget.id,
-        orgKey: targetAccess.orgTarget.orgKey,
-        orgName: targetAccess.orgTarget.orgName,
-      }
-    : undefined;
-
-  logFeishuMonitor('info', 'pipeline_target_bound', {
-    integrationId: integration.id,
-    eventId,
-    eventType,
-    minuteToken,
-    meetingId,
-    projectId: targetSnapshot?.projectId || null,
-    orgTargetId: targetSnapshot?.orgTargetId || null,
-    orgKey: targetSnapshot?.orgKey || null,
-    orgName: targetSnapshot?.orgName || null,
-    tableId: targetAccess.tableId,
-  });
-
   const taskResult = await upsertMeetingPipelineTaskForMinuteGenerated({
     integration,
     eventId,
@@ -527,7 +279,6 @@ export async function enqueueFeishuEvent(
     minuteToken,
     meetingId,
     eventReceivedAt,
-    target: targetSnapshot,
   });
 
   if (taskResult.duplicate) {
@@ -537,9 +288,6 @@ export async function enqueueFeishuEvent(
       minuteToken,
       eventId,
       eventType,
-      projectId: targetSnapshot?.projectId || null,
-      orgTargetId: targetSnapshot?.orgTargetId || null,
-      orgName: targetSnapshot?.orgName || null,
     });
   } else {
     logFeishuMonitor('info', 'meeting_pipeline_task_enqueued', {
@@ -549,9 +297,6 @@ export async function enqueueFeishuEvent(
       eventId,
       eventType,
       created: taskResult.created,
-      projectId: targetSnapshot?.projectId || null,
-      orgTargetId: targetSnapshot?.orgTargetId || null,
-      orgName: targetSnapshot?.orgName || null,
     });
   }
 
@@ -566,51 +311,33 @@ export async function enqueueFeishuEvent(
 }
 
 async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
-  const meetingDetails = await fetchMeetingDetailsWithFallback(context);
-  context.meetingDetails = meetingDetails;
-  const analysisGate = await resolveMeetingAnalysisGate(context, meetingDetails);
-
-  if (!analysisGate.allowed) {
-    await writeMeetingAnalysisGateAudit(context, analysisGate, 'execute');
-
-    // 门槛不通过：写 Supabase 留档（status=gated_skipped），不写 Base
-    const gatedMeeting = await upsertMeetingRecord({
-      integration: context.integration,
-      meetingId: context.meetingId,
-      minuteToken: context.minuteToken,
-      projectId: null,
-      orgTargetId: null,
-      baseRecordId: null,
-      details: meetingDetails,
+  if (context.taskId) await updateMeetingPipelineTask(context.taskId, { currentStage: FEISHU_PROCESS_STATUS.checkingEligibility });
+  const gate = await evaluateMeetingEligibility(context.integration, context.meetingId, context.minuteToken);
+  if (!gate.allowed) {
+    await writeAuditLog({
+      userId: context.integration.userId, integrationId: context.integration.id,
+      action: 'meeting.analysis.gated', result: 'skipped', summary: gate.message,
+      metadata: { taskId: context.taskId, meetingId: context.meetingId, reasonCode: gate.reasonCode, taskStatus: gate.status },
     });
-    await updateMeetingRecordStatus(gatedMeeting.id, {
-      status: 'gated_skipped',
-      errorType: analysisGate.reasonCode,
-      errorMessage: analysisGate.reasonMessage,
-    });
-
     if (context.taskId) {
-      await completeMeetingPipelineTask(context.taskId, {
-        payload: {
-          skippedReason: analysisGate.reasonCode,
-          skippedAt: new Date().toISOString(),
-        },
+      await updateMeetingPipelineTask(context.taskId, {
+        status: gate.status,
+        currentStage: gate.status === 'blocked' ? FEISHU_PROCESS_STATUS.eligibilityBlocked : FEISHU_PROCESS_STATUS.gatedSkipped,
+        nextRunAt: null, lockedAt: null, completedAt: new Date(),
+        lastErrorType: gate.status === 'blocked' ? gate.reasonCode : null,
+        lastErrorMessage: gate.status === 'blocked' ? gate.message : null,
+        payload: { gate: { reasonCode: gate.reasonCode, message: gate.message, ownerOpenId: gate.ownerOpenId, checkedAt: new Date().toISOString() } },
       });
     }
-    logFeishuMonitor('info', 'meeting_analysis_gated_during_execution', {
-      integrationId: context.integration.id,
-      taskId: context.taskId,
-      meetingId: context.meetingId,
-      minuteToken: context.minuteToken,
-      meetingRecordId: gatedMeeting.id,
-      reasonCode: analysisGate.reasonCode,
-      reasonMessage: analysisGate.reasonMessage,
-      organizerOpenId: analysisGate.organizerOpenId,
-      currentAuthorizedOpenId: analysisGate.currentAuthorizedOpenId,
-      ownerIntegrationId: analysisGate.ownerIntegrationId,
+    // Gate outcomes belong to the task, not a failed analysis/report row.
+    logFeishuMonitor(gate.status === 'blocked' && gate.reasonCode !== 'minute_read_forbidden' ? 'warn' : 'info', 'meeting_event_not_analyzed', {
+      integrationId: context.integration.id, taskId: context.taskId, meetingId: context.meetingId,
+      status: gate.status, reasonCode: gate.reasonCode, message: gate.message,
     });
     return;
   }
+  const meetingDetails = gate.details;
+  context.meetingDetails = meetingDetails;
 
   const config = await getMeetingBitableAccess(context);
   const targetContext = {
@@ -627,6 +354,10 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
     meetingId: context.meetingId,
     minuteToken: context.minuteToken,
     ...targetContext,
+  });
+
+  if (context.taskId && config.orgTarget) await updateMeetingPipelineTask(context.taskId, {
+    payload: { target: { projectId: config.orgTarget.projectId, orgTargetId: config.orgTarget.id, orgKey: config.orgTarget.orgKey, orgName: config.orgTarget.orgName } },
   });
 
   const persistedMeeting = await getDb().transaction(async (tx) => {
@@ -736,7 +467,9 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
     });
 
     const transcriptStartedAt = Date.now();
-    const transcript = await fetchTranscriptWithRetries(context);
+    const transcript = persistedMeeting.transcript?.trim()
+      ? persistedMeeting.transcript
+      : await fetchTranscriptWithRetries(context);
     await updateMeetingRecordStatus(persistedMeeting.id, {
       status: 'transcript_ready',
       transcriptStoredAt: new Date(),
@@ -832,13 +565,14 @@ async function scheduleOrFailMeetingPipelineTask(
   }
 
   const nextAttempt = context.attempt + 1;
+  const currentStage = (context.meetingDetails ? FEISHU_PROCESS_STATUS.fetchingTranscript : FEISHU_PROCESS_STATUS.checkingEligibility);
   const errorType = error instanceof Error ? error.name : 'MeetingPipelineFailed';
   const errorMessage = toBusinessErrorMessage(error);
 
-  if (nextAttempt < PIPELINE_MAX_ATTEMPTS) {
+  if (!(error instanceof MinuteInfoError && !error.retryable) && nextAttempt < PIPELINE_MAX_ATTEMPTS) {
     const nextRunDelayMs = PIPELINE_RETRY_DELAY_MS * nextAttempt;
     await scheduleMeetingPipelineTask(context.taskId, {
-      currentStage: FEISHU_PROCESS_STATUS.fetchingTranscript,
+      currentStage,
       attemptCount: nextAttempt,
       nextRunAt: new Date(Date.now() + nextRunDelayMs),
       errorType,
@@ -857,7 +591,7 @@ async function scheduleOrFailMeetingPipelineTask(
   }
 
   await failMeetingPipelineTask(context.taskId, {
-    currentStage: FEISHU_PROCESS_STATUS.fetchingTranscript,
+    currentStage,
     attemptCount: nextAttempt,
     errorType,
     errorMessage,
@@ -1274,6 +1008,8 @@ export async function runMeetingPipelineTask(taskId: string) {
     return;
   }
 
+  if (task.status !== 'running' || !task.lockedAt) return;
+
   const integration = await getFeishuIntegrationContextById(task.integrationId, {
     includeDeleted: true,
   });
@@ -1293,7 +1029,8 @@ export async function runMeetingPipelineTask(taskId: string) {
   }
 
   if (!(await isFeishuIntegrationActive(integration.id))) {
-    await completeMeetingPipelineTask(task.id, {
+    await updateMeetingPipelineTask(task.id, {
+      status: 'skipped', nextRunAt: null, lockedAt: null, completedAt: new Date(),
       payload: {
         skippedReason: 'integration_inactive',
         skippedAt: new Date().toISOString(),
@@ -1308,64 +1045,6 @@ export async function runMeetingPipelineTask(taskId: string) {
     });
     return;
   }
-
-  // === Supabase-first 恢复路径 ===
-  // 设计原则：Supabase 是唯一真相源，Base 只是展示镜像。pipeline 恢复时先查 Supabase，
-  // 如果 status='analyzing' 且 transcript 已存在，直接走分析，跳过 Base 查询。
-  // 这避免了 Base 镜像缺失导致恢复失败的问题（如手动测试场景或 Base 同步延迟）。
-  try {
-    const supabaseRecord = await getMeetingRecordByIntegrationAndMeeting(
-      integration.id,
-      task.feishuMeetingId
-    );
-
-    if (supabaseRecord?.status === 'analyzing' && supabaseRecord.transcript?.trim()) {
-      // Supabase 已有 transcript 且 status='analyzing' → 直接走分析
-      const config = await getMeetingBitableAccess({
-        integration,
-        targetOrgTargetId: getTargetFromPayload(task.payload),
-      });
-
-      const knownBaseRecordId = supabaseRecord.baseRecordId || task.baseRecordId || '';
-
-      const context = buildRecoveryContextFromTask(task, integration);
-      if (!context) {
-        await failMeetingPipelineTask(task.id, {
-          currentStage: task.currentStage as typeof FEISHU_PROCESS_STATUS[keyof typeof FEISHU_PROCESS_STATUS],
-          attemptCount: task.attemptCount,
-          errorType: 'TaskPayloadIncomplete',
-          errorMessage: '会议任务缺少恢复所需的 payload 信息。',
-        });
-        return;
-      }
-
-      logFeishuMonitor('info', 'supabase_first_recovery_invoked', {
-        taskId: task.id,
-        integrationId: integration.id,
-        meetingId: task.feishuMeetingId,
-        transcriptSource: 'recovered-from-supabase',
-        transcriptLength: supabaseRecord.transcript.length,
-      });
-
-      await completeMeetingAnalysis(
-        config,
-        knownBaseRecordId,
-        supabaseRecord.transcript,
-        'recovered-from-supabase',
-        context
-      );
-      return;
-    }
-  } catch (error) {
-    logFeishuMonitor('warn', 'supabase_first_recovery_failed', {
-      taskId: task.id,
-      integrationId: integration.id,
-      meetingId: task.feishuMeetingId,
-      ...toErrorContext(error),
-    });
-    // 失败时继续走原逻辑
-  }
-  // === Supabase-first 恢复路径结束 ===
 
   const context = buildRecoveryContextFromTask(task, integration);
   if (!context) {
@@ -1386,7 +1065,7 @@ export async function runMeetingPipelineTask(taskId: string) {
   try {
     await processMinuteGeneratedAttempt(context);
   } catch (error) {
-    logFeishuMonitor('error', 'meeting_pipeline_preparation_failed', {
+    logFeishuMonitor('warn', 'meeting_pipeline_preparation_retry', {
       userId: context.integration.userId,
       integrationId: context.integration.id,
       taskId: context.taskId,
@@ -1413,11 +1092,9 @@ export async function recoverFeishuMeetingPipelinesOnStartup() {
       activeCount: tasks.length,
     });
 
-    for (const task of tasks) {
-      scheduleBackgroundTask(async () => {
-        await runMeetingPipelineTask(task.id);
-      });
-    }
+    // The worker exclusively claims pending/due/stale tasks via SKIP LOCKED.
+    // Startup must not execute running tasks or bypass next_run_at.
+
   } catch (error) {
     logFeishuMonitor('error', 'startup_recovery_scan_failed', toErrorContext(error));
   }
