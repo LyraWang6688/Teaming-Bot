@@ -666,7 +666,7 @@ export default function FeishuConfigWorkspace() {
 
   const [integration, setIntegration] = useState<IntegrationView | null>(null);
   const [detail, setDetail] = useState<IntegrationDetailResponse | null>(null);
-  const [, setIsLoadingDetail] = useState(false);
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isRunningChecks, setIsRunningChecks] = useState(false);
   const [activeOrgTargets, setActiveOrgTargets] = useState<ActiveOrgTargetsResponse | null>(null);
   const [selectedOrgTargetId, setSelectedOrgTargetId] = useState<string | null>(null);
@@ -1798,7 +1798,9 @@ export default function FeishuConfigWorkspace() {
                     )}
                   </div>
                 ) : null}
-                {authLoading ? (
+                {/* 首次加载（列表与详情均未就绪）统一显示骨架屏，避免"开始授权表单"中间态闪烁；
+                    已有 detail 的后台刷新不触发，页面不闪 */}
+                {authLoading || (isLoadingDetail && !detail) ? (
                   <div className="space-y-3">
                     <Skeleton className="h-48 w-full" />
                   </div>
