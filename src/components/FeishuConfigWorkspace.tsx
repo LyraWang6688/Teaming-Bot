@@ -1251,8 +1251,14 @@ export default function FeishuConfigWorkspace() {
           body: JSON.stringify({ selectedOrgTargetId: orgTargetId }),
         })
       );
-      await loadIntegrationDetail(integration.id, { force: true });
       setShowOrgDialog(false);
+      // 保存成功即关闭弹窗；详情与校验刷新转后台执行，失败有页面级错误提示兜底。
+      void loadIntegrationDetail(integration.id, { force: true }).catch((error) => {
+        logClientMonitor('warn', 'feishu_config_workspace', 'org_detail_refresh_failed', {
+          ...toClientErrorContext(error),
+          setupTraceId: getSetupTraceId(),
+        });
+      });
     } catch (error) {
       setSelectedOrgTargetId(previousOrgTargetId);
       setPageError(error instanceof Error ? error.message : '保存组织失败。');
