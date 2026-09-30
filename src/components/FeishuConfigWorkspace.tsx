@@ -1237,6 +1237,9 @@ export default function FeishuConfigWorkspace() {
     const previousOrgTargetId = selectedOrgTargetId;
     setSelectedOrgTargetId(orgTargetId);
     setPageError(null);
+    // 点击即关闭弹窗：弹窗的职责到"用户做出选择"为止；
+    // 保存转入后台，保存中/失败状态在第 3 步区域反馈。
+    setShowOrgDialog(false);
 
     if (!integration?.id) {
       return;
@@ -1251,8 +1254,6 @@ export default function FeishuConfigWorkspace() {
           body: JSON.stringify({ selectedOrgTargetId: orgTargetId }),
         })
       );
-      setShowOrgDialog(false);
-      // 保存成功即关闭弹窗；详情与校验刷新转后台执行，失败有页面级错误提示兜底。
       void loadIntegrationDetail(integration.id, { force: true }).catch((error) => {
         logClientMonitor('warn', 'feishu_config_workspace', 'org_detail_refresh_failed', {
           ...toClientErrorContext(error),
@@ -1964,13 +1965,15 @@ export default function FeishuConfigWorkspace() {
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                               <div className="min-w-0">
                                 <div className="mb-1 flex items-center gap-2">
-                                  {selectedOrgTarget ? (
+                                  {isSavingOrganization ? (
+                                    <RefreshCw className="h-4 w-4 animate-spin text-indigo-600" />
+                                  ) : selectedOrgTarget ? (
                                     <Check className="h-4 w-4 text-emerald-600" />
                                   ) : (
                                     <AlertCircle className="h-4 w-4 text-indigo-600" />
                                   )}
                                   <span className={selectedOrgTarget ? 'text-sm font-medium text-emerald-900' : 'text-sm font-medium text-indigo-900'}>
-                                    {selectedOrgTarget ? '组织已选择' : '请选择所在组织'}
+                                    {isSavingOrganization ? '正在保存组织选择…' : selectedOrgTarget ? '组织已选择' : '请选择所在组织'}
                                   </span>
                                 </div>
                                 <p className={selectedOrgTarget ? 'text-xs text-emerald-900' : 'text-xs text-slate-600'}>
