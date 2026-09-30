@@ -899,6 +899,18 @@ export default function FeishuConfigWorkspace() {
     };
   }, [detail?.authorization?.status, detail?.checks?.lastErrorMessage, integration, selectedOrgTargetId, setupComplete, user]);
 
+  const AUTHORIZE_SYNC_DELAY_MS = 60 * 1000;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+  // 应用创建成功后飞书侧配置（回调地址/发布）生效有时间差，立刻授权会偶发 20029「重定向 URL 有误」。
+  // 创建 60 秒内禁用授权按钮；老集成的 createdAt 远早于此窗口，不受影响。
+  const authorizeCooldownSeconds = integration?.createdAt
+    ? Math.max(0, Math.ceil((Date.parse(integration.createdAt) + AUTHORIZE_SYNC_DELAY_MS - nowMs) / 1000))
+    : 0;
+
   const createStepIsActive = !integration;
   const authorizeStepIsActive = Boolean(integration && detail?.authorization?.status !== 'authorized');
   const organizationStepIsActive = Boolean(detail?.authorization?.status === 'authorized' && !selectedOrgTargetId);
@@ -1285,7 +1297,7 @@ export default function FeishuConfigWorkspace() {
   };
 
   const handleAuthorize = async () => {
-    if (!integration?.id) return;
+    if (!integration?.id || authorizeCooldownSeconds > 0) return;
     setIsAuthorizing(true);
     setPageError(null);
     setAuthorizeUrl(null);
@@ -1934,9 +1946,22 @@ export default function FeishuConfigWorkspace() {
                                   <div className="min-w-0">
                                     <h3 className="text-sm font-semibold text-slate-900">授权应用</h3>
                                     <p className="mt-1 text-xs leading-4 text-slate-600">允许系统读取妙记与会议信息，并订阅妙记生成事件。</p>
+                                    {authorizeCooldownSeconds > 0 ? (
+                                      <p className="mt-1 text-xs leading-4 text-amber-600">飞书正在同步应用配置，同步完成后再授权可避免授权页报错。</p>
+                                    ) : null}
                                   </div>
-                                  <Button onClick={handleAuthorize} disabled={isAuthorizing} size="sm" className="w-full shrink-0 sm:w-auto">
-                                    {isAuthorizing ? (
+                                  <Button
+                                    onClick={handleAuthorize}
+                                    disabled={isAuthorizing || authorizeCooldownSeconds > 0}
+                                    size="sm"
+                                    className="w-full shrink-0 sm:w-auto"
+                                  >
+                                    {authorizeCooldownSeconds > 0 ? (
+                                      <>
+                                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                        配置同步中（约 {authorizeCooldownSeconds} 秒）
+                                      </>
+                                    ) : isAuthorizing ? (
                                       <>
                                         <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
                                         生成中

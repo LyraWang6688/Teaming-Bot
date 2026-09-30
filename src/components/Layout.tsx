@@ -33,9 +33,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       : []),
     { href: '/feishu-config', label: '飞书配置', icon: Settings },
   ];
-  const loginHref = pathname && pathname !== '/login'
-    ? `/login?next=${encodeURIComponent(pathname)}`
-    : '/login';
 
   useEffect(() => {
     const fetchUser = async () => {
@@ -125,15 +122,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     </>
                   )}
                 </div>
-              ) : (
-                <Link
-                  href={loginHref}
-                  className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
-                >
-                  <User className="w-4 h-4" />
-                  登录
-                </Link>
-              )}
+              ) : null}
             </div>
           </div>
 
@@ -204,15 +193,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                     </>
                   )}
                 </div>
-              ) : (
-                <Link
-                  href={loginHref}
-                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
-                >
-                  <User className="w-4 h-4" />
-                  登录
-                </Link>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
