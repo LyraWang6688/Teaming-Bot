@@ -16,10 +16,6 @@ import { getRequestTraceContext } from '@/lib/platform/requestTrace';
 
 type RouteContext = { params: Promise<{ integrationId: string }> };
 
-// 应用创建后飞书侧配置（回调地址/发布）生效有时间差，立刻授权偶发 20029。
-// 与前端冷却一致：创建 60 秒内拒绝发起授权。
-const AUTHORIZE_SYNC_DELAY_MS = 60 * 1000;
-
 export async function POST(request: Request, context: RouteContext) {
   const startedAt = Date.now();
   const traceContext = getRequestTraceContext(request);
@@ -33,13 +29,6 @@ export async function POST(request: Request, context: RouteContext) {
     const integration = await getUserFeishuIntegrationContext(user.id, integrationId);
     if (!integration) {
       return NextResponse.json({ success: false, error: '未找到集成配置' }, { status: 404 });
-    }
-    const integrationCreatedAtMs = Date.parse(integration.createdAt);
-    if (Number.isFinite(integrationCreatedAtMs) && Date.now() - integrationCreatedAtMs < AUTHORIZE_SYNC_DELAY_MS) {
-      return NextResponse.json(
-        { success: false, error: '飞书正在同步应用配置，请约 1 分钟后再发起授权。' },
-        { status: 409 }
-      );
     }
     const checks = await getFeishuIntegrationCheckStatus(integrationId);
     if (checks?.appCredentialStatus !== 'success') {
