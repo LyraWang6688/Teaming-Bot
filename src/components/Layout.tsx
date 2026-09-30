@@ -24,6 +24,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  // 向导第 1 步自动创建的临时用户（open_id 以 pending- 开头）不显示用户菜单，
+  // 避免学员看到「待授权用户-xxxxxxxx」占位名；第 2 步授权写入真实身份后自然出现。
+  const isPendingUser = user?.feishuOpenId?.startsWith('pending-') ?? false;
   const [showUserMenu, setShowUserMenu] = useState(false);
 
   const meetingAnalysisEnabled = process.env.NEXT_PUBLIC_MEETING_ANALYSIS_ENABLED === 'true';
@@ -87,7 +90,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 <div className="flex items-center px-2 py-2">
                   <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
                 </div>
-              ) : user ? (
+              ) : user && !isPendingUser ? (
                 <div className="relative">
                   <button
                     type="button"
@@ -159,7 +162,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 <div className="flex items-center px-3 py-2">
                   <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
                 </div>
-              ) : user ? (
+              ) : user && !isPendingUser ? (
                 <div className="relative">
                   <button
                     type="button"
