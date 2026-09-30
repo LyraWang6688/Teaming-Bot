@@ -31,7 +31,6 @@ import {
   AlertCircle,
   ArrowRight,
   Check,
-  MessageSquare,
   RefreshCw,
   Rocket,
   Shield,
@@ -1610,18 +1609,6 @@ export default function FeishuConfigWorkspace() {
               <p className="mt-1 text-xs leading-5 text-slate-600">{mobileStatusSummary.description}</p>
             </div>
             <div className="flex shrink-0 items-start gap-2">
-              {user ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setIsFeedbackDialogOpen(true)}
-                  className="h-7 px-2 text-xs"
-                >
-                  <MessageSquare className="mr-1 h-3.5 w-3.5" />
-                  反馈问题
-                </Button>
-              ) : null}
               <div className="text-right">
                 <div className="text-[11px] text-slate-500">当前进度</div>
                 <div className="mt-1 text-lg font-semibold text-slate-900">{Math.min(currentStep, 3)}/3</div>
@@ -1773,18 +1760,6 @@ export default function FeishuConfigWorkspace() {
                     ) : (
                       <div className="flex-1" />
                     )}
-                    {user ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setIsFeedbackDialogOpen(true)}
-                        className="shrink-0"
-                      >
-                        <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-                        反馈问题
-                      </Button>
-                    ) : null}
                   </div>
                 ) : null}
                 {authLoading ? (
