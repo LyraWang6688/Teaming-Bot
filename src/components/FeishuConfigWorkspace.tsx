@@ -898,14 +898,14 @@ export default function FeishuConfigWorkspace() {
     };
   }, [detail?.authorization?.status, detail?.checks?.lastErrorMessage, integration, selectedOrgTargetId, setupComplete, user]);
 
-  const AUTHORIZE_SYNC_DELAY_MS = 60 * 1000;
+  const AUTHORIZE_SYNC_DELAY_MS = 20 * 1000;
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 5000);
     return () => window.clearInterval(timer);
   }, []);
-  // 应用创建成功后飞书侧配置生效有延迟（按钮解锁依据的是我方状态，飞书传播不可见）。
-  // 创建 60 秒内仅禁用授权按钮（不改文案），到点自动恢复；老集成 createdAt 远早于窗口，不受影响。
+  // 应用创建成功后飞书侧配置生效有延迟（按钮出现依据的是我方状态，飞书传播不可见）。
+  // 创建 20 秒内（≈用户感知 10 秒）不显示授权按钮，到点出现即可点击；老集成 createdAt 远早于窗口，不受影响。
   const authorizeInCooldown = Boolean(
     integration?.createdAt && nowMs - Date.parse(integration.createdAt) < AUTHORIZE_SYNC_DELAY_MS
   );
@@ -1923,19 +1923,23 @@ export default function FeishuConfigWorkspace() {
                                     <h3 className="text-sm font-semibold text-slate-900">授权应用</h3>
                                     <p className="mt-1 text-xs leading-4 text-slate-600">允许系统读取妙记与会议信息，并订阅妙记生成事件。</p>
                                   </div>
-                                  <Button onClick={handleAuthorize} disabled={isAuthorizing || authorizeInCooldown} size="sm" className="w-full shrink-0 sm:w-auto">
-                                    {isAuthorizing ? (
-                                      <>
-                                        <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                                        生成中
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Shield className="mr-2 h-4 w-4" />
-                                        开始授权
-                                      </>
-                                    )}
-                                  </Button>
+                                  {authorizeInCooldown ? (
+                                    <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-slate-400" />
+                                  ) : (
+                                    <Button onClick={handleAuthorize} disabled={isAuthorizing} size="sm" className="w-full shrink-0 sm:w-auto">
+                                      {isAuthorizing ? (
+                                        <>
+                                          <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                                          生成中
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Shield className="mr-2 h-4 w-4" />
+                                          开始授权
+                                        </>
+                                      )}
+                                    </Button>
+                                  )}
                                 </div>
                               )}
                             </div>

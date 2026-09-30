@@ -17,8 +17,8 @@ import { getRequestTraceContext } from '@/lib/platform/requestTrace';
 type RouteContext = { params: Promise<{ integrationId: string }> };
 
 // 应用创建后飞书侧配置（回调地址/发布）生效有延迟，窗口内授权偶发 20029。
-// 与前端一致：创建 60 秒内拒绝发起授权。
-const AUTHORIZE_SYNC_DELAY_MS = 60 * 1000;
+// 与前端一致：创建 20 秒内拒绝发起授权。
+const AUTHORIZE_SYNC_DELAY_MS = 20 * 1000;
 
 export async function POST(request: Request, context: RouteContext) {
   const startedAt = Date.now();
