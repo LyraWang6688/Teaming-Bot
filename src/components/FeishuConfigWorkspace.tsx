@@ -1584,7 +1584,7 @@ export default function FeishuConfigWorkspace() {
 
       {showCelebration ? <CelebrationDialog /> : null}
 
-      <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-6xl flex-col gap-3 py-4 lg:h-[calc(100dvh-4rem)] lg:overflow-hidden lg:py-5">
+      <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-6xl flex-col gap-3 py-4 lg:py-5">
         <div className="shrink-0 space-y-0.5">
           <h1 className="text-xl font-bold text-slate-900">飞书集成配置</h1>
           <p className="text-sm text-slate-600">完成创建应用、用户授权和组织选择，系统会自动校验目标表格与事件监听状态。</p>
