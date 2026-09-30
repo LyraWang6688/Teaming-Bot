@@ -102,3 +102,6 @@ Desktop.ini
 .cozeproj/reduction
 .pnpm-store/
 _public_release/
+
+# 个人项目记忆文件，仅本地保留
+PROJECT.md
