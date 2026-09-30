@@ -61,7 +61,7 @@ export const BASE_BUSINESS_FIELD_SPECS = {
     valueType: 'text',
     required: false,
   },
-  zone: { canonicalName: '团队氛围', aliases: ['会议状态'], valueType: 'select', required: false },
+  zone: { canonicalName: '团队氛围', aliases: ['会议状态'], valueType: 'text', required: false },
   report_url: { canonicalName: '报告链接', aliases: [] as string[], valueType: 'text', required: false },
   error_info: { canonicalName: '后台日志', aliases: ['错误信息'], valueType: 'text', required: false },
 } as const;

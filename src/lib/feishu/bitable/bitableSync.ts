@@ -45,9 +45,11 @@ export function mapSupabaseStatusToBaseTerminalStatus(
 /**
  * 将 Supabase 的 analysis_zone 枚举值映射为 Base「团队氛围」单选字段的中文标签。
  *
+ * 仅作为旧报告（analysis_result.teamState 无 zoneLabel）的回退映射；
+ * 新报告统一写入 V2 锁定的 teamState.zoneLabel（含「靠近边界」「可能是」修饰）。
+ *
  * Zone 由 V2 引擎代码推导（decision.ts deriveZone），永远是 5 个枚举值之一。
- * Base「团队氛围」是单选字段，已在飞书 Base 界面手动配置好 5 个选项：
- * 学习区 / 舒适区 / 焦虑区 / 冷漠区 / 证据不足
+ * Base「团队氛围」为文本字段，直接写入中文标签原文，无需预配置选项。
  */
 export function mapAnalysisZoneToBaseStatus(zone: string | null): string | null {
   if (!zone) return null;
@@ -98,8 +100,10 @@ export function mapSupabaseRowToBusinessFields(
   if (row.transcript) fields.transcript = row.transcript;
   if (row.analysisSummary) fields.analysis_summary = row.analysisSummary;
 
-  // 团队氛围：从 analysis_zone 枚举映射成中文单选标签
-  const baseZoneStatus = mapAnalysisZoneToBaseStatus(row.analysisZone);
+  // 团队氛围：优先写入 V2 锁定的 zoneLabel（含「靠近边界」「可能是」等修饰文案），
+  // 仅旧报告没有 zoneLabel 时才回退到 analysis_zone 枚举映射
+  const baseZoneStatus =
+    row.analysisResult?.teamState?.zoneLabel ?? mapAnalysisZoneToBaseStatus(row.analysisZone);
   if (baseZoneStatus) fields.zone = baseZoneStatus;
 
   // 报告链接：直接镜像 Supabase reportUrl 字段
