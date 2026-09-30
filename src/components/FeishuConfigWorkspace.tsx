@@ -1597,10 +1597,6 @@ export default function FeishuConfigWorkspace() {
       {showCelebration ? <CelebrationDialog /> : null}
 
       <div className="mx-auto flex min-h-[calc(100dvh-4rem)] max-w-6xl flex-col gap-3 py-4 lg:py-5">
-        <div className="shrink-0 space-y-0.5">
-          <h1 className="text-xl font-bold text-slate-900">飞书集成配置</h1>
-        </div>
-
         <div className="sticky top-[88px] z-30 -mx-1 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur lg:hidden">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
