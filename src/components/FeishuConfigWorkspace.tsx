@@ -647,7 +647,6 @@ export default function FeishuConfigWorkspace() {
   // OAuth 回调落地参数：用于强制刷新与结果反馈
   const oauthResult = searchParams.get('oauth');
   const oauthReason = searchParams.get('reason');
-  const isReauthReturn = searchParams.get('reauth') === '1';
   const autoCheckKeyRef = useRef<string | null>(null);
   const setupTraceIdRef = useRef<string | null>(null);
   const previousSetupCompleteRef = useRef<boolean | null>(null);
@@ -1805,13 +1804,6 @@ export default function FeishuConfigWorkspace() {
                   </div>
                 ) : (
                   <>
-                    {oauthBannerVisible && oauthResult === 'success' ? (
-                      <div className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                        {isReauthReturn
-                          ? '授权成功！你之前的会议报告正在补发中，稍后推送给你。'
-                          : '授权成功！系统正在完成后续校验与初始化，稍候自动完成。'}
-                      </div>
-                    ) : null}
                     {oauthBannerVisible && oauthFailureText ? (
                       <div className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                         {oauthFailureText}
