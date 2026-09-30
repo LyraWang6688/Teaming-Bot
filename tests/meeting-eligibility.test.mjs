@@ -28,6 +28,7 @@ function gateFixture({ topic = 'ABC test', owner = 'owner', authorized = 'owner'
   const calls = [];
   const gate = load('src/lib/feishu/pipeline/meetingEligibility.ts', {
     '../integration/integrationStore': { async getLatestFeishuAuthorizationContext(id) { calls.push(['authorization', id]); return { status: 'authorized', authorizedOpenId: authorized }; } },
+    '../integration/tokenService': { FeishuAuthorizationError: class extends Error { constructor(code, message) { super(message); this.code = code; this.name = 'FeishuAuthorizationError'; } } },
     '../meetings/meetingDetailsService': { async fetchMeetingDetails(i) { calls.push(['meeting', i.id]); if (meetingError) throw meetingError; return { topic, hostOpenId: 'someone-else' }; } },
     '../minutes/minuteInfo': { MinuteInfoError, async fetchMinuteInfo(token, i) { calls.push(['minute', i.id]); if (error) throw error; return { ownerId: owner }; } },
   });
@@ -149,6 +150,8 @@ function processorFixture(gate) {
     '../integration/integrationActivationService': { async isFeishuIntegrationActive() { return true; } },
     '../integration/integrationStore': { async getFeishuIntegrationContextById() { return integration; }, async writeAuditLog(data) { audits.push(data); } },
     './meetingEligibility': { async evaluateMeetingEligibility() { eligibilityCalls++; if (gate instanceof MinuteInfoError || gate instanceof Error) throw gate; return gate; } },
+    './reauthShared': { isReauthorizationGateReason: (code) => typeof code === 'string' && (code.startsWith('oauth_') || code === 'integration_authorization_invalid') },
+    '../im/reauthorizationReminderService': { async maybeSendReauthorizationReminder() { return { sent: false }; } },
     './status': { FEISHU_PROCESS_STATUS: { checkingEligibility:'checking', gatedSkipped:'skipped', fetchingTranscript:'transcript' } },
     './meetingPipelineTaskStore': {
       async getMeetingPipelineTaskByEventId() { return null; },

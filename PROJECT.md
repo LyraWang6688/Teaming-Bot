@@ -210,6 +210,32 @@ AGENTS.md 至今仍要求"按多账号、多应用、多 Base 前提设计"，�
 
 - Commit：`357a2c3`；`1407fa5`（项目级集成失活级联）
 
+### 2026-09-30｜敲定「授权失效提醒 + 自动补发」方案（方案 B）
+
+**发生了什么**
+
+排查"部署后王颖两个集成掉线"时发现系统性规律：飞书 refresh_token 有效期 7 天，只有"有活动"（开会/重启/跑检查）才续期；连续 7 天无活动的用户授权静默失效，下次开会时分析失败且无任何通知。第四期用户阶段性使用，此问题必然高频出现。
+
+**关键判断**
+
+三个触发时点候选：A. 到期前定时扫描主动提醒（预防式）；B. 使用时发现失效→当场提醒→用户重新授权→自动补发；C. 重启时发现。本人敲定**只做方案 B**：精确、不打扰闲置用户、与"blocked 任务人工恢复"短板的自动化闭环结合。放弃 A 的预防式提醒。
+
+**设计要点**（详见 `docs/2026-09-30-授权失效提醒与自动补发设计.md`）
+
+- 授权失败的会议任务标记 blocked 留档（不重试、不丢数据），当场用集成应用机器人推送"授权已过期"提醒（应用凭证发消息，不受用户 token 失效影响）
+- 用户 90 天内重新授权（飞书会议详情接口官方时效 90 天），系统自动把因授权失效 blocked 的任务重新入队补发报告，替代目前"管理员手动 SQL 恢复"的通道
+- 项目 archived 后停止发送（阶段性项目，无长期义务）
+
+**结果**
+
+2026-09-30 当天完成实现：资格检查授权失效 → blocked 不重试；提醒卡（同周期一次、仅 active 项目）；免会话 reauth 链路（HMAC 签名令牌 + 同应用 open_id 本人校验 + 重建会话 + 配置页落地）；授权成功确认卡；85 天窗口自动补发与审计。27 项隔离测试、tsc、eslint、build 全部通过。待部署后真实链路验证。
+
+**Evidence**
+
+- 排查对话（2026-09-29~30）；`feishu_authorizations` 表王颖两条 `reauthorization_required` 记录
+- 飞书官方文档：获取会议详情接口"支持查询最近90天内的会议"（open.feishu.cn/document/server-docs/vc-v1/meeting/get）
+- 实现：`src/lib/feishu/im/reauthorizationReminderService.ts`、`src/app/api/feishu/reauth/start/route.ts`、`src/lib/feishu/pipeline/reauthResumeService.ts`、`tests/reauth.test.mjs`
+
 ### 2026-09-30｜Base「团队氛围」改存完整 zoneLabel，字段类型从单选改为文本
 
 **发生了什么**

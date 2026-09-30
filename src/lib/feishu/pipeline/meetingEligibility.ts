@@ -1,5 +1,6 @@
 import type { FeishuIntegrationContext } from '../integration/integrationStore';
 import { getLatestFeishuAuthorizationContext } from '../integration/integrationStore';
+import { FeishuAuthorizationError } from '../integration/tokenService';
 import { fetchMeetingDetails } from '../meetings/meetingDetailsService';
 import type { MeetingDetails } from '../meetings/meetingDetailsTypes';
 import { fetchMinuteInfo, MinuteInfoError } from '../minutes/minuteInfo';
@@ -8,13 +9,24 @@ export type MeetingEligibility =
   | { allowed: true; details: MeetingDetails; ownerOpenId: string }
   | { allowed: false; status: 'skipped' | 'blocked'; reasonCode: string; message: string; ownerOpenId?: string | null };
 
+/** 授权失效统一映射为 blocked（oauth_*），不进入重试——用户重新授权前必然持续失败。 */
+function toAuthorizationGate(error: FeishuAuthorizationError): MeetingEligibility {
+  return { allowed: false, status: 'blocked', reasonCode: `oauth_${error.code}`, message: error.message };
+}
+
 /** These APIs use the SAME integration/app identity; never compare open_ids across apps. */
 export async function evaluateMeetingEligibility(
   integration: FeishuIntegrationContext,
   meetingId: string,
   minuteToken: string
 ): Promise<MeetingEligibility> {
-  const details = await fetchMeetingDetails(integration, meetingId);
+  let details: MeetingDetails;
+  try {
+    details = await fetchMeetingDetails(integration, meetingId);
+  } catch (error) {
+    if (error instanceof FeishuAuthorizationError) return toAuthorizationGate(error);
+    throw error;
+  }
   if (!details.topic) throw new MinuteInfoError('meeting_topic_unavailable', '会议标题暂时不可用。', true);
   if (!details.topic.includes('ABC')) {
     return { allowed: false, status: 'skipped', reasonCode: 'meeting_topic_keyword_mismatch', message: '会议名称不含 ABC，已跳过。' };
@@ -23,6 +35,7 @@ export async function evaluateMeetingEligibility(
   try {
     info = await fetchMinuteInfo(minuteToken, integration);
   } catch (error) {
+    if (error instanceof FeishuAuthorizationError) return toAuthorizationGate(error);
     if (error instanceof MinuteInfoError && !error.retryable) {
       return { allowed: false, status: 'blocked', reasonCode: error.code, message: error.message };
     }

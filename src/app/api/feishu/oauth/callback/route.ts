@@ -1,6 +1,11 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { NextRequest, NextResponse } from 'next/server';
+import { createSession } from '@/lib/auth/session';
 import { findUserByFeishuOpenId, updateUserIdentityFromFeishu } from '@/lib/auth/userStore';
+import { sendReauthorizationSuccessCard } from '@/lib/feishu/im/reauthorizationReminderService';
+import { runFeishuIntegrationChecks } from '@/lib/feishu/integration/integrationSetup';
+import { REAUTH_STATE_MARKER } from '@/lib/feishu/integration/reauthMarker';
+import { resumeOauthBlockedTasksForIntegration } from '@/lib/feishu/pipeline/reauthResumeService';
 import {
   consumeOauthState,
   getFeishuIntegrationContextById,
@@ -149,6 +154,46 @@ export async function GET(request: NextRequest) {
       authorizedOpenId: openId,
       durationMs: Date.now() - startedAt,
     });
+
+    if (state.redirectTo?.includes(REAUTH_STATE_MARKER)) {
+      // 授权失效提醒链路的重新授权：重建会话（配置页落地需要）、恢复监听、自动补发、推送确认卡。
+      // 这些动作失败不影响授权本身的成功与页面跳转。
+      try {
+        await createSession(state.userId);
+      } catch (error) {
+        logRuntimeMonitor('warn', 'feishu_sdk_auth', 'reauth_session_rebuild_failed', {
+          userId: state.userId,
+          integrationId: integration.id,
+          ...toRuntimeErrorContext(error),
+        });
+      }
+      void runFeishuIntegrationChecks({ userId: state.userId, integrationId: integration.id }).catch((error) => {
+        logRuntimeMonitor('warn', 'feishu_sdk_auth', 'reauth_checks_rerun_failed', {
+          userId: state.userId,
+          integrationId: integration.id,
+          ...toRuntimeErrorContext(error),
+        });
+      });
+      try {
+        const resume = await resumeOauthBlockedTasksForIntegration({
+          userId: state.userId,
+          integrationId: integration.id,
+        });
+        logRuntimeMonitor('info', 'feishu_sdk_auth', 'reauth_auto_resume_completed', {
+          userId: state.userId,
+          integrationId: integration.id,
+          requeued: resume.requeued,
+          expired: resume.expired,
+        });
+      } catch (error) {
+        logRuntimeMonitor('warn', 'feishu_sdk_auth', 'reauth_auto_resume_failed', {
+          userId: state.userId,
+          integrationId: integration.id,
+          ...toRuntimeErrorContext(error),
+        });
+      }
+      void sendReauthorizationSuccessCard({ integration, recipientOpenId: openId });
+    }
 
     return redirectToConfig(state.redirectTo || `/feishu-config?oauth=success`);
   } catch (error) {

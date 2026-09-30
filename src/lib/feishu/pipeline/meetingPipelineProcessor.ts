@@ -51,6 +51,8 @@ import { fetchTranscriptByMinuteToken } from '../minutes/transcript';
 import type { MeetingDetails } from '../meetings/meetingDetailsTypes';
 import { MinuteInfoError } from '../minutes/minuteInfo';
 import { evaluateMeetingEligibility } from './meetingEligibility';
+import { isReauthorizationGateReason } from './reauthShared';
+import { maybeSendReauthorizationReminder } from '../im/reauthorizationReminderService';
 import { buildPersistentReportUrl } from '@/lib/reports/reportUrl';
 
 type FeishuEventHeader = {
@@ -334,6 +336,18 @@ async function processMinuteGeneratedAttempt(context: MinuteGeneratedSource) {
       integrationId: context.integration.id, taskId: context.taskId, meetingId: context.meetingId,
       status: gate.status, reasonCode: gate.reasonCode, message: gate.message,
     });
+    if (gate.status === 'blocked' && isReauthorizationGateReason(gate.reasonCode)) {
+      void maybeSendReauthorizationReminder({
+        integration: context.integration,
+        eventReceivedAt: context.eventReceivedAt,
+      }).catch((error) => {
+        logFeishuMonitor('warn', 'reauth_reminder_failed', {
+          integrationId: context.integration.id,
+          taskId: context.taskId,
+          ...toErrorContext(error),
+        });
+      });
+    }
     return;
   }
   const meetingDetails = gate.details;
