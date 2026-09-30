@@ -1217,6 +1217,15 @@ export default function FeishuConfigWorkspace() {
     void loadIntegrationDetail(requestedIntegrationId, { force: true, refreshList: true });
   }, [user, oauthResult, requestedIntegrationId, loadIntegrationDetail]);
 
+  // 授权结果横幅：出现 5 秒后自动消失
+  const [oauthBannerVisible, setOauthBannerVisible] = useState(false);
+  useEffect(() => {
+    if (!oauthResult) return;
+    setOauthBannerVisible(true);
+    const timer = window.setTimeout(() => setOauthBannerVisible(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, [oauthResult]);
+
   useEffect(() => {
     if (!user || integration) {
       return;
@@ -1796,14 +1805,14 @@ export default function FeishuConfigWorkspace() {
                   </div>
                 ) : (
                   <>
-                    {oauthResult === 'success' ? (
+                    {oauthBannerVisible && oauthResult === 'success' ? (
                       <div className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
                         {isReauthReturn
                           ? '授权成功！你之前的会议报告正在补发中，稍后推送给你。'
                           : '授权成功！系统正在完成后续校验与初始化，稍候自动完成。'}
                       </div>
                     ) : null}
-                    {oauthFailureText ? (
+                    {oauthBannerVisible && oauthFailureText ? (
                       <div className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                         {oauthFailureText}
                       </div>
