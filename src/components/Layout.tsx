@@ -128,27 +128,30 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
           {/* 导航链接 */}
           <div className="flex items-center gap-4">
-            <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-1 lg:overflow-visible lg:pb-0">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = pathname === item.href;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`
-                      flex shrink-0 items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4
-                      ${isActive
-                        ? 'bg-indigo-100 text-indigo-700'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}
-                    `}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span>{item.label}</span>
-                  </Link>
-                );
-              })}
-            </nav>
+            {/* 仅剩一个导航项时隐藏导航区（指向当前页无意义）；恢复手动分析入口后自动重新出现 */}
+            {navItems.length > 1 ? (
+              <nav className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto pb-1 lg:overflow-visible lg:pb-0">
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = pathname === item.href;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`
+                        flex shrink-0 items-center space-x-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors sm:px-4
+                        ${isActive
+                          ? 'bg-indigo-100 text-indigo-700'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}
+                      `}
+                    >
+                      <Icon className="w-4 h-4" />
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+            ) : null}
 
             {/* 用户登录状态 */}
             <div className="relative hidden lg:block">
