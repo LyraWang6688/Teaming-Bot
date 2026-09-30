@@ -665,6 +665,9 @@ export default function FeishuConfigWorkspace() {
   const [user, setUser] = useState<AuthUser | null>(null);
 
   const [integration, setIntegration] = useState<IntegrationView | null>(null);
+  // 镜像最新 integration：让 loadIntegrationDetail 身份保持稳定，避免"刷新→setIntegration→身份变→再刷新"的死循环
+  const integrationRef = useRef<IntegrationView | null>(null);
+  integrationRef.current = integration;
   const [detail, setDetail] = useState<IntegrationDetailResponse | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isRunningChecks, setIsRunningChecks] = useState(false);
@@ -1087,8 +1090,9 @@ export default function FeishuConfigWorkspace() {
       setPageError(null);
 
       try {
+        const currentIntegration = integrationRef.current;
         let knownIntegrations = integrationListCacheRef.current?.data || [];
-        let targetId = integrationId || integration?.id || knownIntegrations[0]?.id || null;
+        let targetId = integrationId || currentIntegration?.id || knownIntegrations[0]?.id || null;
 
         if (!targetId || options?.refreshList) {
           knownIntegrations = await loadIntegrationList({ force: options?.force || options?.refreshList });
@@ -1105,7 +1109,7 @@ export default function FeishuConfigWorkspace() {
         if (!detailData) {
           const fallbackIntegration =
             knownIntegrations.find((item) => item.id === targetId) ||
-            (integration?.id === targetId ? integration : null);
+            (currentIntegration?.id === targetId ? currentIntegration : null);
           setIntegration(fallbackIntegration);
           setDetail(null);
           return;
@@ -1131,7 +1135,7 @@ export default function FeishuConfigWorkspace() {
         setIsLoadingDetail(false);
       }
     },
-    [integration, loadIntegrationList, loadIntegrationSnapshot]
+    [loadIntegrationList, loadIntegrationSnapshot]
   );
 
   const stopCreateAppPolling = useCallback(() => {
