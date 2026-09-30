@@ -644,6 +644,10 @@ export default function FeishuConfigWorkspace() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const requestedIntegrationId = searchParams.get('integrationId');
+  // OAuth 回调落地参数：用于强制刷新与结果反馈
+  const oauthResult = searchParams.get('oauth');
+  const oauthReason = searchParams.get('reason');
+  const isReauthReturn = searchParams.get('reauth') === '1';
   const autoCheckKeyRef = useRef<string | null>(null);
   const setupTraceIdRef = useRef<string | null>(null);
   const previousSetupCompleteRef = useRef<boolean | null>(null);
@@ -913,6 +917,17 @@ export default function FeishuConfigWorkspace() {
   const createStepIsActive = !integration;
   const authorizeStepIsActive = Boolean(integration && detail?.authorization?.status !== 'authorized');
   const organizationStepIsActive = Boolean(detail?.authorization?.status === 'authorized' && !selectedOrgTargetId);
+  const OAUTH_FAILURE_MESSAGES: Record<string, string> = {
+    access_denied: '你在飞书页面取消了授权，请重新发起。',
+    invalid_or_expired_state: '授权链接已过期，请重新发起授权。',
+    code_missing: '授权回调参数不完整，请重新发起授权。',
+    integration_not_found: '未找到对应的集成配置，请刷新页面重试。',
+    reauth_link_invalid_or_expired: '重新授权链接已过期，请重新获取提醒消息中的链接。',
+  };
+  const oauthFailureText = oauthResult === 'failed'
+    ? (oauthReason && OAUTH_FAILURE_MESSAGES[oauthReason]) || '授权未完成，请重新发起授权。'
+    : null;
+
   const getStepPanelClassName = (isActive: boolean) =>
     `min-h-0 rounded-xl border border-slate-200 bg-white p-3 transition-all ${isActive ? 'flex flex-1 flex-col' : 'shrink-0'}`;
   const feedbackPlaceholder = useMemo(
@@ -1195,6 +1210,12 @@ export default function FeishuConfigWorkspace() {
       void loadIntegrationDetail(requestedIntegrationId);
     }
   }, [loadIntegrationDetail, requestedIntegrationId, user]);
+
+  // 授权回调落地（oauth=success/failed）：绕过缓存强制刷新，确保第 2 步立即呈现最新状态
+  useEffect(() => {
+    if (!user || !oauthResult) return;
+    void loadIntegrationDetail(requestedIntegrationId, { force: true, refreshList: true });
+  }, [user, oauthResult, requestedIntegrationId, loadIntegrationDetail]);
 
   useEffect(() => {
     if (!user || integration) {
@@ -1775,6 +1796,18 @@ export default function FeishuConfigWorkspace() {
                   </div>
                 ) : (
                   <>
+                    {oauthResult === 'success' ? (
+                      <div className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                        {isReauthReturn
+                          ? '授权成功！你之前的会议报告正在补发中，稍后推送给你。'
+                          : '授权成功！系统正在完成后续校验与初始化，稍候自动完成。'}
+                      </div>
+                    ) : null}
+                    {oauthFailureText ? (
+                      <div className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                        {oauthFailureText}
+                      </div>
+                    ) : null}
                     <div id="step-create-app" className={getStepPanelClassName(createStepIsActive)}>
                       <StepHeader
                         step={1}
