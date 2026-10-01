@@ -20,7 +20,7 @@
 - GitHub：<https://github.com/LyraWang6688/Teaming-Bot>
 - Supabase：<https://supabase.com/dashboard/project/titwuhsuaxsglqonksfw>
 - 现状证据：[改造前核查与实施方案](./2026-09-19-改造前核查与实施方案.md)
-- 用户原图：`feishu_event_pipeline_flow.html`，保留原件；新增或更新目标设计文档时不要覆盖用户原图。
+- 用户原图：`docs/diagrams/feishu_event_pipeline_flow.html`，保留原件；新增或更新目标设计文档时不要覆盖用户原图。
 
 ## 1. 不可破坏的业务约束
 

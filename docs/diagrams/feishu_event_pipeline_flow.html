@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="UTF-8">
+<title>飞书事件 → 会议分析 全流程</title>
+<style>
+  body {
+    margin: 0;
+    padding: 24px;
+    background: #f1f5f9;
+    font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  }
+  .canvas {
+    max-width: 980px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+  }
+  svg { display: block; width: 100%; height: auto; }
+  .tips {
+    max-width: 980px;
+    margin: 16px auto 0;
+    padding: 12px 16px;
+    background: #fef3c7;
+    border-left: 4px solid #f59e0b;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #78350f;
+    line-height: 1.7;
+  }
+</style>
+</head>
+<body>
+<div class="canvas">
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 1450" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"></path>
+    </marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"></stop>
+      <stop offset="100%" stop-color="#eef2ff"></stop>
+    </linearGradient>
+    <linearGradient id="initBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ede9fe"></stop>
+      <stop offset="100%" stop-color="#ddd6fe"></stop>
+    </linearGradient>
+    <linearGradient id="cardBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"></stop>
+      <stop offset="100%" stop-color="#f8fafc"></stop>
+    </linearGradient>
+  </defs>
+  <rect width="920" height="1450" fill="url(#bg)" rx="16"></rect>
+
+  <!-- Title -->
+  <text x="460" y="40" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">飞书事件 → 会议分析 全流程</text>
+  <text x="460" y="62" text-anchor="middle" font-size="13" fill="#64748b">Supabase 是真相源，Base 是展示镜像 · Base 只展示终态</text>
+
+  <!-- 0. 初始化配置区（前置环节） -->
+  <g>
+    <rect x="60" y="85" width="800" height="155" rx="12" fill="url(#initBg)" stroke="#8b5cf6" stroke-width="1.5"></rect>
+    <text x="460" y="110" text-anchor="middle" font-size="14" font-weight="700" fill="#4c1d95">前置环节 · 初始化配置（用户在飞书配置页完成）</text>
+
+    <!-- 四步小卡 -->
+    <g>
+      <rect x="80" y="125" width="170" height="50" rx="8" fill="#fff" stroke="#a78bfa"></rect>
+      <text x="165" y="148" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">1. 飞书应用配置</text>
+      <text x="165" y="166" text-anchor="middle" font-size="10" fill="#6d28d9">App ID + App Secret</text>
+    </g>
+    <g>
+      <rect x="270" y="125" width="170" height="50" rx="8" fill="#fff" stroke="#a78bfa"></rect>
+      <text x="355" y="148" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">2. OAuth 授权</text>
+      <text x="355" y="166" text-anchor="middle" font-size="10" fill="#6d28d9">获取用户 open_id</text>
+    </g>
+    <g>
+      <rect x="460" y="125" width="170" height="50" rx="8" fill="#fff" stroke="#a78bfa"></rect>
+      <text x="545" y="148" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">3. 选择方向</text>
+      <text x="545" y="166" text-anchor="middle" font-size="10" fill="#6d28d9">5 选 1（第四期）</text>
+    </g>
+    <g>
+      <rect x="650" y="125" width="190" height="50" rx="8" fill="#fff" stroke="#a78bfa"></rect>
+      <text x="745" y="148" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">4. 事件订阅</text>
+      <text x="745" y="166" text-anchor="middle" font-size="10" fill="#6d28d9">minute.generated_v1</text>
+    </g>
+
+    <text x="460" y="200" text-anchor="middle" font-size="11" fill="#5b21b6">配置写入 Supabase feishu_integrations + feishu_authorizations</text>
+    <text x="460" y="218" text-anchor="middle" font-size="11" font-weight="600" fill="#4c1d95">未完成初始化的用户作为会议 owner 时，门槛不通过</text>
+  </g>
+
+  <line x1="460" y1="240" x2="460" y2="268" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- 1. 事件入口 -->
+  <g>
+    <rect x="280" y="270" width="360" height="58" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"></rect>
+    <text x="460" y="293" text-anchor="middle" font-size="14" font-weight="600" fill="#1e3a8a">① 飞书妙记事件触发</text>
+    <text x="460" y="313" text-anchor="middle" font-size="11" fill="#1e40af">minutes.minute.generated_v1</text>
+  </g>
+  <line x1="460" y1="328" x2="460" y2="355" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- 2. 拉会议详情 -->
+  <g>
+    <rect x="280" y="357" width="360" height="58" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"></rect>
+    <text x="460" y="380" text-anchor="middle" font-size="14" font-weight="600" fill="#0f172a">② 拉取会议基本信息</text>
+    <text x="460" y="400" text-anchor="middle" font-size="11" fill="#64748b">topic · organizerOpenId · meetingId</text>
+  </g>
+  <line x1="460" y1="415" x2="460" y2="442" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- 3. 门槛检查（4 道） -->
+  <g>
+    <rect x="160" y="444" width="600" height="200" rx="12" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"></rect>
+    <text x="460" y="467" text-anchor="middle" font-size="14" font-weight="700" fill="#78350f">③ 4 道门槛检查（resolveMeetingAnalysisGate）</text>
+
+    <rect x="180" y="480" width="560" height="34" rx="6" fill="#fff" stroke="#fbbf24"></rect>
+    <text x="195" y="501" font-size="12" font-weight="600" fill="#92400e">门槛 1</text>
+    <text x="240" y="501" font-size="12" fill="#1f2937">会议名称包含「ABC」</text>
+    <text x="720" y="501" text-anchor="end" font-size="10" fill="#92400e">优先查</text>
+
+    <rect x="180" y="520" width="560" height="34" rx="6" fill="#fff" stroke="#fbbf24"></rect>
+    <text x="195" y="541" font-size="12" font-weight="600" fill="#92400e">门槛 2</text>
+    <text x="240" y="541" font-size="12" fill="#1f2937">organizer open_id 非空</text>
+
+    <rect x="180" y="560" width="560" height="34" rx="6" fill="#fff" stroke="#fbbf24"></rect>
+    <text x="195" y="581" font-size="12" font-weight="600" fill="#92400e">门槛 3</text>
+    <text x="240" y="581" font-size="12" fill="#1f2937">创建人已初始化当前组织</text>
+
+    <rect x="180" y="600" width="560" height="34" rx="6" fill="#fff" stroke="#fbbf24"></rect>
+    <text x="195" y="621" font-size="12" font-weight="600" fill="#92400e">门槛 4</text>
+    <text x="240" y="621" font-size="12" fill="#1f2937">创建人属于当前活跃集成</text>
+  </g>
+
+  <line x1="460" y1="644" x2="460" y2="665" stroke="#475569" stroke-width="1.5"></line>
+  <line x1="180" y1="665" x2="740" y2="665" stroke="#475569" stroke-width="1.5"></line>
+  <line x1="180" y1="665" x2="180" y2="695" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+  <line x1="740" y1="665" x2="740" y2="695" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- Left: gated -->
+  <g>
+    <rect x="50" y="697" width="260" height="92" rx="10" fill="#fee2e2" stroke="#ef4444" stroke-width="1.5"></rect>
+    <text x="180" y="720" text-anchor="middle" font-size="13" font-weight="700" fill="#7f1d1d">❌ 门槛不通过</text>
+    <text x="180" y="742" text-anchor="middle" font-size="11" fill="#991b1b">Supabase 留档 status=gated_skipped</text>
+    <text x="180" y="760" text-anchor="middle" font-size="11" fill="#991b1b">写 reasonCode + reasonMessage</text>
+    <text x="180" y="780" text-anchor="middle" font-size="11" font-weight="600" fill="#7f1d1d">Base 不写</text>
+  </g>
+
+  <!-- Right: pass -->
+  <g>
+    <rect x="610" y="697" width="260" height="92" rx="10" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"></rect>
+    <text x="740" y="720" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">✅ 门槛全通过</text>
+    <text x="740" y="742" text-anchor="middle" font-size="11" fill="#166534">继续走完整分析链路</text>
+    <text x="740" y="780" text-anchor="middle" font-size="11" fill="#64748b">↓</text>
+  </g>
+
+  <line x1="740" y1="789" x2="740" y2="800" stroke="#475569" stroke-width="1.5"></line>
+  <line x1="740" y1="800" x2="460" y2="800" stroke="#475569" stroke-width="1.5"></line>
+  <line x1="460" y1="800" x2="460" y2="805" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- 阶段 0 -->
+  <g>
+    <rect x="280" y="807" width="360" height="62" rx="10" fill="#e0e7ff" stroke="#6366f1" stroke-width="1.5"></rect>
+    <text x="460" y="829" text-anchor="middle" font-size="13" font-weight="700" fill="#3730a3">阶段 0 · 建档</text>
+    <text x="460" y="847" text-anchor="middle" font-size="11" fill="#4338ca">Supabase 写：会议ID/名称/创建人/数据来源</text>
+    <text x="460" y="863" text-anchor="middle" font-size="11" fill="#4338ca">Base 同步基础信息（首次写入）</text>
+  </g>
+  <line x1="460" y1="869" x2="460" y2="892" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- 阶段 1 -->
+  <g>
+    <rect x="280" y="894" width="360" height="62" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"></rect>
+    <text x="460" y="916" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">阶段 1 · 拉转录稿</text>
+    <text x="460" y="934" text-anchor="middle" font-size="11" fill="#64748b">导出妙记 transcript</text>
+    <text x="460" y="950" text-anchor="middle" font-size="11" fill="#4338ca">Supabase 存文字稿 + Base 写「会议文字稿」</text>
+  </g>
+  <line x1="460" y1="956" x2="460" y2="979" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- 阶段 2 -->
+  <g>
+    <rect x="280" y="981" width="360" height="62" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"></rect>
+    <text x="460" y="1003" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">阶段 2 · V2 引擎分析</text>
+    <text x="460" y="1021" text-anchor="middle" font-size="11" fill="#64748b">LLM 第1次出 evidence → deriveZone</text>
+    <text x="460" y="1037" text-anchor="middle" font-size="11" fill="#64748b">LLM 第2次出完整报告（zone + analysis 100-180字）</text>
+  </g>
+  <line x1="460" y1="1043" x2="460" y2="1066" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- 阶段 3 -->
+  <g>
+    <rect x="280" y="1068" width="360" height="62" rx="10" fill="#fff" stroke="#94a3b8" stroke-width="1.5"></rect>
+    <text x="460" y="1090" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">阶段 3 · 持久化报告</text>
+    <text x="460" y="1108" text-anchor="middle" font-size="11" fill="#4338ca">Supabase 写：analysis_result/zone/summary/reportUrl</text>
+    <text x="460" y="1124" text-anchor="middle" font-size="11" fill="#4338ca">URL 走 /report/v2/{uuid}（V2 路径）</text>
+  </g>
+  <line x1="460" y1="1130" x2="460" y2="1153" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- 阶段 4 · Base 全量同步（拆分后） -->
+  <g>
+    <rect x="280" y="1155" width="360" height="62" rx="10" fill="#dcfce7" stroke="#22c55e" stroke-width="1.5"></rect>
+    <text x="460" y="1177" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">阶段 4 · Base 全量同步</text>
+    <text x="460" y="1195" text-anchor="middle" font-size="11" fill="#166534">Base 写：处理状态=已完成 + 会议状态</text>
+    <text x="460" y="1211" text-anchor="middle" font-size="11" fill="#166534">+ 分析摘要 + 报告链接</text>
+  </g>
+  <line x1="460" y1="1217" x2="460" y2="1240" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"></line>
+
+  <!-- 阶段 5 · 推送飞书通知给创建人（拆分后新增） -->
+  <g>
+    <rect x="280" y="1242" width="360" height="62" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5"></rect>
+    <text x="460" y="1264" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">阶段 5 · 推送飞书通知给创建人</text>
+    <text x="460" y="1282" text-anchor="middle" font-size="11" fill="#1e40af">给 organizerOpenId 发飞书消息卡片</text>
+    <text x="460" y="1298" text-anchor="middle" font-size="11" fill="#1e40af">（创建人 = 会议 owner）</text>
+  </g>
+
+  <!-- 阶段 5 旁边的消息卡片示例（右侧） -->
+  <g>
+    <!-- 连接线 -->
+    <line x1="640" y1="1273" x2="688" y2="1273" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"></line>
+
+    <rect x="690" y="1185" width="220" height="210" rx="10" fill="url(#cardBg)" stroke="#3b82f6" stroke-width="1.5"></rect>
+    <text x="800" y="1208" text-anchor="middle" font-size="11" font-weight="700" fill="#3b82f6">📌 消息卡片示例</text>
+
+    <!-- 卡片标题区 -->
+    <rect x="702" y="1218" width="196" height="44" rx="6" fill="#1e3a8a"></rect>
+    <text x="800" y="1238" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">会议动力分析报告</text>
+    <text x="800" y="1254" text-anchor="middle" font-size="10" fill="#bfdbfe">报告已生成 · 2026-09-17 18:30</text>
+
+    <!-- 会议信息 -->
+    <text x="710" y="1280" font-size="11" font-weight="600" fill="#0f172a">会议名称</text>
+    <text x="710" y="1295" font-size="11" fill="#475569">ABC项目周会</text>
+
+    <text x="710" y="1315" font-size="11" font-weight="600" fill="#0f172a">会议状态</text>
+    <rect x="780" y="1303" width="60" height="20" rx="10" fill="#dcfce7" stroke="#22c55e"></rect>
+    <text x="810" y="1317" text-anchor="middle" font-size="10" font-weight="600" fill="#166534">学习区</text>
+
+    <!-- 按钮（紧跟会议状态下方） -->
+    <rect x="710" y="1333" width="180" height="32" rx="6" fill="#3b82f6"></rect>
+    <text x="800" y="1353" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">查看完整报告 →</text>
+
+    <text x="800" y="1375" text-anchor="middle" font-size="9" fill="#94a3b8">/report/v2/{uuid}</text>
+  </g>
+
+  <!-- 失败分支注释 -->
+  <g>
+    <rect x="50" y="1242" width="200" height="92" rx="10" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4 3"></rect>
+    <text x="150" y="1264" text-anchor="middle" font-size="12" font-weight="700" fill="#78350f">失败分支</text>
+    <text x="150" y="1284" text-anchor="middle" font-size="10" fill="#92400e">LLM 失败 → 分析失败</text>
+    <text x="150" y="1300" text-anchor="middle" font-size="10" fill="#92400e">Base 同步失败 → 写入失败</text>
+    <text x="150" y="1318" text-anchor="middle" font-size="10" font-weight="600" fill="#78350f">其他字段不清空</text>
+  </g>
+
+  <!-- 底部说明 -->
+  <text x="460" y="1425" text-anchor="middle" font-size="11" fill="#64748b" font-style="italic">关键设计：Supabase 是真相源 · Base 只展示终态 · 失败不清空</text>
+</svg>
+
+</div>
+
+
+</body></html>
