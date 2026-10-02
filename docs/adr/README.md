@@ -40,3 +40,8 @@ ADR 回答的是「为什么是这样」。它不是教程、API 文档、操作
 | ADR | 标题 | Status | Date |
 | --- | --- | --- | --- |
 | [ADR-001](./ADR-001-use-feishu-official-sdk-for-meeting-integration.md) | Use Feishu Official SDK for Meeting Integration | Accepted | 2026-07-20 |
+| [ADR-002](./ADR-002-ai-host-integration-architecture.md) | Keep the Always-On Service as Event Source; Integrate AI Hosts as Interaction and Delivery Surface | Proposed | 2026-10-02 |
+
+## 标注类别
+
+`ADR-002` 起新增 `[Host]` 标注类别，用于标记「于本机宿主程序实测所得、附可复现命令、但不进入本仓库」的外部平台事实。理由：宿主能力既不能由本仓库证明，也不属于 Human Owner 的主观背景，混入 `[Repo]` 或 `[Owner]` 会破坏 ADR 的可分辨性。`[Host]` 证据随宿主版本变化可能失效，需在使用处显式提示。
