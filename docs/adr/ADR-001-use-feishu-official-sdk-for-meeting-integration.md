@@ -104,7 +104,7 @@ Feishu Workflow / 工作配方  →  Direct Open API  →  飞书 CLI  →  Feis
 - 敏感字段（App Secret、access/refresh token 等）必须走统一 `encrypt()` / `decrypt()`，且只在服务端解密。**[Repo]**
 - 业务函数必须显式接收 `integrationId` / `integrationConfig`，禁止从 `process.env` 读取用户级配置。**[Repo]**
 - SDK 升级前需回归 `registerApp`、`WSClient` 事件消费、令牌刷新与 OpenAPI 调用四条路径。
-- **[Owner]** 后续计划把飞书事件监听与推送能力插件化 / Skill 化，并把会议分析能力沉淀为 Skill；该方向可能再次改变集成的封装边界，届时应新建 ADR 而非改写本条。
+- 如果未来飞书集成的封装边界发生实质变化，应创建新的 ADR，并明确是否 Supersede ADR-001，而不是改写本 ADR 的历史决策。
 
 ## Evidence
 
