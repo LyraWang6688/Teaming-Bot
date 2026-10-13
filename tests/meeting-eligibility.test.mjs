@@ -153,6 +153,8 @@ function processorFixture(gate) {
     './reauthShared': { isReauthorizationGateReason: (code) => typeof code === 'string' && (code.startsWith('oauth_') || code === 'integration_authorization_invalid') },
     '../im/reauthorizationReminderService': { async maybeSendReauthorizationReminder() { return { sent: false }; } },
     './status': { FEISHU_PROCESS_STATUS: { checkingEligibility:'checking', gatedSkipped:'skipped', fetchingTranscript:'transcript' } },
+    // payload 解析是纯函数模块，用真实实现（默认 mock 是空对象会导致取值为 undefined）
+    './pipelineTaskPayload': load('src/lib/feishu/pipeline/pipelineTaskPayload.ts', {}, {}),
     './meetingPipelineTaskStore': {
       async getMeetingPipelineTaskByEventId() { return null; },
       async upsertMeetingPipelineTaskForMinuteGenerated() { enqueues++; return {task,created:true,duplicate:false}; },

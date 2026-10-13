@@ -18,6 +18,13 @@ import {
 import { enqueueBaseSyncTask } from '../delivery/baseSyncTaskStore';
 import { enqueueNotificationTask } from '../delivery/notificationTaskStore';
 import {
+  asRecord,
+  asString,
+  getTargetFromPayload,
+  getEventReceivedAtFromPayload,
+  isNotificationSuppressedFromPayload,
+} from './pipelineTaskPayload';
+import {
   bindMeetingRecordRecipient,
   getMeetingRecordByIntegrationAndMeeting,
   persistMeetingReport,
@@ -118,30 +125,6 @@ function getMeetingPipelineKey(context: Pick<MinuteGeneratedSource, 'meetingId' 
   return `${context.integration.id}:${context.meetingId}`;
 }
 
-function getTargetFromPayload(payload: Record<string, unknown>): string | undefined {
-  const target = asRecord(payload.target);
-  return asString(target.orgTargetId);
-}
-
-function getEventReceivedAtFromPayload(payload: Record<string, unknown>): string | undefined {
-  const telemetry = asRecord(payload.telemetry);
-  return asString(telemetry.eventReceivedAt);
-}
-
-/**
- * 是否抑制卡片推送（只写多维表格、不打扰用户）。
- *
- * 用途：补历史积压时，报告照常分析、照常写入 Base，
- * 但通知任务以 `cancelled` 入队——留痕可查、不发送，
- * 之后一句 UPDATE 就能把它改回 pending 补推。
- *
- * 标记写在 `meeting_pipeline_tasks.payload.delivery.suppressNotification`。
- */
-function isNotificationSuppressedFromPayload(payload: Record<string, unknown>): boolean {
-  const delivery = asRecord(payload.delivery);
-  return delivery.suppressNotification === true;
-}
-
 function parseIsoTimestamp(value?: string | null): number | null {
   if (!value) {
     return null;
@@ -186,14 +169,6 @@ async function getMeetingBitableAccess(context: {
   }
 
   return createSelectedOrgTargetBitableAccess(context.integration);
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
 function getEventId(envelope: FeishuEventEnvelope): string | undefined {
