@@ -50,6 +50,13 @@ export type ResilientPollerOptions = {
    * 仅在需要更灵敏的卡死检测（或测试）时覆盖。
    */
   watchdogIntervalMs?: number;
+  /**
+   * 是否在 start() 后立刻执行一次。默认 true。
+   *
+   * 对间隔很长的 worker（例如 6 小时的令牌刷新、24 小时的健康检查）尤其重要——
+   * 否则部署后要等一整个间隔才会有第一次执行。
+   */
+  runImmediately?: boolean;
   poll: () => Promise<void>;
   onPollError: (error: unknown) => void;
   onStall: (context: { heldMs: number; stalledCount: number; stallThresholdMs: number }) => void;
@@ -122,7 +129,11 @@ export function createResilientPoller(options: ResilientPollerOptions): Resilien
     start() {
       if (running) return;
       running = true;
+      // 先排程再立刻执行一次（默认），避免长间隔 worker 部署后要等一整个间隔。
       scheduleTick();
+      if (options.runImmediately !== false) {
+        void runOnce();
+      }
       startWatchdog();
     },
     stop() {

@@ -119,6 +119,7 @@ test('stop() 之后不再轮询', async () => {
     intervalMs: 20,
     stallThresholdMs: 1_000,
     watchdogIntervalMs: 20,
+    runImmediately: false,
     poll: () => {
       calls += 1;
       return Promise.resolve();
@@ -142,6 +143,7 @@ test('正常轮询的 snapshot 能反映运行状态与完成时间', async () =
     intervalMs: 20,
     stallThresholdMs: 1_000,
     watchdogIntervalMs: 20,
+    runImmediately: false,
     poll: () => Promise.resolve(),
     onPollError: () => {},
     onStall: () => {},
@@ -155,4 +157,45 @@ test('正常轮询的 snapshot 能反映运行状态与完成时间', async () =
   assert.equal(snapshot.running, true, 'stop 前应处于运行态');
   assert.ok(snapshot.lastCompletedAt, '应记录上次完成时间');
   assert.equal(snapshot.stalledCount, 0, '正常轮询不应有卡死');
+});
+
+test('默认在 start() 后立刻执行一次（长间隔 worker 需要）', async () => {
+  let calls = 0;
+  const poller = createResilientPoller({
+    intervalMs: 5_000,
+    stallThresholdMs: 60_000,
+    poll: () => {
+      calls += 1;
+      return Promise.resolve();
+    },
+    onPollError: () => {},
+    onStall: () => {},
+  });
+
+  poller.start();
+  await sleep(50);
+  poller.stop();
+
+  assert.equal(calls, 1, '不等一个间隔就应先执行一次');
+});
+
+test('runImmediately=false 时不在 start() 后立刻执行', async () => {
+  let calls = 0;
+  const poller = createResilientPoller({
+    intervalMs: 5_000,
+    stallThresholdMs: 60_000,
+    runImmediately: false,
+    poll: () => {
+      calls += 1;
+      return Promise.resolve();
+    },
+    onPollError: () => {},
+    onStall: () => {},
+  });
+
+  poller.start();
+  await sleep(50);
+  poller.stop();
+
+  assert.equal(calls, 0);
 });
