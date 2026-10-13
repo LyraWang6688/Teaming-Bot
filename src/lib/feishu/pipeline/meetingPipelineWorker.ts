@@ -1,4 +1,5 @@
 import { assertServerRuntimeEnabled } from '@/lib/platform/serverRuntime';
+import { createResilientPoller, type ResilientPoller } from '@/lib/platform/resilientPoller';
 import {
   claimDueMeetingPipelineTasks,
   failMeetingPipelineTask,
@@ -14,10 +15,14 @@ const WORKER_BATCH_SIZE = Number(process.env.FEISHU_MEETING_WORKER_BATCH_SIZE ||
 const WORKER_LOCK_TTL_MS = Number(
   process.env.FEISHU_MEETING_WORKER_LOCK_TTL_MS || 20 * 60_000
 );
+/** 单次轮询允许的最长挂起时间；超过即判卡死并由 watchdog 拉起 */
+const WORKER_STALL_THRESHOLD_MS = Number(
+  process.env.FEISHU_MEETING_WORKER_STALL_THRESHOLD_MS || 5 * 60_000
+);
 
 const globalForMeetingWorker = globalThis as typeof globalThis & {
   __feishuMeetingWorkerStarted?: boolean;
-  __feishuMeetingWorkerTimer?: ReturnType<typeof setTimeout>;
+  __feishuMeetingWorkerPoller?: ResilientPoller;
 };
 
 async function pollMeetingPipelineTasks() {
@@ -29,12 +34,10 @@ async function pollMeetingPipelineTasks() {
       });
 
       if (!tasks.length) break;
-      if (tasks.length > 0) {
-        logFeishuMonitor('info', 'meeting_pipeline_worker_claimed', {
-          taskCount: tasks.length,
-          taskIds: tasks.map((task) => task.id),
-        });
-      }
+      logFeishuMonitor('info', 'meeting_pipeline_worker_claimed', {
+        taskCount: tasks.length,
+        taskIds: tasks.map((task) => task.id),
+      });
 
       for (const task of tasks) {
         try {
@@ -58,11 +61,6 @@ async function pollMeetingPipelineTasks() {
     }
   } catch (error) {
     logFeishuMonitor('error', 'meeting_pipeline_worker_poll_failed', toErrorContext(error));
-  } finally {
-    globalForMeetingWorker.__feishuMeetingWorkerTimer = setTimeout(
-      pollMeetingPipelineTasks,
-      WORKER_POLL_INTERVAL_MS
-    );
   }
 }
 
@@ -73,14 +71,41 @@ export function startFeishuMeetingPipelineWorker() {
   }
 
   globalForMeetingWorker.__feishuMeetingWorkerStarted = true;
+
+  // 排程与单次执行解耦：单次轮询挂起不再能杀死循环。
+  // 详见 src/lib/platform/resilientPoller.ts 里的事故说明。
+  const poller = createResilientPoller({
+    intervalMs: WORKER_POLL_INTERVAL_MS,
+    stallThresholdMs: WORKER_STALL_THRESHOLD_MS,
+    poll: pollMeetingPipelineTasks,
+    onPollError: (error) => {
+      logFeishuMonitor('error', 'meeting_pipeline_worker_poll_failed', toErrorContext(error));
+    },
+    onStall: (context) => {
+      logFeishuMonitor('error', 'meeting_pipeline_worker_stalled', {
+        ...context,
+        snapshot: poller.snapshot(),
+        message: '单次轮询挂起超时，已释放执行标记并继续调度。',
+      });
+    },
+  });
+
+  globalForMeetingWorker.__feishuMeetingWorkerPoller = poller;
+  poller.start();
+
   logFeishuMonitor('info', 'meeting_pipeline_worker_started', {
     pollIntervalMs: WORKER_POLL_INTERVAL_MS,
     batchSize: WORKER_BATCH_SIZE,
     lockTtlMs: WORKER_LOCK_TTL_MS,
+    stallThresholdMs: WORKER_STALL_THRESHOLD_MS,
   });
+}
 
-  globalForMeetingWorker.__feishuMeetingWorkerTimer = setTimeout(
-    pollMeetingPipelineTasks,
-    0
-  );
+/** 供运维/诊断读取 worker 运行状态（是否在跑、上次完成时间、卡死次数） */
+export function getFeishuMeetingPipelineWorkerHealth() {
+  const poller = globalForMeetingWorker.__feishuMeetingWorkerPoller;
+  if (!poller) {
+    return { started: Boolean(globalForMeetingWorker.__feishuMeetingWorkerStarted), poller: null };
+  }
+  return { started: true, poller: poller.snapshot() };
 }
