@@ -33,6 +33,7 @@ import {
   writeAuditLog,
 } from './integrationStore';
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
+import { sendOpsAlert } from '../ops/opsAlertService';
 
 export const DEFAULT_EXPIRING_SOON_DAYS = 3;
 export const DEFAULT_QUIET_DAYS = 7;
@@ -122,6 +123,64 @@ export function classifyDeliveryHealth(input: {
   }
 
   return { level: 'ok', reasonCode: 'healthy', message: '授权有效且事件投递正常。' };
+}
+
+/**
+ * 每个 reasonCode 对应的「该怎么办」。
+ *
+ * 告警只报错没有意义——收到的人必须知道下一步动作。
+ */
+const REASON_GUIDANCE: Record<string, string> = {
+  authorization_missing: '该集成没有用户授权记录，需先完成初始化。',
+  authorization_invalid:
+    '**需用户重新授权**。若该应用被飞书管控策略拒绝（21001，表现为「当前账号无法使用该应用」），需先在开发者后台配置**可用范围**并发布版本。',
+  refresh_token_expired:
+    '令牌已过期且无法自愈。在 85 天补发窗口内可重新授权后自动补发；超出窗口的会议不再补发。',
+  refresh_token_expiring_soon: '主动刷新调度器会处理；若持续告警说明续期失败，需查应用凭证。',
+  no_event_ever: '该集成从未收到过事件。确认是否有带妙记录制的会议，以及事件订阅是否生效。',
+  no_event_for_a_while:
+    '长时间无事件。若期间确有会议，说明投递可能已中断（**2026-10-26 起未授权用户不再投递且无法补发**）；若确实没有会议可忽略。',
+  health_check_failed: '健康检查本身失败，需查看日志。',
+};
+
+/**
+ * 把扫描结果整理成可读告警。无异常时返回 null（不发无意义的消息）。
+ *
+ * 纯函数，便于测试。
+ */
+export function buildDeliveryHealthAlert(
+  summary: DeliveryHealthSweepSummary
+): { title: string; markdown: string } | null {
+  if (summary.error === 0 && summary.warn === 0) return null;
+
+  const byReason = new Map<string, number>();
+  for (const item of summary.warnings) {
+    byReason.set(item.reasonCode, (byReason.get(item.reasonCode) ?? 0) + 1);
+  }
+
+  const lines: string[] = [
+    `**事件投递健康检查**：扫描 ${summary.scanned} 个集成`,
+    `🔴 异常 ${summary.error} ／ 🟡 告警 ${summary.warn} ／ ✅ 正常 ${summary.ok}`,
+    '',
+  ];
+
+  const ordered = [...byReason.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [reasonCode, count] of ordered) {
+    lines.push(`**${reasonCode}** × ${count}`);
+    const guidance = REASON_GUIDANCE[reasonCode];
+    if (guidance) lines.push(`> ${guidance}`);
+    lines.push('');
+  }
+
+  lines.push('---');
+  lines.push(
+    '**为什么现在就要处理**：飞书 2026-10-26 起，未授权用户的事件将不再投递，届时这些集成的会议会**直接丢失且无法补发**。'
+  );
+
+  return {
+    title: '⚠️ 事件投递健康检查发现异常',
+    markdown: lines.join('\n'),
+  };
 }
 
 /** 一次性取出所有集成的最近事件时间（避免 N+1） */
@@ -250,6 +309,13 @@ export async function sweepIntegrationDeliveryHealth(
     });
   } catch (error) {
     logFeishuMonitor('error', 'event_delivery_health_audit_failed', toErrorContext(error));
+  }
+
+  // 审计表是兜底（推送哑了也能查）；推送是"人能看到"的那一层。
+  // 推送永不抛错，失败只记日志。
+  const alert = buildDeliveryHealthAlert(summary);
+  if (alert) {
+    await sendOpsAlert({ title: alert.title, markdown: alert.markdown });
   }
 
   return summary;

@@ -21,7 +21,12 @@ function load(path, mocks = {}) {
   return exports;
 }
 
-const { classifyDeliveryHealth, DEFAULT_EXPIRING_SOON_DAYS, DEFAULT_QUIET_DAYS } = load(
+const {
+  classifyDeliveryHealth,
+  buildDeliveryHealthAlert,
+  DEFAULT_EXPIRING_SOON_DAYS,
+  DEFAULT_QUIET_DAYS,
+} = load(
   'src/lib/feishu/integration/integrationDeliveryHealth.ts',
   {
     '@/lib/db/client': { getDb: () => ({}) },
@@ -33,6 +38,7 @@ const { classifyDeliveryHealth, DEFAULT_EXPIRING_SOON_DAYS, DEFAULT_QUIET_DAYS }
       writeAuditLog: async () => {},
     },
     '../common/monitor': { logFeishuMonitor() {}, toErrorContext: () => ({}) },
+    '../ops/opsAlertService': { sendOpsAlert: async () => ({ sent: false, reason: 'test' }) },
   }
 );
 
@@ -129,4 +135,71 @@ test('阈值可配置', () => {
   });
   assert.equal(quiet.level, 'warn');
   assert.equal(quiet.reasonCode, 'no_event_for_a_while');
+});
+
+// ─────────── 告警内容（A+C 方案的 A 层） ───────────
+
+function summary(overrides = {}) {
+  return {
+    scanned: 28,
+    ok: 4,
+    warn: 1,
+    error: 23,
+    warnings: [],
+    durationMs: 100,
+    ...overrides,
+  };
+}
+
+test('无异常时不发告警（不发无意义消息）', () => {
+  assert.equal(buildDeliveryHealthAlert(summary({ ok: 28, warn: 0, error: 0 })), null);
+});
+
+test('有异常时生成告警，含计数与分组', () => {
+  const alert = buildDeliveryHealthAlert(
+    summary({
+      warnings: [
+        { integrationId: 'a', level: 'error', reasonCode: 'authorization_invalid' },
+        { integrationId: 'b', level: 'error', reasonCode: 'authorization_invalid' },
+        { integrationId: 'c', level: 'warn', reasonCode: 'no_event_ever' },
+      ],
+      error: 2,
+      warn: 1,
+    })
+  );
+  assert.ok(alert);
+  assert.match(alert.title, /异常/);
+  assert.match(alert.markdown, /authorization_invalid\*\* × 2/);
+  assert.match(alert.markdown, /no_event_ever\*\* × 1/);
+  assert.match(alert.markdown, /异常 2/);
+});
+
+test('告警必须带「该怎么办」，不能只报错', () => {
+  const alert = buildDeliveryHealthAlert(
+    summary({
+      warnings: [{ integrationId: 'a', level: 'error', reasonCode: 'authorization_invalid' }],
+      error: 1,
+      warn: 0,
+    })
+  );
+  assert.ok(alert);
+  assert.match(alert.markdown, /需用户重新授权/);
+  assert.match(alert.markdown, /可用范围/, '要告诉人去配可用范围');
+});
+
+test('告警里说明 10-26 变更的紧迫性', () => {
+  const alert = buildDeliveryHealthAlert(
+    summary({ warnings: [{ integrationId: 'a', level: 'error', reasonCode: 'authorization_invalid' }], error: 1, warn: 0 })
+  );
+  assert.ok(alert);
+  assert.match(alert.markdown, /2026-10-26/);
+  assert.match(alert.markdown, /无法补发/);
+});
+
+test('未知 reasonCode 也不会崩（只是没有指引）', () => {
+  const alert = buildDeliveryHealthAlert(
+    summary({ warnings: [{ integrationId: 'a', level: 'error', reasonCode: 'brand_new_code' }], error: 1, warn: 0 })
+  );
+  assert.ok(alert);
+  assert.match(alert.markdown, /brand_new_code/);
 });
