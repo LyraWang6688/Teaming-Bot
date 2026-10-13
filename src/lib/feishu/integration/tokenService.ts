@@ -124,8 +124,19 @@ async function refreshAuthorization(
   }
 }
 
+/**
+ * 取一个可用的用户授权；必要时自动续期。
+ *
+ * @param options.forceRefresh
+ *   即使当前 access token 还没过期也强制续期一次。
+ *   用于主动刷新调度器——见 `tokenRefreshSweeper.ts`：
+ *   飞书的 refresh token **只有 7 天有效期**且每次续期才会顺延，
+ *   而默认路径只在 access token（约 2 小时）失效时才续期，
+ *   因此"长期没有业务请求"会让 refresh token 自然过期，用户被动掉线。
+ */
 export async function getValidIntegrationUserAuthorization(
-  integration: FeishuIntegrationContext
+  integration: FeishuIntegrationContext,
+  options: { forceRefresh?: boolean } = {}
 ): Promise<FeishuAuthorizationContext> {
   const authorization = await getLatestFeishuAuthorizationContext(integration.id);
   if (!authorization || authorization.status !== 'authorized') {
@@ -143,7 +154,7 @@ export async function getValidIntegrationUserAuthorization(
     );
   }
 
-  if (isAccessTokenUsable(authorization)) {
+  if (!options.forceRefresh && isAccessTokenUsable(authorization)) {
     return authorization;
   }
 

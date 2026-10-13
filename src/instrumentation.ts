@@ -17,11 +17,23 @@ export async function register() {
     startAllListeners,
     startInactiveListenerSweeper,
   } = await import('./lib/feishu/events/eventListenerManager');
+  const { startFeishuTokenRefreshWorker } = await import(
+    './lib/feishu/integration/tokenRefreshWorker'
+  );
+  const { startFeishuDeliveryHealthWorker } = await import(
+    './lib/feishu/integration/integrationHealthWorker'
+  );
   const { logFeishuMonitor, toErrorContext } = await import('./lib/feishu/common/monitor');
 
   startFeishuMeetingPipelineWorker();
   // Base/通知交付 worker：首次轮询立即执行，同时承担重启后租约过期任务的恢复
   startDeliveryWorkers();
+  // 主动刷新用户授权：refresh token 只有 7 天有效期，必须脱离业务请求独立续期。
+  // 详见 tokenRefreshSweeper.ts 顶部说明。
+  startFeishuTokenRefreshWorker();
+  // 事件投递健康检查：飞书 2026-10-26 起，未授权用户的事件将不再投递且无法补发。
+  // 详见 integrationDeliveryHealth.ts 顶部说明。
+  startFeishuDeliveryHealthWorker();
   await recoverFeishuMeetingPipelinesOnStartup();
   await startAllListeners();
   startInactiveListenerSweeper();
