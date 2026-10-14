@@ -6,6 +6,8 @@
  *   node scripts/createHostEnrollmentCode.mjs --integration <集成ID> [--label 给谁用] [--max-uses 5] [--days 30]
  *   node scripts/createHostEnrollmentCode.mjs --list
  *   node scripts/createHostEnrollmentCode.mjs --revoke <接入码>
+ *   node scripts/createHostEnrollmentCode.mjs --list-credentials [--integration <集成ID>]
+ *   node scripts/createHostEnrollmentCode.mjs --revoke-credential <凭证ID 或 前缀>
  *
  * 生成后把码发给用户，让他在宿主里执行：
  *   npx teaming-mcp setup --code <接入码>
@@ -79,6 +81,45 @@ async function main() {
       return;
     }
 
+    if (flags['list-credentials']) {
+      const params = [];
+      let sqlText = `select c.id, c.label, c.installation_id, c.created_at, c.last_used_at, c.revoked_at,
+                             i.app_id, u.feishu_name
+                        from host_credentials c
+                        join feishu_integrations i on i.id = c.integration_id
+                        left join users u on u.id = i.user_id`;
+      if (flags.integration) { sqlText += ' where c.integration_id = $1'; params.push(flags.integration); }
+      sqlText += ' order by c.created_at desc limit 50';
+      const { rows } = await client.query(sqlText, params);
+      if (rows.length === 0) { console.log('（还没有宿主凭证）'); return; }
+      console.log('凭证ID(前12位)\t用户\t设备\t最近使用\t状态');
+      for (const r of rows) {
+        const state = r.revoked_at ? '已吊销' : '有效';
+        const used = r.last_used_at ? new Date(r.last_used_at).toISOString().slice(0, 16).replace('T', ' ') : '从未';
+        console.log(`${r.id.slice(0, 12)}\t${r.feishu_name ?? '-'}\t${r.installation_id ?? '-'}\t${used}\t${state}`);
+      }
+      return;
+    }
+
+    if (flags['revoke-credential']) {
+      // 支持前缀匹配：用户手上通常只有界面里显示的前 12 位
+      const key = String(flags['revoke-credential']).trim();
+      const { rows: matched } = await client.query(
+        `select id from host_credentials where id::text like $1 and revoked_at is null`,
+        [`${key}%`]
+      );
+      if (matched.length === 0) { console.error(`❌ 没找到有效的凭证：${key}`); process.exit(1); }
+      if (matched.length > 1) {
+        console.error(`❌ 前缀匹配到 ${matched.length} 个凭证，请多给几位：`);
+        for (const m of matched) console.error('   ' + m.id);
+        process.exit(1);
+      }
+      await client.query('update host_credentials set revoked_at = now() where id = $1', [matched[0].id]);
+      console.log(`✅ 已吊销凭证 ${matched[0].id}`);
+      console.log('   该机器下次上传会被拒（401），需重新用接入码 setup。');
+      return;
+    }
+
     if (flags.revoke) {
       const code = String(flags.revoke).trim().toUpperCase();
       const { rowCount } = await client.query(
@@ -91,7 +132,12 @@ async function main() {
 
     const integrationId = flags.integration;
     if (!integrationId) {
-      console.error('用法：node scripts/createHostEnrollmentCode.mjs --integration <集成ID> [--label 给谁用] [--max-uses 5] [--days 30]');
+      console.error('用法：');
+      console.error('  生成接入码：--integration <集成ID> [--label 给谁用] [--max-uses 5] [--days 30]');
+      console.error('  查看接入码：--list');
+      console.error('  吊销接入码：--revoke <接入码>');
+      console.error('  查看凭证：  --list-credentials [--integration <集成ID>]');
+      console.error('  吊销凭证：  --revoke-credential <凭证ID 或前缀>');
       process.exit(1);
     }
 
