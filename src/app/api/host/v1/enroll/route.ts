@@ -86,6 +86,16 @@ export async function POST(request: NextRequest) {
       installationId,
     });
 
+    // 顺带下发模型配置，让用户"一个码"就能配好——否则他还要手工填 key、端点、模型。
+    //
+    // 取舍：这会把分析用的模型 key 发到用户机器上。当前阶段（模型费用由我们承担）
+    // 这是有意的；将来若改成"分析也走服务端"，这三个字段就该撤掉。
+    const analysis = {
+      apiKey: (process.env.DOUBAO_API_KEY || process.env.LLM_API_KEY || process.env.ARK_API_KEY || '').trim() || null,
+      baseUrl: (process.env.DOUBAO_BASE_URL || process.env.LLM_BASE_URL || process.env.ARK_BASE_URL || '').trim() || null,
+      model: (process.env.DOUBAO_MODEL || process.env.ANALYSIS_MODEL || '').trim() || null,
+    };
+
     // token 明文只在这里返回一次，服务端只留 hash
     return NextResponse.json({
       ok: true,
@@ -93,6 +103,7 @@ export async function POST(request: NextRequest) {
       integrationId: integration.id,
       integrationName: integration.name ?? null,
       installationId,
+      analysis,
     });
   } catch (error) {
     logFeishuMonitor('error', 'host_enroll_failed', { route: ROUTE, ...toErrorContext(error) });
