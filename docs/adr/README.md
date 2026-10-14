@@ -42,6 +42,7 @@ ADR 回答的是「为什么是这样」。它不是教程、API 文档、操作
 | [ADR-001](./ADR-001-use-feishu-official-sdk-for-meeting-integration.md) | Use Feishu Official SDK for Meeting Integration | Accepted | 2026-07-20 |
 | [ADR-002](./ADR-002-ai-host-integration-architecture.md) | Keep the Always-On Service as Event Source; Integrate AI Hosts as Interaction and Delivery Surface | Proposed | 2026-10-02 |
 | [ADR-003](./ADR-003-host-provides-transcript-analysis-separation.md) | 取数与分析分离：宿主提供逐字稿，MCP 只做分析 | Accepted | 2026-10-14 |
+| [ADR-004](./ADR-004-http-analysis-channel-for-automation.md) | 为自动化补一条 HTTP 分析通道——宿主取数，服务器分析 | Proposed | 2026-10-15 |
 
 ## 标注类别
 

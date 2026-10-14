@@ -1,8 +1,10 @@
 # AI 宿主接入设计
 
-> 最后更新时间：2026-10-02
+> 最后更新时间：2026-10-15
 > 状态：**设计阶段，尚未实施**。本文描述目标形态与落地路径，不代表当前系统已有行为。
-> 决策依据：[ADR-002](./adr/ADR-002-ai-host-integration-architecture.md)
+> 决策依据：[ADR-002](./adr/ADR-002-ai-host-integration-architecture.md)、
+> [ADR-003](./adr/ADR-003-host-provides-transcript-analysis-separation.md)（取数与分析分离）、
+> [ADR-004](./adr/ADR-004-http-analysis-channel-for-automation.md)（自动化通道，见第十六节）
 > 关联文档：[飞书集成设计.md](./飞书集成设计.md)、[项目结构说明.md](./项目结构说明.md)、[后台分析逻辑说明.md](./后台分析逻辑说明.md)
 
 ---
@@ -439,7 +441,7 @@ host_delivery_cursors
 
 ---
 
-## 十一、部署注意：新增路由必须同步 nginx 白名单
+## 附录一、部署注意：新增路由必须同步 nginx 白名单
 
 **生产环境的 `meeting.bamamei.online` 在 nginx 层有一份按路径的白名单**
 （`/etc/nginx/snippets/allowlist-meeting.conf`），原则是"一条不多放"。
@@ -462,3 +464,165 @@ sudo cp -a /etc/nginx/snippets/allowlist-meeting.conf{,.bak}
 # 追加 location = <新路由> { include /etc/nginx/snippets/proxy-meeting.conf; }
 sudo nginx -t && sudo systemctl reload nginx
 ```
+
+---
+
+## 十六、自动化通道：`POST /api/host/v1/analyze`（ADR-004）
+
+> 决策依据：[ADR-004](./adr/ADR-004-http-analysis-channel-for-automation.md)
+> 状态：**设计阶段，尚未实现**。
+
+### 16.1 为什么需要它
+
+MCP 通道在【普通对话】里工作正常，但在**豆包工作的定时任务环境**里拿不到 MCP 工具
+（宿主原文：`Tool not found or is not available`，两次独立运行均如此）。
+
+「自动」依赖宿主调度，而宿主调度恰好跑在拿不到 MCP 工具的环境里 —— 把自动化绑死在
+stdio MCP 上等于放弃自动。本接口走**命令行 / 网络**通道，**不经过宿主的工具集**。
+
+**分工一个字没改**（ADR-003）：取数与投递仍由宿主用自带飞书能力完成；
+变的只是**分析在哪台机器执行**。
+
+### 16.2 与 MCP 通道的关系
+
+| | MCP（交互式） | HTTP（自动化）★本文 |
+|---|---|---|
+| 用在 | 普通对话里让 AI 分析一场会 | 定时任务 / 任何拿不到 MCP 工具的宿主 |
+| 分析在哪 | 宿主本机（逐字稿不出本机） | 服务器（逐字稿随请求上传） |
+| 引擎 | `teaming-mcp` 里的 vendored copy | **同一个** `src/lib/analysis/` |
+| 幂等键 | 逐字稿内容哈希 | **同一个**规则 |
+| 报告页 | 服务器 | **同一个**页面 |
+
+**两条通道必须给出同一个报告。** 新增能力时要明确：给哪条通道，还是两条都给。
+
+### 16.3 契约
+
+```
+POST /api/host/v1/analyze
+Authorization: Bearer <host token>
+Content-Type: application/json
+```
+
+**请求体**
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `transcript` | ✅ | 妙记导出的**文字转录稿**原文。不接受 AI 摘要 / 会议纪要 / 待办列表 |
+| `title` | — | 会议标题，用于报告命名与卡片 |
+| `meetingStartedAt` | — | 形如 `2026-10-13 22:13`，可空 |
+| `feishuMeetingId` | — | 便于对账与反查，可空 |
+| `clientRequestId` | — | 幂等键；不传则用逐字稿内容哈希 |
+| `integrationId` | — | **⚠️ 见 16.5：调用方不能指定归属** |
+
+**成功响应 200**
+
+```json
+{
+  "ok": true,
+  "reportPublicId": "078404e4-a2cc-43b4-9957-63526128104e",
+  "reportUrl": "https://meeting.bamamei.online/report/v2/078404e4-…",
+  "zone": "Apathy",
+  "zoneLabel": "可能是冷漠区或舒适区",
+  "meetingType": "技术支持/排障",
+  "durationLabel": "7分钟 43秒",
+  "participantCount": 3,
+  "reused": false,
+  "elapsedMs": 24183
+}
+```
+
+`reused: true` 表示命中幂等（同一份逐字稿此前已分析过），**没有重复消耗模型额度**。
+
+**错误响应**
+
+```json
+{ "ok": false,
+  "error": {
+    "type": "transcript",
+    "code": "transcript_not_speaker_lines",
+    "message": "这不是可用的逐字稿（只认出 2 条「姓名 时间 内容」形式的发言）。团队动力分析需要成员原始发言，不接受 AI 摘要或其他产物。"
+  } }
+```
+
+| HTTP | `error.type` | 含义 | 宿主该做什么 |
+|---|---|---|---|
+| 400 | `transcript` | 逐字稿不合格（发言条数不足 / 是摘要） | **如实转告用户**，不要重试、不要编造报告 |
+| 401 | `auth` | token 无效或已吊销 | 提示用户重新用接入码配置 |
+| 422 | `analysis` | 引擎分析失败 | 可重试一次 |
+| 429 | `rate_limit` | 触发限流 | 退避后重试 |
+| 500 | `server` | 服务器内部错误 | 可重试 |
+
+**错误必须映射为内部错误码**（对齐 `AGENTS.md` 4.3）：页面 / 宿主只消费 `error.type` + `error.code`，
+不消费飞书或模型的原始报错文本。
+
+### 16.4 幂等
+
+- 幂等键 = `clientRequestId`（若传）否则 **逐字稿内容 SHA-256**。
+- 命中时直接返回已有 `reportUrl`，`reused: true`，**不调模型**。
+- 幂等是**超时兜底**的关键：宿主 HTTP 超时后重试，不会重复烧额度。
+
+### 16.5 归属：由凭证决定，调用方不能指定
+
+沿用 `/api/host/v1/reports` 的既有规则：**归属集成由 host token 反查得到**，
+调用方即使传 `integrationId` 也**不生效**。
+
+理由：接入码决定"报告归到谁名下"。若允许调用方指定，任何人都能把报告塞进别人的账下。
+
+### 16.6 同步 or 异步
+
+**本期选同步**：
+
+- 分析约 20~60 秒，宿主把 HTTP 超时设到 **120 秒**即可。
+- 即使超时，报告**仍会生成**；幂等保证重试能拿到同一个 `reportUrl`（16.4）。
+- 不需要新增任务状态表。
+
+**若实测发现宿主的 HTTP 超时无法调大**，再退回异步形态（返回 `jobId` + 轮询端点）。
+届时需要新增状态表，并复用 MCP 侧已有的 job 语义。
+
+### 16.7 部署注意
+
+1. **必须同步 nginx 白名单。** 在 `/etc/nginx/snippets/allowlist-meeting.conf` 增加：
+
+   ```nginx
+   location = /api/host/v1/analyze { include /etc/nginx/snippets/proxy-meeting.conf; }
+   ```
+
+   漏加的后果今天已踩过：**外部访问返回 HTTP 000**（不是 404），容器内却是 401，很费时间。
+
+2. 改 `.env.production` 后必须 `docker compose up -d --force-recreate meeting-analysis`，
+   普通 `up -d --build` **不会**重新注入新变量。
+
+3. 上线前先 `nginx -t` 再 reload。
+
+### 16.8 宿主侧怎么用（定时任务提示词）
+
+```
+监控我在飞书会议里产生的妙记，发现新妙记就做团队动力分析，并把报告发给我。
+
+执行步骤：
+1) 用你自己的飞书能力查询最近 2 小时我参与或我拥有的妙记，按 token 去重；
+   与上次已处理过的 minute_token 比对，只处理新出现的。查询为空就如实说明。
+
+2) 对每个新妙记，用你自己的飞书能力导出【妙记文字转录稿】。
+   拿不到就如实说明，不要用 AI 摘要替代。
+
+3) 用 HTTP POST 调用 https://meeting.bamamei.online/api/host/v1/analyze
+   （Authorization: Bearer <接入码换来的 host token>），body 传：
+     transcript = 上一步的逐字稿原文
+     title      = 妙记标题
+   超时设 120 秒。返回里拿 reportUrl。
+
+4) 把 reportUrl 以卡片形式发到【我自己的】单聊会话。
+
+约束：查询为空就如实说明；报告不合格（400）就转告用户不要重试；不要编造。
+```
+
+### 16.9 未确认事项
+
+| # | 事项 | 怎么确认 |
+|---|---|---|
+| 1 | 豆包工作的定时任务能否发起 HTTP 请求 | 本接口上线后，用一次真实多人会议实测 |
+| 2 | 定时任务的 HTTP 超时上限 | 同上；若过短则改异步形态（16.6） |
+| 3 | 定时任务是否能读环境变量 / 保存 token | 若不安全，改为让用户在任务里显式带 token（或改用「一次性票据」） |
+| 4 | 逐字稿上传的合规边界 | **需 Owner 决策**：是否在接入文档里显式告知用户 |
+
