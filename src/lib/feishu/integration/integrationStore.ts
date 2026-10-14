@@ -497,27 +497,63 @@ export async function listActiveFeishuIntegrationContextsWithBase(): Promise<Fei
   return rows.map(mapIntegrationContext);
 }
 
+/**
+ * 「废弃的未完成集成」判定——纯函数，便于测试。
+ *
+ * 这是 2026-10-14 数据损坏事故的防线。
+ *
+ * 事故链：授权过期 → 监听启动失败 → 集成被写成
+ * `status='draft'` + `initializedAt=null` → 与"从未初始化过的废弃集成"
+ * 无法区分 → 被按 6 小时 TTL 软删除。那批 22 个集成**全部曾成功初始化过**。
+ *
+ * 因此：**只要曾经成功初始化过（`firstInitializedAt` 非空），就永远不算废弃**，
+ * 无论当前 `initializedAt` 因何种原因变成 null。
+ */
+export function isStaleIncompleteCandidate(input: {
+  deletedAt: Date | null;
+  initializedAt: Date | null;
+  firstInitializedAt: Date | null;
+  status: string;
+  updatedAt: Date;
+  cutoff: Date;
+}): boolean {
+  if (input.deletedAt) return false;
+  if (input.initializedAt) return false;
+  if (input.firstInitializedAt) return false;
+  if (input.status !== 'draft') return false;
+  return input.updatedAt < input.cutoff;
+}
+
 export async function cleanupStaleIncompleteFeishuIntegrations(options: {
   cutoff: Date;
 }): Promise<FeishuIntegrationCleanupResult[]> {
   const db = getDb();
-  const candidates = await db
+  const rows = await db
     .select({
       integrationId: feishuIntegrations.id,
       userId: feishuIntegrations.userId,
       selectedOrgTargetId: feishuIntegrations.selectedOrgTargetId,
       feishuUnionId: users.feishuUnionId,
+      deletedAt: feishuIntegrations.deletedAt,
+      initializedAt: feishuIntegrations.initializedAt,
+      firstInitializedAt: feishuIntegrations.firstInitializedAt,
+      status: feishuIntegrations.status,
+      updatedAt: feishuIntegrations.updatedAt,
     })
     .from(feishuIntegrations)
     .leftJoin(users, eq(feishuIntegrations.userId, users.id))
     .where(
       and(
         isNull(feishuIntegrations.deletedAt),
-        isNull(feishuIntegrations.initializedAt),
         eq(feishuIntegrations.status, 'draft'),
         lt(feishuIntegrations.updatedAt, options.cutoff)
       )
     );
+
+  // 细判据放在纯函数里，保证"曾成功初始化过的永不删除"这条规则可被测试覆盖。
+  const candidates = rows.filter((row) =>
+    isStaleIncompleteCandidate({ ...row, cutoff: options.cutoff })
+  );
 
   if (candidates.length === 0) {
     return [];

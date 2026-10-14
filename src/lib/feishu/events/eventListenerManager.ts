@@ -586,9 +586,17 @@ export async function startAllListeners(): Promise<void> {
             },
           },
         });
+        // 只标记"这次没起来"，**绝不动 initializedAt**。
+        //
+        // 曾经这里同时写 `initializedAt: null`，引发过一起数据损坏事故：
+        // 授权过期 → 监听启动失败 → 集成被写成 draft + initializedAt=null，
+        // 看起来与"从未初始化过的废弃集成"完全一样，
+        // 于是被 sweepStaleFeishuIntegrations 按 6 小时 TTL 软删除。
+        // 2026-10-14 那批 22 个集成（全部曾成功初始化、全部有授权）就是这样被删掉的。
+        //
+        // "本次启动失败"是运行态问题，不是生命周期状态，只应记在检查状态里。
         void updateUserFeishuIntegration(integration.userId, integration.id, {
           status: 'draft',
-          initializedAt: null,
         });
         logFeishuMonitor('warn', 'event_listener_start_skipped', {
           integrationId: integration.id,
