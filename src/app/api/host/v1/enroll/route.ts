@@ -90,10 +90,19 @@ export async function POST(request: NextRequest) {
     //
     // 取舍：这会把分析用的模型 key 发到用户机器上。当前阶段（模型费用由我们承担）
     // 这是有意的；将来若改成"分析也走服务端"，这三个字段就该撤掉。
+    //
+    // 2026-10-14：新增 HOST_ANALYSIS_* 一组，用来**单独指定下发给宿主的模型配置**。
+    // 理由：宿主侧（MCP）与服务器侧（常驻流水线）可以用不同的模型，各算各的账。
+    // 当前 MCP 默认走 DeepSeek，而服务器自身的分析仍是豆包，两者不能混用同一组变量。
+    //
+    // 优先级：HOST_ANALYSIS_* > DOUBAO_* / LLM_* / ARK_*
     const analysis = {
-      apiKey: (process.env.DOUBAO_API_KEY || process.env.LLM_API_KEY || process.env.ARK_API_KEY || '').trim() || null,
-      baseUrl: (process.env.DOUBAO_BASE_URL || process.env.LLM_BASE_URL || process.env.ARK_BASE_URL || '').trim() || null,
-      model: (process.env.DOUBAO_MODEL || process.env.ANALYSIS_MODEL || '').trim() || null,
+      apiKey: (process.env.HOST_ANALYSIS_API_KEY
+        || process.env.DOUBAO_API_KEY || process.env.LLM_API_KEY || process.env.ARK_API_KEY || '').trim() || null,
+      baseUrl: (process.env.HOST_ANALYSIS_BASE_URL
+        || process.env.DOUBAO_BASE_URL || process.env.LLM_BASE_URL || process.env.ARK_BASE_URL || '').trim() || null,
+      model: (process.env.HOST_ANALYSIS_MODEL
+        || process.env.DOUBAO_MODEL || process.env.ANALYSIS_MODEL || '').trim() || null,
     };
 
     // token 明文只在这里返回一次，服务端只留 hash
