@@ -535,3 +535,46 @@ export type WebAnalysisTaskRow = typeof webAnalysisTasks.$inferSelect;
 export type UserFeedbackRow = typeof userFeedbacks.$inferSelect;
 export type UserRow = typeof users.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
+
+// ─────────────────────────── 宿主接入 ───────────────────────────
+// 让「把 MCP 交给别人用」有可验证的身份绑定：运营侧生成接入码，
+// 用户在 MCP 里兑换成只属于这次安装的 host_token。
+
+/** 接入码：运营侧生成，绑定到某个集成，用户用它在 MCP 里兑换凭证 */
+export const hostEnrollmentCodes = pgTable(
+  'host_enrollment_codes',
+  {
+    code: text('code').primaryKey(),
+    integrationId: uuid('integration_id').notNull(),
+    label: text('label'),
+    useCount: integer('use_count').notNull().default(0),
+    maxUses: integer('max_uses').notNull().default(5),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    lastInstallationId: text('last_installation_id'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('host_enrollment_codes_integration_idx').on(table.integrationId),
+  ]
+);
+
+/** 宿主凭证：每次 setup 兑换一个，服务端只存 token 的 hash，可单独吊销 */
+export const hostCredentials = pgTable(
+  'host_credentials',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    tokenHash: text('token_hash').notNull(),
+    integrationId: uuid('integration_id').notNull(),
+    installationId: text('installation_id'),
+    label: text('label'),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('host_credentials_token_hash_uidx').on(table.tokenHash),
+    index('host_credentials_integration_idx').on(table.integrationId),
+  ]
+);

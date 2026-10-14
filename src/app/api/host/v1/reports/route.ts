@@ -39,9 +39,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 import { getFeishuIntegrationContextById } from '@/lib/feishu/integration/integrationStore';
+import { authorizeHostRequest } from '@/lib/host/hostAuth';
+import { touchHostCredential } from '@/lib/host/hostEnrollmentStore';
 import { logFeishuMonitor, toErrorContext } from '@/lib/feishu/common/monitor';
 import {
   MEETING_REPORT_SCHEMA_VERSION,
@@ -54,18 +56,6 @@ import type { AnalysisResult } from '@/types';
 
 const ROUTE = '/api/host/v1/reports';
 
-function hostApiToken(): string {
-  return (process.env.HOST_API_TOKEN || '').trim();
-}
-
-/** 定时安全比较，避免用 === 比 token 泄漏长度与逐字符信息 */
-function tokenMatches(provided: string, expected: string): boolean {
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
-
 function fail(status: number, error: string, hint?: string) {
   return NextResponse.json({ ok: false, error, ...(hint ? { hint } : {}) }, { status });
 }
@@ -73,17 +63,15 @@ function fail(status: number, error: string, hint?: string) {
 export async function POST(request: NextRequest) {
   const startedAt = Date.now();
 
-  const expected = hostApiToken();
-  if (!expected) {
-    // 未配置就整体关闭：宁可 501，也不要变成一个任何人都能写的接口
-    return fail(501, '宿主报告接口未启用。', '请在服务端配置 HOST_API_TOKEN 后重试。');
-  }
-
-  const auth = request.headers.get('authorization') || '';
-  const provided = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-  if (!provided || !tokenMatches(provided, expected)) {
+  // 鉴权两级：优先「接入码兑换的每用户凭证」，回落全局 HOST_API_TOKEN（自用路径）
+  const auth = await authorizeHostRequest(request);
+  if (!auth.ok) {
     logFeishuMonitor('warn', 'host_report_unauthorized', { route: ROUTE });
-    return fail(401, '宿主凭证无效。', '请检查连接器里的 TEAMING_HOST_TOKEN 是否与服务端 HOST_API_TOKEN 一致。');
+    return fail(auth.status, auth.error, auth.hint);
+  }
+  if (auth.credential) {
+    // 记录"谁在用"，用于排查；写失败不影响上传
+    void touchHostCredential(auth.credential.credentialId);
   }
 
   let body: Record<string, unknown>;
@@ -102,18 +90,8 @@ export async function POST(request: NextRequest) {
   const feishuMeetingId = typeof body.feishuMeetingId === 'string' ? body.feishuMeetingId.trim() : '';
   const transcript = typeof body.transcript === 'string' && body.transcript.trim() ? body.transcript : null;
 
-  // 归属：body 优先，否则回落默认集成
-  const integrationId =
-    (typeof body.integrationId === 'string' && body.integrationId.trim())
-    || (process.env.HOST_REPORT_INTEGRATION_ID || '').trim();
-
-  if (!integrationId) {
-    return fail(
-      500,
-      '服务端未配置 HOST_REPORT_INTEGRATION_ID，且请求未携带 integrationId。',
-      '报告要落进 meeting_records，必须知道归属哪个集成。'
-    );
-  }
+  // 归属由凭证决定——调用方**不能**自己指定（否则任何人填别人的集成就能写数据）
+  const integrationId = auth.integrationId;
 
   const integration = await getFeishuIntegrationContextById(integrationId);
   if (!integration) {
@@ -157,6 +135,7 @@ export async function POST(request: NextRequest) {
       meetingId,
       reportPublicId: record.reportPublicId,
       hasTranscript: Boolean(transcript),
+      credentialSource: auth.source,
       durationMs: Date.now() - startedAt,
     });
 
