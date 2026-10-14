@@ -436,3 +436,29 @@ host_delivery_cursors
 | §3.3 生态准入（npx 硬要求） | **部分适用**：仅针对 MCP 生态上架；Connector 分发还有原生 artifact 路径，见本文 10.1 |
 | §3.4 / §5.6 | 适用，已纳入设计与错误文案规范 |
 | — | **该文档未覆盖「事件驱动型推送」场景**，即本文的 C / C' 拆解与游标方案，属本项目新增结论 |
+
+---
+
+## 十一、部署注意：新增路由必须同步 nginx 白名单
+
+**生产环境的 `meeting.bamamei.online` 在 nginx 层有一份按路径的白名单**
+（`/etc/nginx/snippets/allowlist-meeting.conf`），原则是"一条不多放"。
+
+```
+新增任何 API 路由后，必须在该文件里加一条 location，
+否则外部访问会返回 HTTP 000（不是 404、不是 403），
+本地/容器内测试却完全正常 —— 极难排查。
+```
+
+2026-10-14 实现 `/api/host/v1/reports` 时就踩到了：容器内 `POST` 返回 401（正确），
+外部 `POST` 返回 000。最后定位到白名单缺条目。
+
+**排查线索**：`curl -sv` 能看到 TLS 握手完成、但没有任何 HTTP 响应行。
+
+**操作方式**（务必先备份再 reload，配置写错会导致整站不可用）：
+
+```bash
+sudo cp -a /etc/nginx/snippets/allowlist-meeting.conf{,.bak}
+# 追加 location = <新路由> { include /etc/nginx/snippets/proxy-meeting.conf; }
+sudo nginx -t && sudo systemctl reload nginx
+```
