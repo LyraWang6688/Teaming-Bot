@@ -11,6 +11,7 @@ import { assertServerRuntimeEnabled } from '@/lib/platform/serverRuntime';
 import { maskSecret } from '@/lib/security/crypto';
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { createReauthToken } from '../integration/reauthToken';
+import { probeIntegrationAppCredential } from '../integration/appCredentialProbe';
 import { createFeishuSdkClient } from '../integration/sdkClient';
 import {
   getFeishuIntegrationCheckStatus,
@@ -106,6 +107,25 @@ export async function maybeSendReauthorizationReminder(options: {
 }): Promise<{ sent: boolean; reason?: string }> {
   const { integration } = options;
   assertServerRuntimeEnabled();
+
+  // 先校验应用凭证：应用被飞书管控（如 21001）时，提醒必然发不出去。
+  // 提前判定可以把"发送失败"这种含糊结论，替换成"应用不可用"这种可处置的结论，
+  // 同时避免无意义的重试。
+  const credential = await probeIntegrationAppCredential(integration);
+  if (credential.status === 'failed') {
+    await upsertFeishuIntegrationCheckStatus({
+      integrationId: integration.id,
+      appCredentialStatus: 'failed',
+      lastErrorType: 'AppCredentialProbeError',
+      lastErrorMessage: credential.errorMessage,
+    });
+    logFeishuMonitor('warn', 'reauth_reminder_skipped', {
+      integrationId: integration.id,
+      reason: 'app_credential_invalid',
+      errorCode: credential.errorCode,
+    });
+    return { sent: false, reason: 'app_credential_invalid' };
+  }
 
   if (!integration.projectId) {
     logFeishuMonitor('info', 'reauth_reminder_skipped', { integrationId: integration.id, reason: 'project_missing' });

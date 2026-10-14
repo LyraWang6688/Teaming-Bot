@@ -35,10 +35,12 @@ const {
     './integrationStore': {
       getLatestFeishuAuthorizationContext: async () => null,
       listActiveFeishuIntegrationContextsWithBase: async () => [],
+      upsertFeishuIntegrationCheckStatus: async () => {},
       writeAuditLog: async () => {},
     },
     '../common/monitor': { logFeishuMonitor() {}, toErrorContext: () => ({}) },
     '../ops/opsAlertService': { sendOpsAlert: async () => ({ sent: false, reason: 'test' }) },
+    './appCredentialProbe': { probeIntegrationAppCredential: async () => ({ status: 'success' }) },
   }
 );
 
@@ -202,4 +204,78 @@ test('未知 reasonCode 也不会崩（只是没有指引）', () => {
   );
   assert.ok(alert);
   assert.match(alert.markdown, /brand_new_code/);
+});
+
+// ─────────── 应用凭证优先于授权（根因先说） ───────────
+
+test('应用凭证失败时判 error，理由码是 app_credential_invalid', () => {
+  const v = classifyDeliveryHealth({
+    authorizationStatus: 'authorized',
+    refreshTokenExpiresAt: new Date(Date.now() + 6 * 86400000),
+    daysSinceLastEvent: 0,
+    now: new Date(),
+    appCredentialStatus: 'failed',
+    appCredentialErrorCode: '21001',
+  });
+  assert.equal(v.level, 'error');
+  assert.equal(v.reasonCode, 'app_credential_invalid');
+  assert.match(v.message, /21001/, '要带上飞书错误码');
+  assert.match(v.message, /重新授权无效/, '要明确否认"重新授权能修"');
+});
+
+test('应用凭证失败优先于授权失败（避免把根因说成表象）', () => {
+  const v = classifyDeliveryHealth({
+    authorizationStatus: 'reauthorization_required',
+    refreshTokenExpiresAt: null,
+    daysSinceLastEvent: null,
+    now: new Date(),
+    appCredentialStatus: 'failed',
+    appCredentialErrorCode: '21001',
+  });
+  assert.equal(v.reasonCode, 'app_credential_invalid');
+});
+
+test('应用凭证正常时仍按授权判定（不影响原有行为）', () => {
+  const v = classifyDeliveryHealth({
+    authorizationStatus: 'reauthorization_required',
+    refreshTokenExpiresAt: null,
+    daysSinceLastEvent: null,
+    now: new Date(),
+    appCredentialStatus: 'success',
+  });
+  assert.equal(v.reasonCode, 'authorization_invalid');
+});
+
+test('应用凭证 unknown（网络抖动）不误判，继续按授权判定', () => {
+  const v = classifyDeliveryHealth({
+    authorizationStatus: 'authorized',
+    refreshTokenExpiresAt: new Date(Date.now() + 6 * 86400000),
+    daysSinceLastEvent: 0,
+    now: new Date(),
+    appCredentialStatus: 'unknown',
+  });
+  assert.equal(v.level, 'ok');
+});
+
+test('未传 appCredentialStatus 时保持向后兼容', () => {
+  const v = classifyDeliveryHealth({
+    authorizationStatus: 'authorized',
+    refreshTokenExpiresAt: new Date(Date.now() + 6 * 86400000),
+    daysSinceLastEvent: 0,
+    now: new Date(),
+  });
+  assert.equal(v.level, 'ok');
+});
+
+test('告警文案里应用凭证失效要给出正确处置方向', () => {
+  const alert = buildDeliveryHealthAlert(
+    summary({
+      warnings: [{ integrationId: 'a', level: 'error', reasonCode: 'app_credential_invalid' }],
+      error: 1,
+      warn: 0,
+    })
+  );
+  assert.ok(alert);
+  assert.match(alert.markdown, /重新授权无效/);
+  assert.match(alert.markdown, /账号类型/);
 });

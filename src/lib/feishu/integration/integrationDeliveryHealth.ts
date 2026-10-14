@@ -30,8 +30,10 @@ import { meetingPipelineTasks } from '@/lib/db/schema';
 import {
   getLatestFeishuAuthorizationContext,
   listActiveFeishuIntegrationContextsWithBase,
+  upsertFeishuIntegrationCheckStatus,
   writeAuditLog,
 } from './integrationStore';
+import { probeIntegrationAppCredential } from './appCredentialProbe';
 import { logFeishuMonitor, toErrorContext } from '../common/monitor';
 import { sendOpsAlert } from '../ops/opsAlertService';
 
@@ -58,7 +60,12 @@ export type DeliveryHealthSweepSummary = {
 /**
  * 判定单个集成的投递健康度。纯函数，便于测试。
  *
- * 判定顺序体现优先级：授权问题（事件会彻底断）> 令牌将到期 > 长时间无事件（可能只是没开会）。
+ * 判定顺序体现优先级：
+ * **应用凭证（根因）** > 授权问题（事件会彻底断）> 令牌将到期 > 长时间无事件（可能只是没开会）。
+ *
+ * 应用凭证排在最前，是因为它是根因：应用拿不到 tenant_access_token 时，
+ * 授权必然也失效。若先报"授权失效"，会给用户"重新授权就能好"的错误暗示——
+ * 而被管控的应用重新授权多少次都没用。
  */
 export function classifyDeliveryHealth(input: {
   authorizationStatus: string | null;
@@ -67,9 +74,25 @@ export function classifyDeliveryHealth(input: {
   now: Date;
   expiringSoonDays?: number;
   quietDays?: number;
+  /**
+   * 应用凭证实时校验结果。
+   * - `failed`：应用被飞书拒绝（如 21001）→ 直接判 error，且不再看授权
+   * - `success` / `unknown` / 未传：继续按授权判定
+   */
+  appCredentialStatus?: 'success' | 'failed' | 'unknown' | null;
+  appCredentialErrorCode?: string | null;
 }): DeliveryHealthVerdict {
   const expiringSoonDays = input.expiringSoonDays ?? DEFAULT_EXPIRING_SOON_DAYS;
   const quietDays = input.quietDays ?? DEFAULT_QUIET_DAYS;
+
+  if (input.appCredentialStatus === 'failed') {
+    const code = input.appCredentialErrorCode ? `（飞书错误码 ${input.appCredentialErrorCode}）` : '';
+    return {
+      level: 'error',
+      reasonCode: 'app_credential_invalid',
+      message: `应用凭证校验失败${code}：飞书拒绝为该应用签发 tenant_access_token。重新授权无效，需从应用/账号层面解决。`,
+    };
+  }
 
   if (!input.authorizationStatus) {
     return {
@@ -131,6 +154,8 @@ export function classifyDeliveryHealth(input: {
  * 告警只报错没有意义——收到的人必须知道下一步动作。
  */
 const REASON_GUIDANCE: Record<string, string> = {
+  app_credential_invalid:
+    '**飞书拒绝为该应用签发通行证**。重新授权无效——问题在应用/账号层面。若错误码为 21001，多为账号类型受限（如豆包账号）。请先确认该用户的账号类型，再决定产品层面的处置。',
   authorization_missing: '该集成没有用户授权记录，需先完成初始化。',
   authorization_invalid:
     '**需用户重新授权**。若该应用被飞书管控策略拒绝（21001，表现为「当前账号无法使用该应用」），需先在开发者后台配置**可用范围**并发布版本。',
@@ -234,6 +259,19 @@ export async function sweepIntegrationDeliveryHealth(
     summary.scanned += 1;
 
     try {
+      // 先校验应用凭证（根因），并把结果写成**实时状态**——
+      // 该字段此前只在建应用时写一次，正是 2026-10-13 误判的来源。
+      const probe = await probeIntegrationAppCredential(integration);
+      if (probe.status !== 'unknown') {
+        await upsertFeishuIntegrationCheckStatus({
+          integrationId: integration.id,
+          appCredentialStatus: probe.status === 'success' ? 'success' : 'failed',
+          ...(probe.status === 'failed'
+            ? { lastErrorType: 'AppCredentialProbeError', lastErrorMessage: probe.errorMessage }
+            : {}),
+        });
+      }
+
       const authorization = await getLatestFeishuAuthorizationContext(integration.id);
       const lastEventAt = lastEventAtByIntegration.get(integration.id) ?? null;
       const daysSinceLastEvent = lastEventAt
@@ -247,6 +285,8 @@ export async function sweepIntegrationDeliveryHealth(
         now,
         expiringSoonDays: options.expiringSoonDays,
         quietDays: options.quietDays,
+        appCredentialStatus: probe.status,
+        appCredentialErrorCode: 'errorCode' in probe ? probe.errorCode : null,
       });
 
       if (verdict.level === 'ok') summary.ok += 1;
