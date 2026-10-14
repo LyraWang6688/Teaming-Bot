@@ -108,3 +108,6 @@ PROJECT.md
 
 # Local reports and private runtime artifacts
 .local/
+
+# 飞书 AI 页面审查资料：含业务数据（销售金额/库存数量）与第三方页面源码，仅本地保留
+docs/feishu-page-audit/

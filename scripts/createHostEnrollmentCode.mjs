@@ -12,10 +12,10 @@
  *
  * 说明：这里直接连库（运营侧工具，不是服务端运行时），
  * 所以**不经过** src/lib/host/hostEnrollmentStore 的 TS 模块——避免为此引入构建步骤。
- * 码的字符集与哈希算法必须与那个模块保持一致，改动时两边都要动。
+ * 只生成码本身（不涉及哈希）；**码的字符集必须与那个模块保持一致**，改动时两边都要动。
  */
 import process from 'node:process';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Client } from 'pg';
 
