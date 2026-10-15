@@ -45,6 +45,23 @@ export type OpsAlertResult = { sent: boolean; reason: string };
  */
 const ALERT_COOLDOWN_MS = Number(process.env.OPS_ALERT_COOLDOWN_MS || 12 * 60 * 60 * 1000);
 
+/**
+ * 是否允许推送运维告警。
+ *
+ * 2026-10-15 决定：**先关掉推送**，需要时再打开。原因见 issue #10 ——
+ * 健康检查会长期报「异常 22」（21 个授权失效的僵尸集成），
+ * 告警内容反复相同，反而淹没了真正的新问题。
+ *
+ * 关掉的是"推送"这一层：**审计表照写、日志照记**，所以事后仍可追溯。
+ * 要重新打开：把 `OPS_ALERT_ENABLED` 设为 `true`（或不设，默认开启）。
+ */
+function isAlertPushEnabled(): boolean {
+  const raw = (process.env.OPS_ALERT_ENABLED || '').trim().toLowerCase();
+  // 不设 = 保持历史行为（配了收件人就发）
+  if (!raw) return true;
+  return !['false', '0', 'off', 'no'].includes(raw);
+}
+
 /** 冷却期内是否已经发过同一个 key 的告警 */
 async function alreadyAlertedRecently(idempotencyKey: string): Promise<boolean> {
   try {
@@ -81,7 +98,7 @@ function readRecipient(): { receiveId: string; receiveIdType: 'chat_id' | 'open_
 }
 
 export function isOpsAlertConfigured(): boolean {
-  return readRecipient() !== null;
+  return isAlertPushEnabled() && readRecipient() !== null;
 }
 
 /**
@@ -95,6 +112,23 @@ export async function sendOpsAlert(params: {
   /** 幂等键，避免同一轮扫描重复推送 */
   idempotencyKey?: string;
 }): Promise<OpsAlertResult> {
+  // 推送开关：关了就不发，但下面照样写审计
+  if (!isAlertPushEnabled()) {
+    logFeishuMonitor('info', 'ops_alert_push_disabled', {
+      title: params.title,
+      hint: 'OPS_ALERT_ENABLED 为 false，本次不推送；审计表仍会记录。',
+    });
+    if (params.idempotencyKey) {
+      await writeAuditLog({
+        action: 'ops_alert_suppressed_disabled',
+        result: 'partial',
+        summary: params.title,
+        metadata: { idempotencyKey: params.idempotencyKey },
+      });
+    }
+    return { sent: false, reason: 'push_disabled' };
+  }
+
   const recipient = readRecipient();
   if (!recipient) {
     logFeishuMonitor('warn', 'ops_alert_skipped_not_configured', {
