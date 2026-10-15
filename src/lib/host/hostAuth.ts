@@ -77,6 +77,9 @@ export async function authorizeHostRequest(request: Request): Promise<HostAuthRe
     ok: false,
     status: 401,
     error: '宿主凭证无效。',
-    hint: '凭证可能已吊销。重新执行 `npx teaming-mcp setup --code <接入码>` 换取新凭证。',
+    // 别写 `npx teaming-mcp setup` —— Skill / MCP-over-HTTP 的用户根本不装 npm，
+    // 那句话对他们没有可执行性。给一个所有人都能走的路子：重新要一个接入码。
+    hint: '接入码可能已失效或被吊销。重新申请一个即可（只需填姓名）：'
+      + ' https://my.feishu.cn/share/base/form/shrcnlPdC7aoXczqLl3XkxGvWhc',
   };
 }

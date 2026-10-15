@@ -7,7 +7,7 @@
  * 运营侧  POST /api/host/v1/enroll 的 code 来源：
  *           psql / 管理脚本生成（见 scripts/createHostEnrollmentCode.mjs）
  *              ↓ 把码发给用户
- * 用户    npx teaming-mcp setup --code XXXX
+ * 用户    在豆包工作里把码交给 Skill（或 npx teaming-mcp setup --code XXXX）
  *              ↓ MCP 调本接口
  * 本接口  校验码 → 生成 host_token（只返回这一次）→ 记录到 host_credentials
  *              ↓
