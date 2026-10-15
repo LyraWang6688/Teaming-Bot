@@ -53,6 +53,8 @@ export type DeliveryHealthSweepSummary = {
   ok: number;
   warn: number;
   error: number;
+  /** 因从未完成初始化而跳过、不计入健康度的集成数 */
+  skipped: number;
   warnings: Array<{ integrationId: string; level: DeliveryHealthLevel; reasonCode: string }>;
   durationMs: number;
 };
@@ -242,6 +244,7 @@ export async function sweepIntegrationDeliveryHealth(
     ok: 0,
     warn: 0,
     error: 0,
+    skipped: 0,
     warnings: [],
     durationMs: 0,
   };
@@ -256,6 +259,20 @@ export async function sweepIntegrationDeliveryHealth(
   }
 
   for (const integration of integrations) {
+    // 从未完成初始化的集成不计入健康度。
+    //
+    // 2026-10-15：线上有 22 个 `draft` 集成——用户建了飞书应用、也选了方向，
+    // 但从没走完授权，因此没有授权记录。classifyDeliveryHealth 把"没有授权记录"
+    // 判为 error（对**曾经授权过的**集成这是对的），可对这批人它永远成立：
+    // 他们本来就没有事件投递，也不会有人去"修"。
+    // 结果每次扫描都是「异常 22」，告警永久响起。
+    //
+    // 判据用 initializedAt：它表示这套集成**曾经走到过初始化完成**。
+    if (!integration.initializedAt) {
+      summary.skipped += 1;
+      continue;
+    }
+
     summary.scanned += 1;
 
     try {
@@ -355,7 +372,13 @@ export async function sweepIntegrationDeliveryHealth(
   // 推送永不抛错，失败只记日志。
   const alert = buildDeliveryHealthAlert(summary);
   if (alert) {
-    await sendOpsAlert({ title: alert.title, markdown: alert.markdown });
+    // key 带严重级别：情况**升级**时能立刻发，不被冷却吞掉；
+    // 同一级别的持续异常，冷却期内只提醒一次。
+    await sendOpsAlert({
+      title: alert.title,
+      markdown: alert.markdown,
+      idempotencyKey: `delivery_health:${summary.error > 0 ? 'error' : 'warn'}`,
+    });
   }
 
   return summary;
