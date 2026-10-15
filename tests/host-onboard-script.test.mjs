@@ -121,3 +121,27 @@ test('脚本源码里不设 selected_org_target_id（这是隔离机制）', () 
       + '网页版链路、事件监听、token 刷新都靠它筛集成；设了就会被卷进飞书链路',
   );
 });
+
+test('脚本引用的表名都能在 schema.ts 里找到', () => {
+  const src = fs.readFileSync(SCRIPT_PATH, 'utf8');
+  const schema = fs.readFileSync('src/lib/db/schema.ts', 'utf8');
+
+  // 抓 SQL 里的 from/into/join 目标
+  const tables = new Set();
+  for (const m of src.matchAll(/\b(?:from|into|join)\s+([a-z_][a-z0-9_]*)/gi)) {
+    tables.add(m[1]);
+  }
+  assert.ok(tables.size > 0, '应该能抓到表名');
+
+  const missing = [];
+  for (const t of tables) {
+    // schema.ts 里用 pgTable('<表名>', …) 声明
+    if (!schema.includes(`'${t}'`) && !schema.includes(`"${t}"`)) missing.push(t);
+  }
+  assert.deepEqual(
+    missing,
+    [],
+    `脚本引用了不存在的表：${missing.join(', ')}——`
+      + '真机上会以 relation does not exist 失败，而那里离脚本很远（第一版就踩过 audit_logs）',
+  );
+});

@@ -184,10 +184,23 @@ async function main() {
     }
 
     // ── 2) 集成：占位凭证 + 不设 selected_org_target_id（隔离）──
+    // 先看这个用户是不是已经有宿主集成了——重跑脚本不该重复建
+    const existingHost = await client.query(
+      `select id from feishu_integrations
+       where user_id = $1 and app_id = $2 and deleted_at is null
+       order by created_at desc limit 1`,
+      [userId, HOST_APP_ID],
+    );
+
     const project = projectId
       ? projectId
       : (await client.query(`select id from feishu_projects where status = 'active' limit 1`)).rows[0]?.id ?? null;
 
+    let integrationId;
+    if (existingHost.rows.length) {
+      integrationId = existingHost.rows[0].id;
+      console.log(`  复用已有宿主集成 ${integrationId.slice(0, 8)}（不重复建）`);
+    } else {
     const insIntegration = await client.query(
       `insert into feishu_integrations (
          user_id, name, status, setup_step,
@@ -208,8 +221,9 @@ async function main() {
         project,
       ],
     );
-    const integrationId = insIntegration.rows[0].id;
+    integrationId = insIntegration.rows[0].id;
     console.log(`  集成已建 ${integrationId.slice(0, 8)}（project=${project ? project.slice(0, 8) : '(无)'}）`);
+    }
 
     // ── 3) 接入码 ──
     const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
@@ -225,11 +239,16 @@ async function main() {
       [code, integrationId, `宿主通道-${name}`, maxUses, expiresAt],
     );
 
-    // ── 4) 审计 ──
+    // ── 4) 审计（表名是 feishu_audit_logs；summary 是 NOT NULL，metadata 是 jsonb）──
     await client.query(
-      `insert into audit_logs (user_id, integration_id, action, result, context)
-       values ($1, $2, 'host_user.onboarded', 'success', $3::jsonb)`,
-      [userId, integrationId, JSON.stringify({ name, email, maxUses, days })],
+      `insert into feishu_audit_logs (user_id, integration_id, action, result, summary, metadata)
+       values ($1, $2, 'host_user.onboarded', 'success', $3, $4::jsonb)`,
+      [
+        userId,
+        integrationId,
+        `宿主通道用户开通：${name}（可用 ${maxUses} 次，${days} 天）`,
+        JSON.stringify({ name, email, maxUses, days }),
+      ],
     );
 
     console.log('');
