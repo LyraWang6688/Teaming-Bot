@@ -51,6 +51,9 @@ import {
   updateMeetingRecordTranscript,
   upsertMeetingRecord,
 } from '@/lib/reports/meetingReportStore';
+import { getMeetingRecordById } from '@/lib/reports/meetingReportStore';
+import { listActiveProjectOrgTargets } from '@/lib/feishu/projects/projectConfigStore';
+import { enqueueBaseSyncTask } from '@/lib/feishu/delivery/baseSyncTaskStore';
 import { buildPersistentReportUrl } from '@/lib/reports/reportUrl';
 import type { AnalysisResult } from '@/types';
 
@@ -58,6 +61,76 @@ const ROUTE = '/api/host/v1/reports';
 
 function fail(status: number, error: string, hint?: string) {
   return NextResponse.json({ ok: false, error, ...(hint ? { hint } : {}) }, { status });
+}
+
+/**
+ * 把宿主通道的报告登记进多维表格同步队列。
+ *
+ * ## 为什么宿主通道要单独做这件事
+ *
+ * 网页版链路（已跑两期）在用户初始化飞书应用时就选好了「项目（期数）+ 方向」，
+ * 报告天然带归属。宿主通道没有这一步：用户在豆包工作里开会，没有初始化向导。
+ *
+ * 所以这里按【归属后置】处理：
+ *   · 项目 = 当前活跃期（任一时刻只有一期 active）
+ *   · 方向 = 留空，由运营侧在多维表格里自己选
+ *
+ * `skipDirection: true` 只在本入口传，网页版链路不受影响（见 tests/base-direction-optional）。
+ *
+ * 失败**不影响报告落库**：报告此时已经写好，同步任务可以重试。
+ */
+async function enqueueHostReportBaseSync(
+  meetingRecordId: string,
+  integration: { id: string; userId: string }
+): Promise<void> {
+  try {
+    const { project, targets } = await listActiveProjectOrgTargets();
+    const activeTarget = targets[0] ?? null;
+
+    if (!project || !project.bitableAppToken || !project.bitableTableId || !activeTarget) {
+      logFeishuMonitor('warn', 'host_report_base_sync_skipped', {
+        route: ROUTE,
+        meetingRecordId,
+        reason: !project
+          ? 'no_active_project'
+          : !project.bitableAppToken || !project.bitableTableId
+            ? 'project_missing_base'
+            : 'no_org_target',
+      });
+      return;
+    }
+
+    const fresh = await getMeetingRecordById(meetingRecordId);
+
+    await enqueueBaseSyncTask({
+      meetingRecordId,
+      integrationId: integration.id,
+      userId: integration.userId,
+      projectId: project.id,
+      // 仅用于通过「目标必须存在且属于同一项目」的校验；
+      // 因为传了 skipDirection，它不会作为「方向」写进 Base。
+      orgTargetId: activeTarget.id,
+      orgName: null,
+      appToken: project.bitableAppToken,
+      tableId: project.bitableTableId,
+      requestedVersion: fresh?.dataVersion ?? 1,
+      skipDirection: true,
+    });
+
+    logFeishuMonitor('info', 'host_report_base_sync_enqueued', {
+      route: ROUTE,
+      meetingRecordId,
+      projectId: project.id,
+      projectKey: project.projectKey,
+    });
+  } catch (error) {
+    // 吞掉：报告已经落库成功，不因为这个 patch 失败就让宿主收到 500
+    logFeishuMonitor('error', 'host_report_base_sync_failed', {
+      route: ROUTE,
+      meetingRecordId,
+      ...toErrorContext(error),
+    });
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -128,6 +201,10 @@ export async function POST(request: NextRequest) {
       analysis: analysisResult,
       reportUrl,
     });
+
+    // 宿主通道的报告也要进多维表格（与网页版写进同一张期数表）。
+    // 归属后置：项目取当前活跃期，方向留空交给运营侧。失败不影响本次响应。
+    await enqueueHostReportBaseSync(record.id, integration);
 
     logFeishuMonitor('info', 'host_report_received', {
       route: ROUTE,
