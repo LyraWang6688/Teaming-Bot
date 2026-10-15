@@ -41,6 +41,16 @@ export class ModelRequestError extends Error {
  * 环境变量兼容读取：优先 LLM_*，回退到 DOUBAO_* 和 ARK_*。
  * 避免要求用户在服务器配置新的环境变量。
  */
+/**
+ * 分析凭证与模型的读取顺序。
+ *
+ * 前缀从新到旧：`LLM_*`（中性，推荐）→ `DOUBAO_*`（历史命名）→ `ARK_*`（更早的命名）。
+ * 保留这个顺序是为了让**换模型时只用加一组新变量、不动代码**：
+ * 例如切到 DeepSeek，只需配 `LLM_API_KEY` / `LLM_BASE_URL` / `ANALYSIS_MODEL`，
+ * 它们优先级最高，会盖过旧的 `DOUBAO_*`。
+ *
+ * 注意：`ANALYSIS_PROVIDER` 是**死变量** —— 代码里从未读过它，改它不会换模型。
+ */
 function getApiKey(): string | undefined {
   return process.env.LLM_API_KEY || process.env.DOUBAO_API_KEY || process.env.ARK_API_KEY;
 }
@@ -49,8 +59,23 @@ function getBaseUrl(): string | undefined {
   return process.env.LLM_BASE_URL || process.env.DOUBAO_BASE_URL || process.env.ARK_BASE_URL;
 }
 
+/**
+ * 取分析模型名。
+ *
+ * 这里**故意不设默认值**。此前兜底写死成 `'doubao-seed-2-0-pro-260215'`——一个带日期后缀
+ * 的豆包接入点。这类接入点会过期，而"静默回退到一个失效模型"的表现为**分析失败**，
+ * 排查时会先怀疑提示词、逐字稿、网络、额度，很久之后才会想到是模型名过期了。
+ * 与其猜一个可能失效的名字，不如在缺配置时直接说清楚缺什么。
+ */
 function getModel(): string {
-  return process.env.ANALYSIS_MODEL || process.env.DOUBAO_MODEL || 'doubao-seed-2-0-pro-260215';
+  const model = process.env.ANALYSIS_MODEL || process.env.DOUBAO_MODEL || process.env.ARK_MODEL;
+  if (!model) {
+    throw new Error(
+      '未配置分析模型：请设置 ANALYSIS_MODEL（推荐）或 DOUBAO_MODEL。' +
+        '本服务不再提供硬编码的兜底模型名——接入点会过期，静默回退比直接报错更难排查。',
+    );
+  }
+  return model;
 }
 
 export function getProviderStatus() {
