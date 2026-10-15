@@ -23,6 +23,7 @@ export async function register() {
   const { startFeishuDeliveryHealthWorker } = await import(
     './lib/feishu/integration/integrationHealthWorker'
   );
+  const { startHostOnboardingWorker } = await import('./lib/host/hostOnboardingWorker');
   const { logFeishuMonitor, toErrorContext } = await import('./lib/feishu/common/monitor');
 
   startFeishuMeetingPipelineWorker();
@@ -34,6 +35,9 @@ export async function register() {
   // 事件投递健康检查：飞书 2026-10-26 起，未授权用户的事件将不再投递且无法补发。
   // 详见 integrationDeliveryHealth.ts 顶部说明。
   startFeishuDeliveryHealthWorker();
+  // 宿主开号：扫多维表格「开通申请」表，把待开通的申请自动变成账号 + 接入码。
+  // 用户在飞书表单里提交，这条链路把它接上，不需要人工介入。
+  startHostOnboardingWorker();
   await recoverFeishuMeetingPipelinesOnStartup();
   await startAllListeners();
   startInactiveListenerSweeper();
