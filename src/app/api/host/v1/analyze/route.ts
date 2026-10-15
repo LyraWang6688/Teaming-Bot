@@ -24,7 +24,8 @@
  *   "title": "…",                            // 可选，用于报告命名
  *   "meetingStartedAt": "2026-10-13 22:13",  // 可选
  *   "feishuMeetingId": "7688…",              // 可选，便于对账
- *   "clientRequestId": "…"                   // 可选，幂等键
+ *   "clientRequestId": "…",                  // 可选，幂等键
+ *   "includeAnalysis": true                  // 可选，连同完整分析结果一起返回（默认不带）
  * }
  * → 200 { ok, reportPublicId, reportUrl, zone, zoneLabel, reused, elapsedMs }
  * ```
@@ -195,6 +196,18 @@ export async function POST(request: NextRequest) {
   const clientRequestId =
     typeof body.clientRequestId === 'string' ? body.clientRequestId.trim() : '';
 
+  /**
+   * 是否在响应里带上**完整分析结果**（四部分全文）。
+   *
+   * 默认不带——绝大多数调用方（Skill、MCP-over-HTTP）只要 reportUrl，
+   * 全文几十 KB，白传。
+   *
+   * 但 `teaming-mcp` 的 stdio 版需要它：那边要用分析结果渲染飞书云文档和摘要，
+   * 而 2026-10-15 起它的引擎副本被删掉了（改为只调本接口），
+   * 于是它必须从这里拿到全文。
+   */
+  const includeAnalysis = body.includeAnalysis === true;
+
   // 归属由凭证决定——调用方**不能**自己指定
   const integration = await getFeishuIntegrationContextById(auth.integrationId);
   if (!integration) {
@@ -227,6 +240,9 @@ export async function POST(request: NextRequest) {
         zone: existing.analysisZone,
         zoneLabel: existing.analysisResult?.teamState?.zoneLabel ?? null,
         elapsedMs: Date.now() - startedAt,
+        ...(includeAnalysis && existing.analysisResult
+          ? { analysisResult: existing.analysisResult }
+          : {}),
       });
     }
 
@@ -278,6 +294,7 @@ export async function POST(request: NextRequest) {
       durationLabel: analysis.metadata?.durationLabel ?? null,
       participantCount: analysis.metadata?.participantCount ?? null,
       elapsedMs: Date.now() - startedAt,
+      ...(includeAnalysis ? { analysisResult: analysis } : {}),
     });
   } catch (error) {
     const mapped = classifyAnalysisError(error);
