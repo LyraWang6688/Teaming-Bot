@@ -81,6 +81,8 @@ type TargetSnapshot = {
   orgName?: string | null;
   appTokenEncrypted?: string | null;
   tableId?: string | null;
+  /** 归属后置入口（AI 宿主通道）：方向不写进 Base，留给运营侧选 */
+  skipDirection?: boolean;
 };
 
 function parseSnapshot(raw: ClaimedBaseSyncTask['target_config_snapshot']): TargetSnapshot {
@@ -92,6 +94,7 @@ function parseSnapshot(raw: ClaimedBaseSyncTask['target_config_snapshot']): Targ
     orgName: typeof snap.orgName === 'string' ? snap.orgName : null,
     appTokenEncrypted: typeof snap.appTokenEncrypted === 'string' ? snap.appTokenEncrypted : null,
     tableId: typeof snap.tableId === 'string' ? snap.tableId : null,
+    skipDirection: snap.skipDirection === true,
   };
 }
 
@@ -292,8 +295,10 @@ export async function processBaseSyncTask(
       orgTarget,
     };
     const authorization = await getLatestFeishuAuthorizationContext(integration.id);
+    // skipDirection：宿主通道的报告不写「方向」——运营侧在多维表格里自己选。
+    // 不传该标记时（网页版链路）走原来的 fallback，行为一字不变。
     const businessFields = mapSupabaseRowToBusinessFields(meeting, {
-      orgName: snapshot.orgName ?? orgTarget.orgName,
+      orgName: snapshot.skipDirection ? null : (snapshot.orgName ?? orgTarget.orgName),
       organizerName: authorization?.authorizedUserName ?? null,
     });
 

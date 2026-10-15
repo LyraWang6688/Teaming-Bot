@@ -41,6 +41,13 @@ export type EnqueueBaseSyncTaskInput = {
   requestedVersion: number;
   mappingVersion?: number | null;
   existingBaseRecordId?: string | null;
+  /**
+   * 只在【归属后置】的入口传 true（目前只有 AI 宿主通道）。
+   *
+   * 传了就【不把「方向」写进 Base】——方向留给运营侧在多维表格里自己选。
+   * 不传 = 现状（网页版链路），行为完全不变。
+   */
+  skipDirection?: boolean;
 };
 
 export function buildTargetKey(projectId?: string | null): string {
@@ -74,6 +81,8 @@ export async function enqueueBaseSyncTask(
     orgName: input.orgName ?? null,
     appTokenEncrypted: input.appToken ? encrypt(input.appToken) : null,
     tableId: input.tableId ?? null,
+    // 归属后置入口：方向不写进 Base（不传 = false = 现状）
+    skipDirection: input.skipDirection === true,
   });
 
   const result = await executor.execute(sql`
