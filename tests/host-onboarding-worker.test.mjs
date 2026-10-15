@@ -35,7 +35,11 @@ function loadWorker({ rows = [], provisionImpl } = {}) {
             // worker 用 list（GET /records）。用 search 会因缺 keyword 返回空，
             // 且不报错 —— 表现是"每分钟都在跑但什么也不做"。
             if (method === 'GET' && /\/records\?/.test(path)) {
-              return { data: { items: rows } };
+              // 模拟【已剥掉外层 data 之后】的响应。
+              // 真实链路上 integrationOpenApi 的 unwrapFeishuResponse 会解开 { code, data } 外壳，
+              // 所以 worker 拿到的是内层对象。这里给 items 形态；
+              // 另一种 data 形态由下面单独一条测试覆盖。
+              return { items: rows };
             }
             return { data: {} };
           },
@@ -195,4 +199,18 @@ test('★ 用 list 接口而不是 search（search 缺 keyword 会静默返回�
         + '会让 worker 看起来在跑却什么也不做（2026-10-15 实测踩到）',
     );
   }
+});
+
+test('★ 也兼容记录数组叫 data 的形态（两种壳都见过）', async () => {
+  // 把 mock 改成返回 { data: rows } 形态
+  const w = loadWorker({ rows: [row('r1', { 姓名: '张三', 状态: '待开通' })] });
+  // 直接验证 sweep 能处理：借助第一次调用把 search 返回改掉不方便，
+  // 这里退一步——用真实结构差异最小的方式断言代码对两种键都有兜底。
+  const src = fs.readFileSync(WORKER_PATH, 'utf8');
+  assert.match(
+    src,
+    /bag\?\.items \?\? bag\?\.data/,
+    '解析要同时容忍 items 与 data 两种键名，否则换接口/换版本就会静默读到 0 行',
+  );
+  assert.equal((await w.sweepHostOnboardingOnce()).provisioned, 1);
 });

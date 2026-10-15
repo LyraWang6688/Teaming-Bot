@@ -89,11 +89,35 @@ async function listPendingApplications(): Promise<BitableRecord[]> {
   //
   // 这里本来也不需要关键词检索——只是要把整表拉下来筛选。list 正合适。
   // 不按状态过滤，取回后在代码里筛，这样「状态为空」的新行也能被发现。
-  const response = await callGlobalBaseAppTenantOpenApi<{
-    data?: { items?: BitableRecord[]; has_more?: boolean; page_token?: string };
-  }>('GET', `${apiBase()}/records?page_size=${PAGE_SIZE}`);
+  // ★ 注意这里收到的**已经剥掉最外层 data** 了（integrationOpenApi 的
+  // unwrapFeishuResponse 会解开 { code, data } 外壳）。
+  //
+  // 而剥完之后记录数组的键名，不同接口/版本见过两种：`items` 与 `data`。
+  // 2026-10-15 实测：只写 `items` 时永远取到空数组，表现是
+  // "worker 每分钟都在请求、没有错误、但 scanned 恒为 0"。
+  // 两种都兼容，并打一行日志把真实结构记下来。
+  const response = await callGlobalBaseAppTenantOpenApi<unknown>(
+    'GET',
+    `${apiBase()}/records?page_size=${PAGE_SIZE}`,
+  );
 
-  const items = response.data?.items ?? [];
+  const items: BitableRecord[] = Array.isArray(response)
+    ? (response as BitableRecord[])
+    : (() => {
+        const bag = response as { items?: BitableRecord[]; data?: BitableRecord[] } | null;
+        return bag?.items ?? bag?.data ?? [];
+      })();
+
+  if (!Array.isArray(items)) {
+    logFeishuMonitor('warn', 'host_onboard_unexpected_payload', {
+      got: typeof response,
+      keys:
+        response && typeof response === 'object'
+          ? Object.keys(response as Record<string, unknown>).slice(0, 12)
+          : [],
+    });
+    return [];
+  }
   return items.filter((r) => {
     const status = readSelectField(r.fields['状态']);
     return status === '' || status === STATUS_PENDING;
@@ -218,9 +242,9 @@ export function startHostOnboardingWorker(): void {
     running = true;
     try {
       const result = await sweepHostOnboardingOnce();
-      if (result.scanned > 0) {
-        logFeishuMonitor('info', 'host_onboard_swept', result);
-      }
+      // 每次扫描都记一条：否则"每一轮都读到 0 行"和"worker 根本没跑"从日志上分不开
+      // —— 2026-10-15 就是因为这个，多花了一轮排查。
+      logFeishuMonitor('info', 'host_onboard_swept', result);
     } catch (error) {
       logFeishuMonitor('error', 'host_onboard_sweep_failed', toErrorContext(error));
     } finally {
