@@ -81,12 +81,18 @@ function readSelectField(value: unknown): string {
 
 /** 列出待开通的申请 */
 async function listPendingApplications(): Promise<BitableRecord[]> {
+  // ★ 用 list（GET /records）而不是 search（POST /records/search）。
+  //
+  // search 接口**要求带 keyword**；只传 sort 时它返回空结果而不报错——
+  // 表现是"worker 每分钟都在跑、没有错误，但什么也不做"。
+  // 2026-10-15 实测踩到：日志里 records/search 每分钟 completed，但 scanned 恒为 0。
+  //
+  // 这里本来也不需要关键词检索——只是要把整表拉下来筛选。list 正合适。
+  // 不按状态过滤，取回后在代码里筛，这样「状态为空」的新行也能被发现。
   const response = await callGlobalBaseAppTenantOpenApi<{
-    data?: { items?: BitableRecord[] };
-  }>('POST', `${apiBase()}/records/search?page_size=${PAGE_SIZE}`, {
-    // 不按状态过滤，取回后在代码里筛——这样「状态为空」的新行也能被发现
-    sort: [{ field_name: '开通时间', desc: true }],
-  });
+    data?: { items?: BitableRecord[]; has_more?: boolean; page_token?: string };
+  }>('GET', `${apiBase()}/records?page_size=${PAGE_SIZE}`);
+
   const items = response.data?.items ?? [];
   return items.filter((r) => {
     const status = readSelectField(r.fields['状态']);

@@ -32,7 +32,9 @@ function loadWorker({ rows = [], provisionImpl } = {}) {
         return {
           callGlobalBaseAppTenantOpenApi: async (method, path, body) => {
             calls.api.push({ method, path, body });
-            if (method === 'POST' && path.includes('/records/search')) {
+            // worker 用 list（GET /records）。用 search 会因缺 keyword 返回空，
+            // 且不报错 —— 表现是"每分钟都在跑但什么也不做"。
+            if (method === 'GET' && /\/records\?/.test(path)) {
               return { data: { items: rows } };
             }
             return { data: {} };
@@ -177,4 +179,20 @@ test('姓名两端的空白会被去掉（表单里手滑打了空格是常事�
     '张三',
     '带空格的姓名会变成两个不同的人（复用逻辑按姓名匹配），必须先 trim',
   );
+});
+
+test('★ 用 list 接口而不是 search（search 缺 keyword 会静默返回空）', async () => {
+  const w = loadWorker({ rows: [row('r1', { 姓名: '张三', 状态: '待开通' })] });
+  await w.sweepHostOnboardingOnce();
+
+  // 只看"读"的调用（写回是 PUT /records/{id}，也含 /records）
+  const reads = w.calls.api.filter((c) => c.method === 'GET' && c.path.includes('/records'));
+  assert.ok(reads.length > 0, '应该读表了');
+  for (const r of reads) {
+    assert.ok(
+      !r.path.includes('/search'),
+      'search 接口要求带 keyword；只传 sort 时它返回空而不报错，'
+        + '会让 worker 看起来在跑却什么也不做（2026-10-15 实测踩到）',
+    );
+  }
 });
