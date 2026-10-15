@@ -31,6 +31,7 @@ import {
   deriveZone,
 } from './decision';
 import { normalizeEvidenceReferences } from './evidence';
+import { evaluateAbcRelevance, AbcGateError } from './abcGate';
 
 const VALID_ROLES = new Set<PlayerRoleV2>(['mover', 'follower', 'opposer', 'bystander', 'silent']);
 const VALID_ACTIONS = new Set<LeaderAdviceV2['action']>([
@@ -69,7 +70,16 @@ interface LockedDecision {
   interactions: NetworkEdgeV2[];
 }
 
-export async function analyzeTranscript(rawTranscript: string): Promise<AnalysisResultV2> {
+/**
+ * @param options.abcGate 是否先做「ABC 相关性甄别」。
+ *   **默认 false = 网页版现状**，行为一字不变。
+ *   宿主通道 / HTTP 接口传 true —— 用户在自己账号里会开很多种会，
+ *   只有与「ABC 向善公益实战营」相关的才该出报告。
+ */
+export async function analyzeTranscript(
+  rawTranscript: string,
+  options: { abcGate?: boolean } = {},
+): Promise<AnalysisResultV2> {
   const analysisStartedAt = Date.now();
   const parsed = parseTranscript(rawTranscript);
   if (parsed.raw.length < 120) throw new Error('会议文本过短，请上传包含完整发言记录的文件。');
@@ -81,6 +91,25 @@ export async function analyzeTranscript(rawTranscript: string): Promise<Analysis
     .slice(0, 16);
   if (parsed.speakers.length < 2) {
     throw new Error('未识别到至少两位实质发言者，暂不生成团队互动报告。');
+  }
+
+  // ABC 相关性甄别：只在调用方显式开启时跑（默认关闭 → 网页版行为不变）。
+  // 放在格式检查之后：格式不合格的稿不必花模型钱去判断内容。
+  if (options.abcGate) {
+    const relevance = await evaluateAbcRelevance(parsed.raw);
+    console.info('[ABC gate]', {
+      contentHash,
+      related: relevance.related,
+      confidence: relevance.confidence,
+      reason: relevance.reason,
+      matchedSignals: relevance.matchedSignals,
+    });
+    if (!relevance.related) {
+      throw new AbcGateError(
+        `这场会与「ABC 向善公益实战营」无关，已跳过分析。${relevance.reason ? `（${relevance.reason}）` : ''}`,
+        relevance,
+      );
+    }
   }
 
   const evidenceBudget = selectEvidenceOutputBudget(

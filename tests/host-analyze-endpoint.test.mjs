@@ -20,10 +20,37 @@ import ts from 'typescript';
 
 const ROUTE_PATH = 'src/app/api/host/v1/analyze/route.ts';
 
+function load(path, mocks) {
+  const code = ts.transpileModule(fs.readFileSync(path, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const exports = {};
+  vm.runInNewContext(code, {
+    exports,
+    Date,
+    console,
+    require(name) {
+      if (!(name in mocks)) throw new Error(`Unexpected dependency: ${name}`);
+      return mocks[name];
+    },
+  });
+  return exports;
+}
+
+
 /** 记录引擎被调用的次数与入参，用来验证"幂等命中不调模型"。 */
+/** 与真实 AbcGateError 等价的最小实现；供 mock 与测试共用，保证 instanceof 成立 */
+class MockAbcGateError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'AbcGateError';
+  }
+}
+
 function makeHarness({ analyzeImpl, existingRecord = null } = {}) {
   const calls = { analyze: 0, enqueue: 0 };
   const monitors = [];
+  let injectedError = null;
 
   const code = ts.transpileModule(fs.readFileSync(ROUTE_PATH, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
@@ -40,9 +67,14 @@ function makeHarness({ analyzeImpl, existingRecord = null } = {}) {
     'node:crypto': {
       createHash: () => ({ update: () => ({ digest: () => ({ slice: () => 'deadbeefdeadbeefdeadbeef' }) }) }),
     },
+    '@/lib/analysis/abcGate': {
+      // 唯一来源：测试和 route 必须共用同一个类，否则 instanceof 会因 vm 隔离失效
+      AbcGateError: MockAbcGateError,
+    },
     '@/services/analysisService': {
       analyzeMeetingText: async (text) => {
         calls.analyze += 1;
+        if (injectedError) throw injectedError;
         if (analyzeImpl) return analyzeImpl(text);
         return {
           teamState: { zone: 'Apathy', zoneLabel: '可能是冷漠区或舒适区' },
@@ -103,7 +135,14 @@ function makeHarness({ analyzeImpl, existingRecord = null } = {}) {
     Promise,
   });
 
-  return { POST: exportsObj.POST, calls, monitors };
+  return {
+    POST: exportsObj.POST,
+    calls,
+    monitors,
+    setAnalyzeError(error) {
+      injectedError = error;
+    },
+  };
 }
 
 function makeRequest(body, { noAuth = false } = {}) {
@@ -192,6 +231,16 @@ test('归属由凭证决定：body 里传 integrationId 不生效', async () => 
     events.includes('host_analyze_completed'),
     '应正常完成分析，而不是把 integrationId 当参数用'
   );
+});
+
+test('与 ABC 无关 → 400 not_abc_related（而不是 422 或 500）', async () => {
+  const h = makeHarness();
+  // 验证接口靠 instanceof 识别，而不是靠消息里有没有 "ABC" 这种脆弱匹配
+  h.setAnalyzeError(new MockAbcGateError('这场会与「ABC 向善公益实战营」无关，已跳过分析。'));
+  const res = await h.POST(makeRequest({ transcript: '张三 00:00:15 我们过一下排期' }));
+  assert.equal(res.status, 400);
+  assert.equal(res.body.error.code, 'not_abc_related');
+  assert.equal(res.body.error.type, 'transcript');
 });
 
 test('成功后会把报告登记进 Base 同步队列（归属后置）', async () => {

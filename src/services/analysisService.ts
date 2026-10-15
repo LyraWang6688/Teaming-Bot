@@ -11,10 +11,13 @@ import { analyzeTranscript } from '@/lib/analysis/engine';
 import { logRuntimeMonitor, toRuntimeErrorContext } from '@/lib/platform/runtimeMonitor';
 import type { AnalysisResult } from '@/types';
 
-export async function analyzeMeetingText(meetingText: string): Promise<AnalysisResult> {
+export async function analyzeMeetingText(
+  meetingText: string,
+  options: { abcGate?: boolean } = {},
+): Promise<AnalysisResult> {
   const startedAt = Date.now();
   try {
-    const result = await analyzeTranscript(meetingText);
+    const result = await analyzeTranscript(meetingText, options);
     const elapsedMs = Date.now() - startedAt;
     logRuntimeMonitor('info', 'analysis_service', 'analysis_completed', {
       elapsedMs,

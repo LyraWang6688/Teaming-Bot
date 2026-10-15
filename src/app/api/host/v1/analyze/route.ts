@@ -43,6 +43,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'node:crypto';
 
 import { analyzeMeetingText } from '@/services/analysisService';
+import { AbcGateError } from '@/lib/analysis/abcGate';
 import { getFeishuIntegrationContextById } from '@/lib/feishu/integration/integrationStore';
 import { authorizeHostRequest } from '@/lib/host/hostAuth';
 import { touchHostCredential } from '@/lib/host/hostEnrollmentStore';
@@ -87,6 +88,11 @@ function fail(
  */
 function classifyAnalysisError(error: unknown): { code: string; message: string; status: number } {
   const message = String((error as Error)?.message || error || '分析失败');
+
+  // 用类型判断，不靠消息文本匹配——消息改一个字就会失效
+  if (error instanceof AbcGateError) {
+    return { code: 'not_abc_related', message, status: 400 };
+  }
   if (message.includes('过短')) {
     return { code: 'transcript_too_short', message, status: 400 };
   }
@@ -225,7 +231,8 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 分析（服务器引擎，与网页版完全同一套）──
-    const analysis = await analyzeMeetingText(transcript);
+    // 宿主通道启用 ABC 相关性甄别：用户会开很多种会，只有相关的那批才出报告
+    const analysis = await analyzeMeetingText(transcript, { abcGate: true });
 
     const details = {
       meetingId,
