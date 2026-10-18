@@ -24,9 +24,28 @@ pnpm lint
 
 项目采用 Docker Compose 部署，宿主机通过 `127.0.0.1:3011` 映射到容器内 `3000` 端口，再由 Nginx 对外暴露 `80/443`。
 
+**在服务器上一条命令部署**（拉代码 → 取提交号 → 重建镜像 → 重建容器 → 自证）：
+
 ```bash
-sudo docker compose up -d --build
+cd /home/ubuntu/meeting-analysis
+./scripts/deploy.sh
 ```
+
+它会做完这几件事，任何一步不对就以非零退出码失败：
+
+- `git pull` **先于**构建（先构建会用旧代码，2026-10-15 真实踩过）
+- 把当前提交号作为 `SOURCE_REVISION` 传进构建，烘进镜像的 `APP_REVISION`
+- `--force-recreate`（普通的 `up -d` 不会重新注入环境变量）
+- 部署完读 `/api/health`，核对返回的 `commit` 与本次部署的提交一致
+
+部署完可以直接打开 <https://meeting.bamamei.online/api/health> 看线上在跑哪个提交：
+
+```json
+{ "ok": true, "version": "1.0.0", "commit": "16a9b1f", "imageRevision": "16a9b1f", ... }
+```
+
+> 不建议再手敲 `docker compose up -d --build`：漏掉 `--force-recreate` 或漏传
+> `SOURCE_REVISION` 都不会报错，只会表现成「改了没生效」或「版本看不出来」。
 
 前端上传入口使用异步任务：先调用 `/api/analyze/tasks` 创建任务，再轮询 `/api/analyze/tasks/:taskId` 获取结果。保留的同步 `/api/analyze` 兼容接口仍可能等待大模型分析结果，生产 Nginx 建议允许较长代理等待时间：
 
