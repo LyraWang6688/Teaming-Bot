@@ -66,12 +66,62 @@ test('★ 真实 package.json 的版本就是当前发布版本', async () => {
   assert.match(real.version, /^\d+\.\d+\.\d+$/, 'package.json 的 version 应是 X.Y.Z');
 });
 
-test('commit 来自 GIT_COMMIT 环境变量', async () => {
-  const withCommit = loadHealth({ env: { GIT_COMMIT: 'abc1234' } });
-  assert.equal((await withCommit.GET()).body.commit, 'abc1234');
+test('commit 来源：GIT_COMMIT 优先，其次用镜像烘进去的 APP_REVISION', async () => {
+  // 运行时注入优先（热修 / 不重建的部署）
+  const runtimeWins = loadHealth({ env: { GIT_COMMIT: 'abc1234', APP_REVISION: 'def5678' } });
+  assert.equal((await runtimeWins.GET()).body.commit, 'abc1234');
 
-  const without = loadHealth({ env: { GIT_COMMIT: '' } });
-  assert.equal((await without.GET()).body.commit, null, '没配就是 null，不要编一个假值');
+  // ★ 关键回归：Dockerfile 早就在设 APP_REVISION，而接口只读过 GIT_COMMIT，
+  // 于是「镜像明明带着提交号、接口却报 null」——两个原因叠在一起，很难发现。
+  // 这条守住不再犯。
+  const fromImage = loadHealth({ env: { GIT_COMMIT: '', APP_REVISION: 'def5678' } });
+  assert.equal((await fromImage.GET()).body.commit, 'def5678');
+
+  const neither = loadHealth({ env: { GIT_COMMIT: '', APP_REVISION: '' } });
+  assert.equal((await neither.GET()).body.commit, null, '没配就是 null，不要编一个假值');
+});
+
+test('★ "unknown" 不能当提交号报出去——那是「未知」，不是版本', async () => {
+  // Dockerfile 里 SOURCE_REVISION 的默认值就是 unknown。
+  // 把它当版本号返回等于用「未知」冒充「已知」，比 null 更误导。
+  const res = await loadHealth({ env: { GIT_COMMIT: '', APP_REVISION: 'unknown' } }).GET();
+  assert.equal(res.body.commit, null);
+  assert.equal(res.body.imageRevision, null);
+
+  // 大小写和前后空格也不该让它漏过去
+  const weird = await loadHealth({ env: { GIT_COMMIT: '  UNKNOWN  ', APP_REVISION: '' } }).GET();
+  assert.equal(weird.body.commit, null);
+});
+
+test('imageRevision 单独暴露——用来判断镜像本身知不知道自己的提交', async () => {
+  const res = await loadHealth({ env: { GIT_COMMIT: 'abc1234', APP_REVISION: 'def5678' } }).GET();
+  assert.equal(res.body.commit, 'abc1234', 'commit 是实际生效的那个');
+  assert.equal(res.body.imageRevision, 'def5678', 'imageRevision 是镜像自带的那一个');
+});
+
+test('★ 部署脚本必须把三个坑堵住（否则这次修复会被改回原样）', () => {
+  const script = fs.readFileSync('scripts/deploy.sh', 'utf8');
+
+  // 只看非注释行：脚本头部「为什么要有这个脚本」那段会提到这些命令，
+  // 拿整份文件判断顺序会抓到注释，误报。
+  const body = script
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+
+  assert.match(body, /export SOURCE_REVISION=/, '没传 SOURCE_REVISION，镜像就不知道自己的提交');
+  assert.match(body, /--force-recreate/, '不 force-recreate，环境变量不会重新注入');
+  assert.match(body, /git pull/, '必须先拉代码');
+
+  // 「先 pull 再 build」这个顺序是 2026-10-15 真实事故的教训：
+  // 先构建用了旧代码，容器跑的是前一个提交，日志看不出任何异常。
+  assert.ok(
+    body.indexOf('git pull') < body.indexOf('docker compose up'),
+    'git pull 必须出现在 docker compose up 之前',
+  );
+
+  // 部署完要自证，不能只「看起来成功了」
+  assert.match(body, /api\/health|HEALTH_URL/, '部署后应读健康接口自证');
 });
 
 test('★ 不能被缓存——否则部署完还看到旧版本', async () => {
