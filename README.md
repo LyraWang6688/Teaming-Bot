@@ -102,3 +102,5 @@ FEISHU_ENABLE_STARTUP_RECOVERY=true
 - `docs/飞书集成设计.md`
 - `docs/项目结构说明.md`
 - `docs/后台分析逻辑说明.md`
+
+[![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
